@@ -1,4 +1,4 @@
-/// <summary>
+﻿/// <summary>
 /// The build CLI, written against Partas.Build itself.
 ///
 /// A step is a stage of a pipeline, and a stage that needs a flag binds it in an
@@ -27,7 +27,6 @@ let release = lazy ReleaseNotes.load "docs/RELEASE_NOTES.md"
 module Prelude =
     let restore = inputs {
         let! quick = Options.quick
-
         return stage "restore" {
             when' (not quick)
             run "dotnet tool restore --verbosity q"
@@ -69,19 +68,28 @@ module ProjectManagement =
 
     /// <summary>Pushes every package in <c>bin</c>, to nuget.org with a key and to the <c>local</c> feed without one.</summary>
     /// <remarks>
-    /// The glob is left to <c>dotnet nuget push</c>, which expands it itself — no shell is involved. The key
-    /// travels as one argument through an interpolation hole, so it reaches NuGet intact and the log shows
-    /// <c>***</c> in its place.
+    /// The glob is left to <c>dotnet nuget push</c>, which expands it itself — no shell is involved. It is built
+    /// with the platform separator because NuGet resolves a wildcard by taking <c>Path.GetDirectoryName</c> of it:
+    /// on Windows <c>bin/*.nupkg</c> fails with <c>File does not exist</c> where <c>bin\*.nupkg</c> succeeds.
+    /// The arguments are given as a list rather than interpolated so that only the key is masked — <c>runSensitive</c>
+    /// and <c>Cmd.ofFormattable true</c> mask every hole, which would hide the package path too.
     /// </remarks>
     let publish = inputs {
         let! key = Options.NuGet.key
 
+        let packages = System.IO.Path.Combine ("bin", "*.nupkg")
+
         let push =
             match key with
             | Some key ->
-                Cmd.ofFormattable true
-                    $"dotnet nuget push bin/*.nupkg --source https://api.nuget.org/v3/index.json --api-key {key} --skip-duplicate"
-            | None -> Cmd.ofString "dotnet nuget push bin/*.nupkg --source local --skip-duplicate"
+                let args =
+                    [ "nuget"; "push"; packages
+                      "--source"; "https://api.nuget.org/v3/index.json"
+                      "--api-key"; key
+                      "--skip-duplicate" ]
+
+                { Cmd.ofList "dotnet" args with Secrets = Set.singleton (List.findIndex ((=) key) args) }
+            | None -> Cmd.ofString $"dotnet nuget push {packages} --source local --skip-duplicate"
 
         return stage "publish" {
             echo (if key.IsSome then "Publishing to nuget.org." else "No NuGet API key provided. Publishing to the local feed if it exists.")
@@ -158,6 +166,8 @@ module Commands =
                 Prelude.restore
                 HouseKeeping.clean
                 ProjectManagement.build
+                Tests.build
+                Tests.execute
                 ProjectManagement.pack
                 ProjectManagement.publish
             }

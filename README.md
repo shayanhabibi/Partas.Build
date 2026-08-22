@@ -1,5 +1,130 @@
 # Partas.Build
 
+## Motivation
+
+I hate CICD/CLI plumbing.
+
+At the same time, it saves me from headache when I return to projects later.
+
+![meme](/public/programming-meme-2.jpg)
+
+`System.CommandLine` is great, comes with lots of batteries, and there exists
+a great enough wrapper for it with `FSharp.SystemCommandLine`.
+
+`Fun.Build` looks good for a github yaml type vibe of making workflows. But a majority
+of it is hampered by the outdated command line parsing, and lack of typing.
+
+So I combined `Fun.Build` with the strong typing of `FSharp.SystemCommandLine` builders,
+and dog fed it to this repos own CI/CD plumbing.
+
+So this begs the question: do I get friends now?
+
+> **No.** *This still sounds useless*
+
+Rude.
+
+Well, we've made everything compositional with a minimal
+contract at layers to bind command line arguments to their
+real values.
+
+```fsharp
+// ==== CLI OPTIONS/ARGS
+
+// We don't need CEs EVERYWHERE.
+// This is beautiful and readable.
+let quick =
+    Input.option<bool> "--quick"
+    |> Input.alias "-q"
+    |> Input.desc "Skips installations, linting, and other checks"
+let config =
+    Input.option<string> "--configuration"
+    |> Input.alias "-c"
+    |> Input.desc "Build/pack configuration"
+    |> Input.def "Release"
+    |> Input.arity Arity.ExactlyOne
+    |> Input.helpName "Debug|Release"
+    |> Input.acceptOnlyFromAmong [ "Debug"; "Release" ]
+let clean (skip: bool) = stage "clean" {
+    when' (not skip)
+    run (fun _ ->
+        !! "**/**/bin" // Fake.IO.Globbing.Operators
+        ++ "temp"
+        -- "bin"
+        |> Shell.cleanDirs
+        )
+    }
+
+let restore (skip: bool) = stage "restore" {
+    when' (not skip)
+    run "dotnet tool restore --verbosity q"
+    run (cmd $"dotnet restore {Solutions.Main}")
+    }
+
+let build (config: string) (skip: bool) =
+    stage "build" {
+        when' (not skip)
+        run (cmd $"dotnet build {Projects.FsProj.Solution} -c {config}")
+    }
+module Commands =
+    let build = command "build" {
+        description "Builds the solution"
+        pipeline "build" {
+            workingDir root
+            // The binding of inputs are collected and
+            // deduped by the CEs, so you never have to
+            // directly add them to the command (but you still can)
+            let options = inputs {
+                let! skip = quick
+                and! config = config
+                return {| skip = skip; config = config |}
+                }
+            restore options.skip
+            clean options.skip
+            build options.config options.skip
+            }
+        }
+```
+
+This makes it easier to declare what options an operation
+depends on immediately when writing it though. So the alternative
+would be this:
+
+```fsharp
+let build = inputs {
+    let! config = config
+    and! quick = skip
+    return stage "build" {
+        when' (not skip)
+        run (cmd $"dotnet build {Projects.FsProj.Solution} -c {config}")
+        }
+    }
+```
+
+```fsharp
+module Commands =
+    let build = command "build" {
+        description "Builds the solution"
+        pipeline "build" {
+            workingDir root
+            restore
+            clean
+            build
+            }
+        }
+```
+
+nice
+
+Friends now?
+
+## Documentation
+
+Not yet.
+
+Soon. Maybe if we're friends?
+
+# Development
+
 ## Build CLI
 
 Every repository task runs through the `Build` project rather than a script, so

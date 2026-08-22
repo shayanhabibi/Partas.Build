@@ -220,7 +220,7 @@ module CmdRunner =
             if not proc.HasExited then proc.Kill true
         with _ ->
             try proc.Kill() with _ -> ()
-
+    open SpectreConsoleExt
     /// <summary>Runs <paramref name="cmd"/> and maps its exit code through the stage's acceptable exit codes.</summary>
     /// <remarks>A cancelled command succeeds: the runner that cancelled it is the one reporting why.</remarks>
     let run (ctx: StageContext) (index: StepIndex) (cancellationToken: CancellationToken) (cmd: Cmd) = async {
@@ -228,7 +228,7 @@ module CmdRunner =
         let prefix = if noPrefix then "" else StageContext.buildStepPrefix ctx index
 
         if not noPrefix then AnsiConsole.Markup $"[green]{prefix}[/] "
-        AnsiConsole.WriteLine (Cmd.toLogString cmd)
+        AnsiConsole.nWriteLine(ctx, Cmd.toLogString cmd)
 
         // Redirection costs the child's colours, so it is only worth it when the output has to be prefixed.
         let redirect = not noPrefix && not (StageContext.getNoStdRedirectForStep ctx)
@@ -261,7 +261,7 @@ module CmdRunner =
 
         let killOnce () =
             if Interlocked.Exchange(&killed.contents, 1) = 0 then
-                AnsiConsole.MarkupLineInterpolated $"[yellow]{prefix} is cancelled or timed out; the process will be killed.[/]"
+                AnsiConsole.qMarkupLineInterpolated((), $"[yellow]{prefix} is cancelled or timed out; the process will be killed.[/]")
                 kill proc
 
         let! ambientToken = Async.CancellationToken

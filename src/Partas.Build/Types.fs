@@ -1,12 +1,19 @@
 namespace Partas.Build
 open System
+
+[<Struct; RequireQualifiedAccess>]
+type Verbosity =
+    | Quiet
+    | Normal
+    | Verbose
+    static member Default = Verbose
+
 type PipelineCancelledException(msg: string)  = inherit Exception(msg)
 
 type PipelineFailedException =
     inherit Exception
     new(msg: string) = { inherit Exception(msg) }
     new(msg: string, ex: exn) = { inherit Exception(msg, ex) }
-
 type EnvArg =
     {
         Name: string
@@ -28,6 +35,7 @@ type EnvArg =
 namespace Partas.Build.Internal
 
 open System
+open System.Runtime.CompilerServices
 open Partas.Build
 
 type StepSoftCancelledException(msg: string) = inherit Exception(msg)
@@ -57,6 +65,7 @@ and [<Struct; RequireQualifiedAccess>]
 and StageContext = {
     Id: int
     Name: string
+    Verbosity: Verbosity voption
     IsActive: StageContext -> bool
     IsParallel: StageContext -> bool
     ContinueStepsOnFailure: bool
@@ -77,6 +86,7 @@ and StageContext = {
 and PipelineContext = {
     Name: string
     Description: string voption
+    Verbosity: Verbosity voption
     Verify: PipelineContext -> bool
     EnvVars: Map<string, string>
     RemainingCmdArgs: string list
@@ -133,6 +143,7 @@ module StageContext =
             Timeout = ValueNone
             TimeoutForStep = ValueNone
             WorkingDir = ValueNone
+            Verbosity = ValueNone
             EnvVars = Map.empty
             AcceptableExitCodes = Set [| 0 |]
             FailIfIgnored = false
@@ -184,6 +195,14 @@ module StageContext =
     let rec buildEnvVars (ctx: StageContext) =
         mapParentContext Map.empty _.EnvVars buildEnvVars ctx
         |> Map.foldBack Map.add ctx.EnvVars
+
+    let rec getVerbosity (ctx: StageContext) =
+        let stageVerbosity = defaultValueArg ctx.Verbosity Verbosity.Default
+        match ctx.ParentContext with
+        | ValueNone -> stageVerbosity
+        | ValueSome(StageParent.Pipeline pipeline) -> defaultValueArg pipeline.Verbosity stageVerbosity
+        | ValueSome(StageParent.Stage parentStage) when parentStage.Verbosity.IsSome -> getVerbosity parentStage
+        | _ -> stageVerbosity
 
     let rec buildCurrentStepPrefix (ctx: StageContext) =
         let mutable isSubStage = false
@@ -244,6 +263,7 @@ module PipelineContext =
         {
             Name = name
             Description = ValueNone
+            Verbosity = ValueNone
             Verify = fun _ -> true
             EnvVars = envVars
             RemainingCmdArgs = []
@@ -288,6 +308,72 @@ module PipelineContext =
     //             Verify = fun ctx -> false
     //     }
 
+module SpectreConsoleExt =
+    type SRTPHelper =
+        static member inline getVerbosity (verbosity: Verbosity) = verbosity
+        static member inline getVerbosity (stageContext: StageContext) = StageContext.getVerbosity stageContext
+        static member inline getVerbosity (pipelineContext: PipelineContext) = defaultValueArg pipelineContext.Verbosity Verbosity.Default
+    let inline getVerbosity value = ((^T or SRTPHelper):(static member getVerbosity: ^T -> Verbosity) value)
+    let mutable hasWrittenLine = false
+    let inline setWritten () = hasWrittenLine <- true
+    let inline writeLine() =
+        if hasWrittenLine then
+            Spectre.Console.AnsiConsole.WriteLine()
+            hasWrittenLine <- false
+    type Spectre.Console.AnsiConsole with
+        static member inline vMarkupLineInterpolated(value, format: FormattableString) =
+            if (getVerbosity value).IsVerbose
+            then Spectre.Console.AnsiConsole.MarkupLineInterpolated format |> setWritten
+        static member inline nMarkupLineInterpolated(value, format: FormattableString) =
+            if (getVerbosity value).IsQuiet |> not then Spectre.Console.AnsiConsole.MarkupLineInterpolated format |> setWritten
+        static member inline qMarkupLineInterpolated(_, format: FormattableString) =
+            Spectre.Console.AnsiConsole.MarkupLineInterpolated format |> setWritten
+        static member inline vMarkupLine(value, format: string) =
+            if (getVerbosity value).IsVerbose then Spectre.Console.AnsiConsole.MarkupLine format |> setWritten
+        static member inline nMarkupLine(value, format: string) =
+            if (getVerbosity value).IsQuiet |> not then Spectre.Console.AnsiConsole.MarkupLine format |> setWritten
+        static member inline qMarkupLine(_, format: string) =
+            Spectre.Console.AnsiConsole.MarkupLine format |> setWritten
+        static member inline vWrite(value, format: string) =
+            if (getVerbosity value).IsVerbose then Spectre.Console.AnsiConsole.Write format |> setWritten
+        static member inline vWrite(value, format: Spectre.Console.Rule) =
+            if (getVerbosity value).IsVerbose then Spectre.Console.AnsiConsole.Write format |> setWritten
+        static member inline nWrite(value, format: string) =
+            if (getVerbosity value).IsQuiet |> not then Spectre.Console.AnsiConsole.Write format |> setWritten
+        static member inline nWrite(value, format: Spectre.Console.Rule) =
+            if (getVerbosity value).IsQuiet |> not then Spectre.Console.AnsiConsole.Write format |> setWritten
+        static member inline qWrite(_, format: string) =
+            Spectre.Console.AnsiConsole.Write format |> setWritten
+        static member inline vWriteLine(value, ?format: string) =
+            if (getVerbosity value).IsVerbose then
+                if format.IsNone
+                then writeLine()
+                else Spectre.Console.AnsiConsole.WriteLine format.Value |> setWritten
+        static member inline vWriteLine(value, num: int) =
+            if (getVerbosity value).IsVerbose then
+                if hasWrittenLine && num > 0 then
+                    for _ in 1..num do Spectre.Console.AnsiConsole.WriteLine()
+                    hasWrittenLine <- false
+        static member inline nWriteLine(value, ?format: string) =
+            if (getVerbosity value).IsQuiet |> not
+            then
+                if format.IsNone
+                then writeLine()
+                else Spectre.Console.AnsiConsole.WriteLine format.Value |> setWritten
+        static member inline nWriteLine(value, num: int) =
+            if (getVerbosity value).IsQuiet |> not then
+                if hasWrittenLine && num > 0 then
+                    for _ in 1..num do Spectre.Console.AnsiConsole.WriteLine()
+                    hasWrittenLine <- false
+        static member inline qWriteLine(_, ?format: string) =
+            if format.IsNone
+            then writeLine()
+            else Spectre.Console.AnsiConsole.WriteLine format.Value |> setWritten
+
+        static member inline qWriteLine(_, num: int) =
+            if hasWrittenLine && num > 0 then
+                for _ in 1..num do Spectre.Console.AnsiConsole.WriteLine()
+                hasWrittenLine <- false
 
 namespace Partas.Build
 
@@ -296,6 +382,7 @@ open FsToolkit.ErrorHandling
 open Partas.Build.Internal
 open System.Net.Http
 open Spectre.Console
+open SpectreConsoleExt
 
 module InputSpec =
     /// Concatenates input sets, keeping the first occurrence of each input.
@@ -388,7 +475,7 @@ module StageContext =
 
 
     let runHttpHealthCheckCancelableWithConfigRequest
-        (_ctx: StageContext)
+        (ctx: StageContext)
         (cancellationToken: System.Threading.CancellationToken)
         (configRequest: HttpRequestMessage -> unit)
         (url: string): Async<Result<unit, string>> = asyncResult {
@@ -396,19 +483,19 @@ module StageContext =
         let mutable shouldContinue = true
         while shouldContinue && not cancellationToken.IsCancellationRequested do
             try
-                AnsiConsole.MarkupLineInterpolated $"[yellow]Check {url} ...[/]"
+                AnsiConsole.vMarkupLineInterpolated(ctx, $"[yellow]Check {url} ...[/]")
                 use message = new HttpRequestMessage(HttpMethod.Get, url)
                 configRequest message
                 let! result = client.SendAsync(message, cancellationToken = cancellationToken) |> AsyncResult.ofTask |> AsyncResult.mapError _.Message
                 shouldContinue <- not result.IsSuccessStatusCode
             with
             | :? TaskCanceledException when cancellationToken.IsCancellationRequested -> shouldContinue <- false
-            | ex -> AnsiConsole.MarkupLineInterpolated $"[red]Health check failed: {ex.Message}[/]"
+            | ex -> AnsiConsole.qMarkupLineInterpolated(ctx, $"[red]Health check failed: {ex.Message}[/]")
 
             do! Async.Sleep 1000 |> Async.map Ok
         if cancellationToken.IsCancellationRequested
         then do! AsyncResult.error "Health check is cancelled."
-        else AnsiConsole.MarkupLineInterpolated $"[green]{url} is healthy![/]"
+        else AnsiConsole.nMarkupLineInterpolated(ctx, $"[green]{url} is healthy![/]")
     }
 
     let inline runHttpHealthCheckCancelable ctx cancellationToken url =
@@ -432,6 +519,7 @@ open System
 open System.Diagnostics
 open Spectre.Console
 open Partas.Build
+open SpectreConsoleExt
 
 [<AutoOpen>]
 module Runners =
@@ -446,7 +534,7 @@ module Runners =
             let isActive = stage.IsActive stage
             let pipeline = getParentPipeline stage
             let raisePipelineFailedException str =
-                AnsiConsole.MarkupLineInterpolated $"[red]{str}[/]"
+                AnsiConsole.qMarkupLineInterpolated(stage, $"[red]{str}[/]")
                 raise (PipelineFailedException str)
 
             pipeline |> Option.iter _.RunBeforeEachStage(stage)
@@ -480,27 +568,31 @@ module Runners =
                     use stepCts = new System.Threading.CancellationTokenSource(timeoutForStep)
                     use linkedStepCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(stepCts.Token, linkedCts.Token)
 
-                    AnsiConsole.WriteLine()
+                    AnsiConsole.qWriteLine(stage)
 
                     let extraInfo = $"timeout: {timeoutForStage}ms. step timeout: {timeoutForStep}ms."
                     let markupBoldTurquoise = sprintf "[turquoise2 bold]%s[/]"
                     let markupGrey = sprintf "[grey50]%s[/]"
                     let makeStageConditionMsg msg =
-                        getNamePath stage
-                        |> markupBoldTurquoise
-                        |> sprintf "%s %s started." msg
-                        |> fun msg -> msg + " " + extraInfo
-                        |> markupGrey
-                        |> Rule
-                        |> _.LeftJustified()
-                        |> AnsiConsole.Write
+                        AnsiConsole.nWrite(
+                            stage,
+                            getNamePath stage
+                            |> markupBoldTurquoise
+                            |> sprintf "%s %s started." msg
+                            |> fun msg -> msg + " " + extraInfo
+                            |> markupGrey
+                            |> Rule
+                            |> _.LeftJustified()
+                            )
                     match index with
                     | StageIndex.Condition -> makeStageConditionMsg "CONDITION STAGE"
                     | StageIndex.Stage i -> makeStageConditionMsg $"STAGE #{i}"
                     | StageIndex.Step _ ->
-                        $"%s{buildCurrentStepPrefix stage}> sub-stage started %s{extraInfo}"
-                        |> markupGrey
-                        |> AnsiConsole.MarkupLine
+                        AnsiConsole.nMarkupLine(
+                            stage,
+                            $"%s{buildCurrentStepPrefix stage}> sub-stage started %s{extraInfo}"
+                            |> markupGrey
+                        )
 
                     let steps =
                         stage.Steps
@@ -519,8 +611,8 @@ module Runners =
                             let exns = ResizeArray<Exception>()
                             try
                                 let sw = Stopwatch.StartNew()
-                                AnsiConsole.WriteLine()
-                                AnsiConsole.MarkupLineInterpolated $"""[grey50]{prefix} started{if isParallel then " in parallel -->" else ""}[/]"""
+                                AnsiConsole.qWriteLine(stage)
+                                AnsiConsole.vMarkupLineInterpolated(stage, $"""[grey50]{prefix} started{if isParallel then " in parallel -->" else ""}[/]""")
                                 let! isSuccess =
                                     match step with
                                     | Step.StepFn fn -> async {
@@ -542,11 +634,12 @@ module Runners =
                                     }
                                 let color = if isSuccess then "grey50" else "red"
                                 let shouldCancelStage = not isSuccess && not stage.ContinueStepsOnFailure && not stepErrorCts.IsCancellationRequested
-                                AnsiConsole.MarkupLineInterpolated(
+                                AnsiConsole.nMarkupLineInterpolated(
+                                    stage,
                                     $"""[{color}]{prefix} finished{if isParallel then " in parallel." else "."} {sw.ElapsedMilliseconds}ms. {if shouldCancelStage then "will trigger cancellation." else ""}[/]"""
                                 )
                                 if shouldCancelStage then stepErrorCts.Cancel()
-                                if i = stage.Steps.Length - 1 then AnsiConsole.WriteLine()
+                                if i = stage.Steps.Length - 1 then AnsiConsole.qWriteLine(())
                                 return isSuccess, exns
                             with
                             | :? PipelineCancelledException as ex ->
@@ -556,14 +649,14 @@ module Runners =
                                 raise ex
                                 return false, exns
                             | :? StepSoftCancelledException as ex ->
-                                AnsiConsole.MarkupLineInterpolated $"[yellow]{prefix} {ex.Message}.[/]"
+                                AnsiConsole.nMarkupLineInterpolated(stage,$"[yellow]{prefix} {ex.Message}.[/]")
                                 return true, exns
                             | :? StageSoftCancelledException as ex ->
-                                AnsiConsole.MarkupLineInterpolated $"[yellow]{prefix} {ex.Message}.[/]"
+                                AnsiConsole.nMarkupLineInterpolated(stage, $"[yellow]{prefix} {ex.Message}.[/]")
                                 isStageSoftCancelled <- true
                                 return true, exns
                             | ex ->
-                                AnsiConsole.MarkupLineInterpolated $"[red]{prefix} exception happened.[/]"
+                                AnsiConsole.qMarkupLineInterpolated(stage, $"[red]{prefix} exception happened.[/]")
                                 AnsiConsole.WriteException ex
                                 if not stage.ContinueStageOnFailure then
                                     exns.Add(Exception($"{prefix} {ex.Message}", ex.InnerException))
@@ -609,45 +702,49 @@ module Runners =
                     | ex ->
                         fail()
                         if linkedCts.Token.IsCancellationRequested && not stepErrorCts.IsCancellationRequested then
-                            AnsiConsole.MarkupLineInterpolated $"[yellow]{buildCurrentStepPrefix stage}> stage is cancelled or timed-out.[/]"
-                            AnsiConsole.WriteLine()
+                            AnsiConsole.nMarkupLineInterpolated(stage, $"[yellow]{buildCurrentStepPrefix stage}> stage is cancelled or timed-out.[/]")
+                            AnsiConsole.nWriteLine(stage)
                         else if not stepErrorCts.IsCancellationRequested then
-                            AnsiConsole.MarkupLineInterpolated $"[red]{buildCurrentStepPrefix stage}> stage's step failed[/]"
+                            AnsiConsole.qMarkupLineInterpolated((), $"[red]{buildCurrentStepPrefix stage}> stage's step failed[/]")
                             AnsiConsole.WriteException ex
-                            AnsiConsole.WriteLine()
+                            AnsiConsole.qWriteLine(())
 
                     let color = if isSuccess then "turquoise4" else "red"
                     match index with
                     | StageIndex.Condition ->
-                        AnsiConsole.Write(
+                        AnsiConsole.nWrite(
+                            stage,
                             Rule($"""[grey50]CONDITION STAGE [bold {color}]{getNamePath stage}[/] finished. {stageSw.ElapsedMilliseconds}ms.[/]""")
                                 .LeftJustified()
                         )
                     | StageIndex.Stage i ->
-                        AnsiConsole.Write(
+                        AnsiConsole.nWrite(
+                            stage,
                             Rule($"""[grey50]STAGE #{i} [bold {color}]{getNamePath stage}[/] finished. {stageSw.ElapsedMilliseconds}ms.[/]""")
                                 .LeftJustified()
                         )
                     | StageIndex.Step _ ->
-                        AnsiConsole.MarkupLineInterpolated(
+                        AnsiConsole.nMarkupLineInterpolated(
+                            stage,
                             $"""[grey50]{buildCurrentStepPrefix stage}> sub-stage finished. {stageSw.ElapsedMilliseconds}ms.[/]"""
                         )
-                    AnsiConsole.WriteLine()
+                    AnsiConsole.nWriteLine(stage)
                 else
-                    AnsiConsole.WriteLine()
+                    AnsiConsole.nWriteLine(stage)
                     match index with
-                    | StageIndex.Condition -> AnsiConsole.Write(Rule($"[grey50]CONDITION STAGE {getNamePath stage} is [yellow]inactive[/][/]").LeftJustified())
-                    | StageIndex.Stage i -> AnsiConsole.Write(Rule($"[grey50]STAGE #{i} {getNamePath stage} is [yellow]inactive[/][/]").LeftJustified())
+                    | StageIndex.Condition -> AnsiConsole.vWrite(stage, Rule($"[grey50]CONDITION STAGE {getNamePath stage} is [yellow]inactive[/][/]").LeftJustified())
+                    | StageIndex.Stage i -> AnsiConsole.vWrite(stage, Rule($"[grey50]STAGE #{i} {getNamePath stage} is [yellow]inactive[/][/]").LeftJustified())
                     | StageIndex.Step _ ->
-                        AnsiConsole.MarkupLineInterpolated($"[grey50]{buildCurrentStepPrefix stage}> sub-stage is [yellow]inactive[/][/]")
+                        AnsiConsole.vMarkupLineInterpolated(stage, $"[grey50]{buildCurrentStepPrefix stage}> sub-stage is [yellow]inactive[/][/]")
 
-                    AnsiConsole.WriteLine()
+                    AnsiConsole.vWriteLine(stage)
 
             finally pipeline |> Option.iter _.RunAfterEachStage(stage)
             stage.ContinueStageOnFailure || isSuccess, stepExns
 
     module PipelineContext =
         open System.Text
+        open SpectreConsoleExt
 
         let runStagesWithFailFast (ctx: PipelineContext) (failFast: bool) (cancelToken: Threading.CancellationToken) (stages: StageContext seq) =
             let stages =
@@ -670,37 +767,39 @@ module Runners =
             Console.InputEncoding <- Encoding.UTF8
             Console.OutputEncoding <- Encoding.UTF8
 
-            if not <| String.IsNullOrEmpty this.Name then
+            if not(String.IsNullOrEmpty this.Name) && (getVerbosity this).IsVerbose then
                 let title = FigletText this.Name
                 title.LeftJustified().Color <- Color.Lime
                 AnsiConsole.Write title
 
             let timeoutForPipeline = this.Timeout |> ValueOption.map _.TotalMilliseconds |> ValueOption.defaultValue -1. |> int
 
-            AnsiConsole.MarkupLineInterpolated $"Run PIPELINE [bold lime]{this.Name}[/]. Total timeout: {timeoutForPipeline}ms."
-            AnsiConsole.WriteLine()
+            AnsiConsole.nMarkupLineInterpolated(this, $"Run PIPELINE [bold lime]{this.Name}[/]. Total timeout: {timeoutForPipeline}ms.")
+            AnsiConsole.nWriteLine(this)
 
             let sw = Stopwatch.StartNew()
             let pipelineExns = ResizeArray<exn>()
             use cts = new Threading.CancellationTokenSource(timeoutForPipeline)
             let mutable hasErrors = false
             try
-                AnsiConsole.MarkupLine $"[turquoise4]Run stages[/]"
+                if this.Stages.Length > 1 then
+                    AnsiConsole.vMarkupLine(this, "[turquoise4]Run stages[/]")
                 let hasFailedStage, stageExns = runStagesWithFailFast this true cts.Token this.Stages
                 pipelineExns.AddRange stageExns
-                AnsiConsole.MarkupLine $"[turquoise4]Run stages finished[/]"
-                AnsiConsole.WriteLine()
-                AnsiConsole.WriteLine()
+                if this.Stages.Length > 1 then
+                    AnsiConsole.vMarkupLine(this, "[turquoise4]Run stages finished[/]")
+                    AnsiConsole.vWriteLine(this)
+                    AnsiConsole.vWriteLine(this)
 
                 let mutable hasFailedPostStage = false
-                if cts.IsCancellationRequested |> not then
-                    AnsiConsole.MarkupLine $"[turquoise4]Run post stages[/]"
+                if not cts.IsCancellationRequested && not (List.isEmpty this.PostStages) then
+                    AnsiConsole.vMarkupLine(this, "[turquoise4]Run post stages[/]")
                     let result, postStageExns = runStages this cts.Token this.PostStages
                     hasFailedPostStage <- result
                     pipelineExns.AddRange postStageExns
-                    AnsiConsole.MarkupLine $"[turquoise4]Run post stages finished[/]"
-                    AnsiConsole.WriteLine()
-                    AnsiConsole.WriteLine()
+                    AnsiConsole.vMarkupLine(this, "[turquoise4]Run post stages finished[/]")
+                    AnsiConsole.vWriteLine(this)
+                    AnsiConsole.vWriteLine(this)
 
                 hasErrors <- hasFailedStage || hasFailedPostStage
 
@@ -714,11 +813,10 @@ module Runners =
                 else if cts.IsCancellationRequested then "yellow"
                 else "lime"
 
-            let exitText = if cts.IsCancellationRequested then "canncelled" else "finished"
+            let exitText = if cts.IsCancellationRequested then "cancelled" else "finished"
 
-
-            AnsiConsole.MarkupLineInterpolated $"""PIPELINE [bold {color}]{this.Name}[/] is {exitText} in {sw.ElapsedMilliseconds} ms"""
-            AnsiConsole.WriteLine()
+            AnsiConsole.qMarkupLineInterpolated(this, $"""PIPELINE [bold {color}]{this.Name}[/] is {exitText} in {sw.ElapsedMilliseconds} ms""")
+            AnsiConsole.qWriteLine(())
 
 
             if cts.IsCancellationRequested then
@@ -728,7 +826,7 @@ module Runners =
                 for exn in pipelineExns do
                     let innerMessage = if exn.InnerException <> null then exn.InnerException.Message else ""
                     PipelineContext.printError this (exn.Message + " " + innerMessage)
-                AnsiConsole.WriteLine()
+                AnsiConsole.qWriteLine(())
                 raise (PipelineFailedException("Pipeline is failed because of exception", pipelineExns[0]))
             else if hasErrors then
                 "Pipeline is failed because result is not indicating as successful"

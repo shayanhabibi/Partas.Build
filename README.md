@@ -1,5 +1,8 @@
 # Partas.Build
 
+> The entire [`FSharp.SystemCommandLine`](https://github.com/jordanmarr/FSharp.SystemCommandLine) was essentially just copy pasted directly into this repo. All credit to the original author.
+> Much of the pipeline implementation is also copied from [`Fun.Build`](https://github.com/slaveOfTime/Fun.Build). All credit to the original author.
+
 ## Motivation
 
 I hate CICD/CLI plumbing.

@@ -1,0 +1,27 @@
+<Project>
+
+    <PropertyGroup>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <RepositoryUrl>https://github.com/shayanhabibi/Partas.Build</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <Authors>shayanhabibi</Authors>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <FsDocsAllowExecutableProject>true</FsDocsAllowExecutableProject>
+        <PackageProjectUrl>https://shayanhabibi.github.io/Partas.Build</PackageProjectUrl>
+        <FsDocsLicenseLink>https://github.com/shayanhabibi/Partas.Build/blob/master/LICENSE</FsDocsLicenseLink>
+        <FsDocsReleaseNotesLink>https://github.com/shayanhabibi/Partas.Build/blob/master/docs/RELEASE_NOTES.md</FsDocsReleaseNotesLink>
+    </PropertyGroup>
+
+    <!--
+    Projects opting out of the root build set IsExcludedFromRootBuild, which
+    Directory.Build.targets turns into a no-op Build. Used for Fable projects,
+    which are compiled by the fable tool rather than by MSBuild.
+    -->
+    <PropertyGroup Condition="'$(IsExcludedFromRootBuild)' == 'true'">
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+</Project>

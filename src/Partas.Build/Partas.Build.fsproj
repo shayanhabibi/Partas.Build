@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <RootNamespace>Partas.Build</RootNamespace>
+        <AssemblyName>Partas.Build</AssemblyName>
+        <PackageId>Partas.Build</PackageId>
+        <Title>Partas.Build</Title>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="System.CommandLine\Aliases.fs" />
+        <Compile Include="System.CommandLine\Inputs.fs" />
+        <Compile Include="Types.fs" />
+        <Compile Include="Process.fs" />
+        <Compile Include="Builders\Stage.fs" />
+        <Compile Include="Builders\Conditions.fs" />
+        <Compile Include="Builders\Pipeline.fs" />
+        <Compile Include="Builders\Inputs.fs" />
+        <Compile Include="Builders\Command.fs" />
+        <Compile Include="Builders.fs" />
+        <None Include="../../README.md" Pack="true" PackagePath="\"/>
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="FsToolkit.ErrorHandling" Version="5.2.0" />
+      <PackageReference Include="Spectre.Console" Version="0.57.2" />
+      <PackageReference Include="System.CommandLine" Version="2.0.11" />
+    </ItemGroup>
+
+</Project>

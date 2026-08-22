@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Build.fsproj" />
+  <Project Path="src/Partas.Build/Partas.Build.fsproj" />
+  <Project Path="tests/Partas.Build.Tests/Partas.Build.Tests.fsproj" />
+</Solution>

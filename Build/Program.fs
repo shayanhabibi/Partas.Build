@@ -45,6 +45,7 @@ module HouseKeeping =
                 !! "**/**/bin"
                 ++ "temp"
                 -- "bin"
+                ++ "bin/*.nupkg"
                 |> Shell.cleanDirs)
         }
     }

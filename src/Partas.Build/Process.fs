@@ -204,7 +204,11 @@ module CmdRunner =
     /// The working directory and environment variables come from walking `ParentContext` upward.
     let toStartInfo (ctx: StageContext) (cmd: Cmd) =
         let startInfo = ProcessStartInfo(resolveExecutable cmd.Executable, UseShellExecute = false)
+#if NETSTANDARD2_0
+        for arg in cmd.Arguments do startInfo.Arguments <- startInfo.Arguments + " " + arg
+#else
         for arg in cmd.Arguments do startInfo.ArgumentList.Add arg
+#endif
         StageContext.getWorkingDir ctx |> ValueOption.iter (fun dir -> startInfo.WorkingDirectory <- dir)
         StageContext.buildEnvVars ctx |> Map.iter (fun key value -> startInfo.Environment[key] <- value)
         startInfo
@@ -217,7 +221,11 @@ module CmdRunner =
     /// </remarks>
     let private kill (proc: Process) =
         try
+#if NETSTANDARD2_0
+            if not proc.HasExited then proc.Kill()
+#else
             if not proc.HasExited then proc.Kill true
+#endif
         with _ ->
             try proc.Kill() with _ -> ()
     open SpectreConsoleExt
@@ -267,8 +275,11 @@ module CmdRunner =
         let! ambientToken = Async.CancellationToken
         use _ambient = ambientToken.Register killOnce
         use _registration = cancellationToken.Register killOnce
-
+#if NETSTANDARD2_0
+        do proc.WaitForExit()
+#else
         do! proc.WaitForExitAsync() |> Async.AwaitTask
+#endif
 
         return
             if cancellationToken.IsCancellationRequested then Ok()

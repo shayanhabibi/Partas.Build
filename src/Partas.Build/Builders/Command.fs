@@ -70,41 +70,56 @@ type CommandBuilderBase() =
     member inline _.Combine([<InlineIfLambda>] build: BuildCommand, [<InlineIfLambda>] rest: BuildCommand): BuildCommand = build >> rest
     member inline _.For([<InlineIfLambda>] build: BuildCommand, [<InlineIfLambda>] fn: unit -> BuildCommand): BuildCommand = build >> fn()
 
+    /// <summary>Sets the command's description text shown in help.</summary>
     [<CustomOperation>] member inline _.
         description
         ([<InlineIfLambda>] build: BuildCommand, desc: string): BuildCommand
         = build >> fun cmd -> { cmd with Description = ValueSome desc }
 
+    /// <summary>Adds a single alias for the command.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/aliasRemark/*"/>
     [<CustomOperation>] member inline _.
         alias
         ([<InlineIfLambda>] build: BuildCommand, alias: string): BuildCommand
         = build >> fun cmd -> { cmd with Aliases = cmd.Aliases @ [ alias ] }
 
+    /// <summary>Adds multiple aliases for the command.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/aliasRemark/*"/>
     [<CustomOperation>] member inline _.
         aliases
         ([<InlineIfLambda>] build: BuildCommand, aliases: string seq): BuildCommand
         = build >> fun cmd -> { cmd with Aliases = cmd.Aliases @ List.ofSeq aliases }
 
+    /// <summary>Hides the command from help output.</summary>
+    /// <remarks>Defaults to <c>true</c> when no argument is provided. Pass <c>false</c> to show a previously hidden command.</remarks>
     [<CustomOperation>] member inline _.
         hidden
         ([<InlineIfLambda>] build: BuildCommand, ?flag: bool): BuildCommand
         = build >> fun cmd -> { cmd with Hidden = defaultArg flag true }
 
+    /// <summary>Registers an extra input on the command.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/addInputRemark/*"/>
     [<CustomOperation>] member inline _.
         addInput
         ([<InlineIfLambda>] build: BuildCommand, input: ActionInput<'T>): BuildCommand
         = build >> fun cmd -> { cmd with ExtraInputs = cmd.ExtraInputs @ [ input :> ActionInput ] }
 
+    /// <summary>Registers multiple extra inputs on the command.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/addInputRemark/*"/>
     [<CustomOperation>] member inline _.
         addInputs
         ([<InlineIfLambda>] build: BuildCommand, inputs: ActionInput seq): BuildCommand
         = build >> fun cmd -> { cmd with ExtraInputs = cmd.ExtraInputs @ List.ofSeq inputs }
 
+    /// <summary>Adds a subcommand.</summary>
+    /// <remarks>Subcommands create nested command hierarchies.</remarks>
     [<CustomOperation>] member inline _.
         addCommand
         ([<InlineIfLambda>] build: BuildCommand, subCommand: Command): BuildCommand
         = build >> fun cmd -> { cmd with SubCommands = cmd.SubCommands @ [ subCommand ] }
 
+    /// <summary>Adds multiple subcommands.</summary>
+    /// <remarks>Subcommands create nested command hierarchies.</remarks>
     [<CustomOperation>] member inline _.
         addCommands
         ([<InlineIfLambda>] build: BuildCommand, subCommands: Command seq): BuildCommand
@@ -124,11 +139,15 @@ type CommandBuilder(name: string) =
 type RootCommandBuilder(args: string array) =
     inherit CommandBuilderBase()
 
+    /// <summary>Configures System.CommandLine's parser behavior.</summary>
+    /// <remarks>Available only on <c>rootCommand</c>.</remarks>
     [<CustomOperation>] member inline _.
         parserConfiguration
         ([<InlineIfLambda>] build: BuildCommand, config: ParserConfiguration): BuildCommand
         = build >> fun cmd -> { cmd with ParserConfiguration = ValueSome config }
 
+    /// <summary>Configures System.CommandLine's invocation behavior.</summary>
+    /// <remarks>Available only on <c>rootCommand</c>.</remarks>
     [<CustomOperation>] member inline _.
         invocationConfiguration
         ([<InlineIfLambda>] build: BuildCommand, config: InvocationConfiguration): BuildCommand

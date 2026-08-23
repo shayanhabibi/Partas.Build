@@ -1,0 +1,71 @@
+name: CI
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch: 
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_VERSION: 9.0.101
+  NUGET_API_KEY: ${{ secrets.NUGET_KEY }}
+  
+# Kill other jobs when we trigger this workflow by sending new commits
+# to the PR.
+# https://stackoverflow.com/a/72408109
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+  
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+        with: 
+          fetch-depth: 0
+
+      # workaround for https://github.com/actions/runner/issues/2033
+      - name: ownership workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Run ci script
+        run: dotnet run publish --nuget ${{ env.NUGET_API_KEY }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Restore tools
+        run: dotnet tool restore
+      - name: Build slnx
+        run: dotnet build -c Release Partas.Build.slnx
+      - name: Generate documentation
+        run: dotnet fsdocs build --properties Configuration=Release
+      - name: Upload documentation
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./output
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-docs
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

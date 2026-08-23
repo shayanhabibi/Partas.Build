@@ -115,12 +115,18 @@ module CliApiManagement =
             |> Input.desc "Runs the operation in interactive mode."
 
         module NuGet =
+            let environmentKey =
+                try
+                let result = System.Environment.GetEnvironmentVariable "NUGET_API_KEY"
+                if System.String.IsNullOrEmpty result then None else Some result
+                with _ -> None
             let key =
                 Input.optionMaybe<string> "--nuget-key"
                 |> Input.alias "--nuget"
                 |> Input.arity Arity.ExactlyOne
                 |> Input.desc "NuGet API key"
                 |> Input.helpName "APIKEY"
+                |> Input.def environmentKey
 
         module GitHub =
             let key =

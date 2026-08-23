@@ -54,6 +54,8 @@ type PipelineBuilder(name: string) =
         InputSpec.map2 (fun stage build -> addStage stage >> build) spec rest
     member inline _.Combine([<InlineIfLambda>] build: BuildPipeline, rest: InputSpec<BuildPipeline>): InputSpec<BuildPipeline> =
         InputSpec.map (fun rest -> build >> rest) rest
+    member inline _.For(collection: 'Collection when 'Collection :> 'T seq, [<InlineIfLambda>] fn: 'T -> StageContext): BuildPipeline = fun ctx ->
+        { ctx with Stages = collection |> Seq.map fn |> Seq.toList |> List.append ctx.Stages }
     member inline _.For([<InlineIfLambda>] build: BuildPipeline, [<InlineIfLambda>] fn: unit -> BuildPipeline): BuildPipeline = build >> fn()
     member inline _.For([<InlineIfLambda>] build: BuildPipeline, [<InlineIfLambda>] fn: unit -> StageContext): BuildPipeline = build >> addStage (fn())
     member inline _.For([<InlineIfLambda>] build: BuildPipeline, [<InlineIfLambda>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildPipeline> =
@@ -76,26 +78,36 @@ type PipelineBuilder(name: string) =
         description
         ([<InlineIfLambda>] build: BuildPipeline, desc): BuildPipeline
         = build >> fun ctx -> { ctx with Description = ValueSome desc }
+    /// <summary>Sets the total timeout for the entire pipeline execution.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/timeoutUnits/*"/>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
     [<CustomOperation>] member inline _.
         timeout
         ([<InlineIfLambda>] build: BuildPipeline, seconds: int<second>): BuildPipeline
         = build >> fun ctx -> { ctx with Timeout = ValueSome(TimeSpan.FromSeconds(float seconds)) }
+    /// <summary>Sets the total timeout for the entire pipeline execution (accepts seconds as float).</summary>
     [<CustomOperation>] member inline _.
         timeout
         ([<InlineIfLambda>] build: BuildPipeline, seconds: float): BuildPipeline
         = build >> fun ctx -> { ctx with Timeout = ValueSome(TimeSpan.FromSeconds(seconds)) }
+    /// <summary>Sets the total timeout for the entire pipeline execution (accepts TimeSpan).</summary>
     [<CustomOperation>] member inline _.
         timeout
         ([<InlineIfLambda>] build: BuildPipeline, timeSpan: TimeSpan): BuildPipeline
         = build >> fun ctx -> { ctx with Timeout = ValueSome timeSpan }
+    /// <summary>Sets the default timeout for each individual stage in the pipeline.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/timeoutUnits/*"/>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
     [<CustomOperation>] member inline _.
         timeoutForStage
         ([<InlineIfLambda>] build: BuildPipeline, seconds: int<second>): BuildPipeline
         = build >> fun ctx -> { ctx with TimeoutForStage = ValueSome(TimeSpan.FromSeconds(float seconds)) }
+    /// <summary>Sets the default timeout for each individual stage in the pipeline (accepts seconds as float).</summary>
     [<CustomOperation>] member inline _.
         timeoutForStage
         ([<InlineIfLambda>] build: BuildPipeline, seconds: float): BuildPipeline
         = build >> fun ctx -> { ctx with TimeoutForStage = ValueSome(TimeSpan.FromSeconds(seconds)) }
+    /// <summary>Sets the default timeout for each individual stage in the pipeline (accepts TimeSpan).</summary>
     [<CustomOperation>] member inline _.
         timeoutForStage
         ([<InlineIfLambda>] build: BuildPipeline, timeSpan: TimeSpan): BuildPipeline

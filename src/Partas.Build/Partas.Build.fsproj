@@ -24,7 +24,20 @@
         <None Include="../../README.md" Pack="true" PackagePath="\"/>
     </ItemGroup>
 
+    <!--
+    Shared XML doc fragments spliced into the builders at compile time by the `<include>` tag (FS-1341).
+    Listed here so they are tracked compilation inputs: editing a fragment must invalidate the up-to-date check,
+    otherwise the generated Partas.Build.xml keeps the stale text. `<include>` is expanded only on the doc writer path,
+    and only by an F# 11 compiler — on older toolchains the tag is passed through verbatim, so the
+    shared remarks go missing while every inline summary still renders.
+    -->
     <ItemGroup>
+        <None Include="xmldoc/*.xml" />
+        <UpToDateCheckInput Include="xmldoc/*.xml" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="FSharp.Control.AsyncSeq" Version="4.15.0" />
       <PackageReference Include="FsToolkit.ErrorHandling" Version="5.2.0" />
       <PackageReference Include="Spectre.Console" Version="0.57.2" />
       <PackageReference Include="System.CommandLine" Version="2.0.11" />

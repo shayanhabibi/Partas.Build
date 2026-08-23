@@ -42,11 +42,13 @@ module HouseKeeping =
             when' (not quick)
 
             run (fun (_: StageContext) ->
+                !!"bin/*.nupkg"
+                |> Seq.iter Shell.rm
                 !! "**/**/bin"
                 ++ "temp"
                 -- "bin"
-                ++ "bin/*.nupkg"
-                |> Shell.cleanDirs)
+                |> Shell.cleanDirs
+                )
         }
     }
 
@@ -77,11 +79,11 @@ module ProjectManagement =
     /// </remarks>
     let publish = inputs {
         let! key = Options.NuGet.key
-
+        let envKey = Environment.environVarOrNone "NUGET_API_KEY"
         let packages = System.IO.Path.Combine ("bin", "*.nupkg")
 
         let push =
-            match key with
+            match key |> Option.orElse envKey with
             | Some key ->
                 let args =
                     [ "nuget"; "push"; packages
@@ -122,6 +124,16 @@ module Tests =
     }
 
 module Documentation =
+    /// <summary>Builds the library in Release so <c>docs/index.fsx</c> has a DLL to <c>#r</c>.</summary>
+    /// <remarks>
+    /// The guide is a literate script referencing <c>bin/Release/net8.0/Partas.Build.dll</c>, which is what makes it
+    /// fail the docs build when the API drifts. The configuration is pinned rather than bound to
+    /// <c>--configuration</c> because the <c>#r</c> path inside the script is a literal.
+    /// </remarks>
+    let library = stage "build library" {
+        run (cmd $"dotnet build {Projects.FsProj.Solution} -c Release")
+    }
+
     /// Serves under --watch, builds otherwise.
     let generate = inputs {
         let! watch = Options.watch
@@ -181,6 +193,7 @@ module Commands =
             pipeline "docs" {
                 workingDir root
                 Prelude.restore
+                Documentation.library
                 Documentation.generate
             }
         }

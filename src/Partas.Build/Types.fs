@@ -67,7 +67,7 @@ and StageContext = {
     Name: string
     Verbosity: Verbosity voption
     IsActive: StageContext -> bool
-    IsParallel: StageContext -> bool
+    IsParallel: StageContext -> int voption
     ContinueStepsOnFailure: bool
     ContinueStageOnFailure: bool
     Timeout: TimeSpan voption
@@ -137,7 +137,7 @@ module StageContext =
             Id = Random().Next()
             Name = name
             IsActive = fun _ -> true
-            IsParallel = fun _ -> false
+            IsParallel = fun _ -> ValueNone
             ContinueStepsOnFailure = false
             ContinueStageOnFailure = false
             Timeout = ValueNone
@@ -524,6 +524,7 @@ open SpectreConsoleExt
 [<AutoOpen>]
 module Runners =
     open StageContext
+    open FSharp.Control
     module StageContext =
         let rec run (stage: StageContext) (index: StageIndex) (ct: System.Threading.CancellationToken) =
             let mutable isSuccess = true
@@ -554,7 +555,7 @@ module Runners =
                             $"Pipeline failed because there were no active sub-stages; stage ({getNamePath stage}) required at least one"
                             |> raisePipelineFailedException
                     let stageSw = Stopwatch.StartNew()
-                    let isParallel = stage.IsParallel stage
+                    let parallelism = stage.IsParallel stage
                     let timeoutForStep: int = getTimeoutForStep stage
                     let timeoutForStage: int = getTimeoutForStage stage
 
@@ -612,13 +613,13 @@ module Runners =
                             try
                                 let sw = Stopwatch.StartNew()
                                 AnsiConsole.qWriteLine(stage)
-                                AnsiConsole.vMarkupLineInterpolated(stage, $"""[grey50]{prefix} started{if isParallel then " in parallel -->" else ""}[/]""")
+                                AnsiConsole.vMarkupLineInterpolated(stage, $"""[grey50]{prefix} started{if parallelism.IsSome then " in parallel -->" else ""}[/]""")
                                 let! isSuccess =
                                     match step with
                                     | Step.StepFn fn -> async {
                                         match! fn stage (i |> LanguagePrimitives.Int32WithMeasure) with
                                         | Error e when String.IsNullOrEmpty e ->
-                                            if not isParallel && getNoPrefixForStep stage
+                                            if parallelism.IsNone && getNoPrefixForStep stage
                                             then e
                                             else $"{prefix} {e}"
                                             |> printError stage
@@ -636,7 +637,7 @@ module Runners =
                                 let shouldCancelStage = not isSuccess && not stage.ContinueStepsOnFailure && not stepErrorCts.IsCancellationRequested
                                 AnsiConsole.nMarkupLineInterpolated(
                                     stage,
-                                    $"""[{color}]{prefix} finished{if isParallel then " in parallel." else "."} {sw.ElapsedMilliseconds}ms. {if shouldCancelStage then "will trigger cancellation." else ""}[/]"""
+                                    $"""[{color}]{prefix} finished{if parallelism.IsSome then " in parallel." else "."} {sw.ElapsedMilliseconds}ms. {if shouldCancelStage then "will trigger cancellation." else ""}[/]"""
                                 )
                                 if shouldCancelStage then stepErrorCts.Cancel()
                                 if i = stage.Steps.Length - 1 then AnsiConsole.qWriteLine(())
@@ -669,31 +670,27 @@ module Runners =
                                 if not stage.ContinueStepsOnFailure then stepErrorCts.Cancel()
 
                         let ts =
-                            if isParallel then
-                                async {
-                                    let completers = ResizeArray()
-                                    for ts in steps do
-                                        let! completer = Async.StartChild(ts, timeoutForStep)
-                                        completers.Add completer
-                                    let mutable i = 0
-                                    while i < completers.Count && (stage.ContinueStepsOnFailure || isSuccess) do
-                                        let! result, exns = completers[i]
-                                        handleExn exns
-                                        if not result && not stage.ContinueStepsOnFailure then stepErrorCts.Cancel()
-                                        i <- i + 1
-                                        succeedAND result
-                                }
-                            else
-                                async {
-                                    let mutable i = 0
-                                    let length = Seq.length steps
-                                    while i < length && (stage.ContinueStepsOnFailure || isSuccess) do
-                                        let! completer = Async.StartChild(Seq.item i steps, timeoutForStep)
-                                        let! result, exns = completer
-                                        handleExn exns
-                                        i <- i + 1
-                                        succeedAND result
-                                }
+                            let inline asyncHandler step = async {
+                                if stage.ContinueStepsOnFailure || isSuccess then
+                                    let! result, exns = step
+                                    handleExn exns
+                                    if not result && not stage.ContinueStepsOnFailure then stepErrorCts.Cancel()
+                                    succeedAND result
+                            }
+                            let steps =
+                                steps
+                                |> Seq.map (fun step -> Async.StartChild(step, timeoutForStep))
+                                |> AsyncSeq.ofSeqAsync
+                            match parallelism with
+                            | ValueSome p when p > 1 ->
+                                steps
+                                |> AsyncSeq.iterAsyncParallelThrottled p asyncHandler
+                            | ValueSome p when p < 1 ->
+                                steps
+                                |> AsyncSeq.iterAsyncParallel asyncHandler
+                            | _ ->
+                                steps
+                                |> AsyncSeq.iterAsync asyncHandler
                         Async.RunSynchronously(ts, cancellationToken = linkedCts.Token)
                     with
                     | :? PipelineCancelledException as ex -> raise ex

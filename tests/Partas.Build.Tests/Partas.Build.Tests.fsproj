@@ -12,6 +12,7 @@
         <Compile Include="Helpers.fs"/>
         <Compile Include="InputsTests.fs"/>
         <Compile Include="StageTests.fs"/>
+        <Compile Include="ParallelismTests.fs"/>
         <Compile Include="PipelineTests.fs"/>
         <Compile Include="ConditionsTests.fs"/>
         <Compile Include="CmdTests.fs"/>

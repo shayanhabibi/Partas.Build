@@ -18,7 +18,7 @@ let tests =
             let config, quick, watch = options ()
 
             let spec =
-                inputs {
+                input {
                     let! a = config
                     and! b = quick
                     and! c = watch
@@ -42,7 +42,7 @@ let tests =
             let config, quick, watch = options ()
 
             let spec =
-                inputs {
+                input {
                     let! c = config
                     and! q = quick
                     and! w = watch
@@ -57,7 +57,7 @@ let tests =
             let config, _, _ = options ()
 
             let spec =
-                inputs {
+                input {
                     let! a = config
                     and! b = config
                     return a, b
@@ -71,14 +71,14 @@ let tests =
             let config, quick, _ = options ()
 
             let two =
-                inputs {
+                input {
                     let! c = config
                     and! q = quick
                     return $"{c}/{q}"
                 }
 
             let composed =
-                inputs {
+                input {
                     let! x = two
                     and! y = config
                     return $"{x} y={y}"
@@ -96,7 +96,7 @@ let tests =
             let second = Input.option<bool> "--flag"
 
             let spec =
-                inputs {
+                input {
                     let! a = first
                     and! b = second
                     return a || b
@@ -106,7 +106,7 @@ let tests =
         }
 
         test "a spec that binds nothing declares nothing" {
-            let spec = inputs { return 42 }
+            let spec = input { return 42 }
             Expect.isEmpty spec.Inputs "return alone should collect no inputs"
             Expect.equal (spec.Read (parse [] "")) 42 "the value should survive with no options registered"
         }

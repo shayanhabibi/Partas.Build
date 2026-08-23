@@ -142,7 +142,7 @@ type ConditionsBuilder() =
     /// <include file="../xmldoc/conditions.xml" path="/conditions/platformNote/*"/>
     /// </remarks>
     [<CustomOperation("platformWindows")>]
-    member inline _.platformWindows([<InlineIfLambda>] build: BuildConditions) = addCondition build (Conditions.whenPlatform OSPlatform.Windows)
+    member inline _.platformWindows([<InlineIfLambda>] build: BuildConditions, ?isTrue: bool) = addCondition build (Conditions.whenPlatform OSPlatform.Windows >> if defaultArg isTrue true then id else not)
 
     /// <summary>Adds a condition that is met when running on Linux.</summary>
     /// <remarks>
@@ -150,7 +150,7 @@ type ConditionsBuilder() =
     /// <include file="../xmldoc/conditions.xml" path="/conditions/platformNote/*"/>
     /// </remarks>
     [<CustomOperation("platformLinux")>]
-    member inline _.platformLinux([<InlineIfLambda>] build: BuildConditions) = addCondition build (Conditions.whenPlatform OSPlatform.Linux)
+    member inline _.platformLinux([<InlineIfLambda>] build: BuildConditions, ?isTrue: bool) = addCondition build (Conditions.whenPlatform OSPlatform.Linux >> (if defaultArg isTrue true then id else not))
 
     /// <summary>Adds a condition that is met when running on macOS.</summary>
     /// <remarks>
@@ -158,7 +158,10 @@ type ConditionsBuilder() =
     /// <include file="../xmldoc/conditions.xml" path="/conditions/platformNote/*"/>
     /// </remarks>
     [<CustomOperation("platformOSX")>]
-    member inline _.platformOSX([<InlineIfLambda>] build: BuildConditions) = addCondition build (Conditions.whenPlatform OSPlatform.OSX)
+    member inline _.platformOSX([<InlineIfLambda>] build: BuildConditions, ?isTrue: bool) = addCondition build (Conditions.whenPlatform OSPlatform.OSX >> (if defaultArg isTrue true then id else not))
+
+    [<CustomOperation>] member inline _.
+        platform([<InlineIfLambda>] build: BuildConditions, platform: OSPlatform) = addCondition build (Conditions.whenPlatform platform)
 
 // The three `Run` members below are deliberately not `inline`: they apply a `BuildConditions`, and inlining an
 // application of a plain function type defeats the optimiser (`FS1118`) in Release builds only.
@@ -310,7 +313,7 @@ type StageBuilder with
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     [<CustomOperation("whenWindows")>]
-    member inline _.whenWindows([<InlineIfLambda>] build: BuildStage) = StageContext.buildStageIsActive build (Conditions.whenPlatform OSPlatform.Windows)
+    member inline _.whenWindows([<InlineIfLambda>] build: BuildStage, ?isTrue: bool) = StageContext.buildStageIsActive build (Conditions.whenPlatform OSPlatform.Windows >> if defaultArg isTrue true then id else not)
 
     /// <summary>Adds a condition that is met when running on Linux.</summary>
     /// <remarks>
@@ -319,7 +322,7 @@ type StageBuilder with
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     [<CustomOperation("whenLinux")>]
-    member inline _.whenLinux([<InlineIfLambda>] build: BuildStage) = StageContext.buildStageIsActive build (Conditions.whenPlatform OSPlatform.Linux)
+    member inline _.whenLinux([<InlineIfLambda>] build: BuildStage, ?isTrue: bool) = StageContext.buildStageIsActive build (Conditions.whenPlatform OSPlatform.Linux >> (if defaultArg isTrue true then id else not))
 
     /// <summary>Adds a condition that is met when running on macOS.</summary>
     /// <remarks>
@@ -328,7 +331,11 @@ type StageBuilder with
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     [<CustomOperation("whenOSX")>]
-    member inline _.whenOSX([<InlineIfLambda>] build: BuildStage) = StageContext.buildStageIsActive build (Conditions.whenPlatform OSPlatform.OSX)
+    member inline _.whenOSX([<InlineIfLambda>] build: BuildStage, ?isTrue: bool) = StageContext.buildStageIsActive build (Conditions.whenPlatform OSPlatform.OSX >> (if defaultArg isTrue true then id else not))
+    [<CustomOperation>] member inline _.
+        whenPlatform
+        ([<InlineIfLambda>] build: BuildStage, platform: OSPlatform): BuildStage
+        = StageContext.buildStageIsActive build (Conditions.whenPlatform platform)
 
 /// The stage is active when any of the conditions in the body is met. An empty body is never active.
 let whenAny = WhenAnyBuilder()

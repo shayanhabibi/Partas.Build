@@ -76,7 +76,7 @@ module Commands =
             // The binding of inputs are collected and
             // deduped by the CEs, so you never have to
             // directly add them to the command (but you still can)
-            let options = inputs {
+            let options = input {
                 let! skip = quick
                 and! config = config
                 return {| skip = skip; config = config |}

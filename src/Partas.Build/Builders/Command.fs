@@ -5,10 +5,11 @@ open System
 open System.CommandLine
 open Partas.Build
 open Partas.Build.Internal
-
+let inline private injectCommandInfo (spec: InputSpec<PipelineContext>): CommandSpec -> InputSpec<PipelineContext> =
+    fun cmd -> { spec with Read = spec.Read >> (function { Name = null | "" } as spec -> { spec with Name = cmd.Name; Description = cmd.Description } | spec -> spec) }
 /// Appends a pipeline to the command being built.
-let inline private addPipeline (spec: InputSpec<PipelineContext>): BuildCommand =
-    fun cmd -> { cmd with Pipelines = cmd.Pipelines @ [ spec ] }
+let inline private addPipeline (spec: InputSpec<PipelineContext>): BuildCommand = fun cmd -> { cmd with Pipelines = cmd.Pipelines @ [ injectCommandInfo
+                                                                                                                                          spec cmd ]  }
 
 /// Registers one input on a command. Context and injected inputs have nothing to register:
 /// they are supplied at invocation time rather than parsed from the command line.
@@ -165,6 +166,12 @@ type RootCommandBuilder(args: string array) =
         match spec.InvocationConfiguration with
         | ValueSome config -> parseResult.Invoke config
         | ValueNone -> parseResult.Invoke()
+
+module Command =
+    /// <summary>
+    /// Only use within a <c>command</c> or <c>rootCommand</c>.
+    /// </summary>
+    let pipeline = PipelineBuilder(null)
 
 let inline command name = CommandBuilder name
 let inline rootCommand args = RootCommandBuilder args

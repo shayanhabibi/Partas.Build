@@ -140,7 +140,7 @@ let tests =
             let config = Input.option<string> "--configuration" |> Input.def "Debug"
 
             let spec =
-                inputs {
+                input {
                     let! cfg = config
                     return stage "pack" { when' (cfg = "Release"); run noop }
                 }

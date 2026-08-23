@@ -1,4 +1,4 @@
-namespace Partas.Build
+﻿namespace Partas.Build
 open System
 
 [<Struct; RequireQualifiedAccess>]
@@ -89,7 +89,6 @@ and PipelineContext = {
     Verbosity: Verbosity voption
     Verify: PipelineContext -> bool
     EnvVars: Map<string, string>
-    RemainingCmdArgs: string list
     AcceptableExitCodes: Set<int>
     Timeout: TimeSpan voption
     TimeoutForStep: TimeSpan voption
@@ -266,7 +265,6 @@ module PipelineContext =
             Verbosity = ValueNone
             Verify = fun _ -> true
             EnvVars = envVars
-            RemainingCmdArgs = []
             AcceptableExitCodes = set [ 0 ]
             Timeout = ValueNone
             TimeoutForStep = ValueNone
@@ -670,17 +668,18 @@ module Runners =
                                 if not stage.ContinueStepsOnFailure then stepErrorCts.Cancel()
 
                         let ts =
+                            // Async.StartChild is what applies timeoutForStep, and it starts the work there and then, so it
+                            // has to happen inside the handler. Doing it while producing the sequence instead lets the
+                            // throttle pull -- and therefore start -- one more step than it is meant to have in flight.
                             let inline asyncHandler step = async {
                                 if stage.ContinueStepsOnFailure || isSuccess then
-                                    let! result, exns = step
+                                    let! child = Async.StartChild(step, timeoutForStep)
+                                    let! result, exns = child
                                     handleExn exns
                                     if not result && not stage.ContinueStepsOnFailure then stepErrorCts.Cancel()
                                     succeedAND result
                             }
-                            let steps =
-                                steps
-                                |> Seq.map (fun step -> Async.StartChild(step, timeoutForStep))
-                                |> AsyncSeq.ofSeqAsync
+                            let steps = AsyncSeq.ofSeq steps
                             match parallelism with
                             | ValueSome p when p > 1 ->
                                 steps

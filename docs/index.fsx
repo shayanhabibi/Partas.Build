@@ -6,10 +6,24 @@ index: 1
 ---
 *)
 (*** hide ***)
+// The sources are #load-ed rather than #r-ing a built DLL, for two reasons: the guide then type-checks against
+// the code as written instead of against the last build, and nothing holds a file lock — `fsdocs watch --eval`
+// keeps a loaded assembly open for its whole lifetime, which on Windows makes rebuilding the library fail.
+// Keep this list in the same order as the <Compile> items in Partas.Build.fsproj.
+#r "nuget: FSharp.Control.AsyncSeq, 4.15.0"
 #r "nuget: FsToolkit.ErrorHandling, 5.2.0"
-#r "nuget: Spectre.Console, 0.57.2"
 #r "nuget: System.CommandLine, 2.0.11"
-#r "../src/Partas.Build/bin/Release/net8.0/Partas.Build.dll"
+#r "nuget: Spectre.Console, 0.57.2"
+
+#load "../src/Partas.Build/System.CommandLine/Aliases.fs"
+#load "../src/Partas.Build/System.CommandLine/Inputs.fs"
+#load "../src/Partas.Build/Types.fs"
+#load "../src/Partas.Build/Process.fs"
+#load "../src/Partas.Build/Builders/Stage.fs"
+#load "../src/Partas.Build/Builders/Conditions.fs"
+#load "../src/Partas.Build/Builders/Pipeline.fs"
+#load "../src/Partas.Build/Builders/Inputs.fs"
+#load "../src/Partas.Build/Builders/Command.fs"
 
 open Partas.Build
 open Partas.Build.Internal
@@ -165,7 +179,7 @@ module Options =
         |> Input.acceptOnlyFromAmong [ "Debug"; "Release" ]
 
 let restore =
-    inputs {
+    input {
         let! quick = Options.quick
 
         return stage "restore" {
@@ -179,7 +193,7 @@ Bind several sources with `and!`, never with nested `let!`:
 *)
 
 let build =
-    inputs {
+    input {
         let! quick = Options.quick
         and! config = Options.config
 
@@ -260,7 +274,7 @@ Settings resolve by walking `ParentContext` upward — stage, then parent stage,
 let inherited =
     pipeline "inherited" {
         workingDir __SOURCE_DIRECTORY__
-        envVars [ "CI", "true" ]
+        envVars [ ("CI", "true") ]
         timeoutForStage 300<second>
 
         stage "uses the pipeline's dir and env" { run "dotnet --info" }
@@ -290,30 +304,102 @@ let testAll =
 The same works one layer up: a `pipeline` is a value, and a `command` can run several of them in declaration
 order.
 
+### Nameless Pipelines
+
+Short CLI programs/commands can often execute a single pipeline named the same as the command.
+To help with this pattern there is `Command.pipeline`. This inherits its description and name from
+the command it is defined within. It's essentially just `pipeline null { }`.
+
+*)
+
+let namelessPipe =
+    command "build" {
+        description "Build projects"
+        Command.pipeline {
+            stage "build" {
+                run "dotnet build"
+            }
+        }
+    }
+
+
+
+(**
 ## Advanced
 
 ### Parallelism
 
-`parallel'` makes a stage run its steps concurrently. It takes a flag, a bounding num, or a function returning one or the other
-`StageContext -> bool|int voption|Choice<bool|int,int|bool>`:
+`parallel'` makes a stage run its steps concurrently. It takes a flag, a throttle, or a function returning
+either — `StageContext -> bool`, `-> int voption`, `-> Choice<bool, int>`, `-> Choice<int, bool>`. Every
+overload lands on the same `int voption`:
+
+| You write | Resolves to | Behaviour |
+|---|---|---|
+| nothing | `ValueNone` | sequential |
+| `parallel' false` | `ValueNone` | sequential |
+| `parallel' 1` | `ValueSome 1` | sequential |
+| `parallel' n` (`n > 1`) | `ValueSome n` | at most `n` steps in flight |
+| `parallel'`, `parallel' true` | `ValueSome -1` | unbounded |
+| `parallel' 0`, `parallel' -1` | `ValueSome n`, `n < 1` | unbounded |
+
 *)
 
-// sequential - no parallelism
-// unbounded - parallelism using threadpool
-// bounded N - parallelism using N threads
 let fanOut =
     stage "fan out" {
-        parallel' false // sequential
-        parallel' true // unbounded
-        parallel' 0 // unbounded
-        parallel' 1 // sequential
-        parallel' 2 // bounded 2
-        parallel' -1 // unbounded
+        parallel' 2
+        run "dotnet build A.fsproj"
+        run "dotnet build B.fsproj"
+        run "dotnet build C.fsproj"
+    }
+
+(**
+The bound is exact — a stage set to `2` never has a third step in flight. That is worth stating because it is
+easy to implement otherwise: the per-step `Async.StartChild` that applies `timeoutForStep` also *starts* the
+step, so if it happened while producing the step sequence the throttle would gate the waiting, not the
+running, and one extra step would already be underway.
+
+To choose a mode at runtime, return the choice from a single condition rather than writing two operations:
+*)
+
+let adaptive =
+    stage "fan out" {
+        parallel' (fun (_: StageContext) -> if System.Environment.ProcessorCount > 4 then ValueSome 4 else ValueNone)
         run "dotnet build A.fsproj"
         run "dotnet build B.fsproj"
     }
 
 (**
+### Settings overwrite, conditions conjoin
+
+The two halves of the stage CE compose differently, and mixing them up is the most common surprise.
+`parallel'`, `workingDir`, `timeout` and the rest are **settings**: the last one written wins, and an earlier
+one leaves no trace.
+*)
+
+let lastWins =
+    stage "settings" {
+        parallel' 4
+        parallel' false   // sequential; the 4 is gone, not combined with
+        run "dotnet build"
+    }
+
+(**
+`when'`, `whenBranch`, `whenWindows` and the rest are **conditions**: each one narrows the stage to the
+logical AND of everything declared so far, so a second condition can only ever make the stage run less often.
+*)
+
+let narrows =
+    stage "conditions" {
+        whenBranch "master"
+        whenWindows       // master AND Windows, not Windows instead of master
+        run "dotnet pack"
+    }
+
+(**
+Hence the two different escape hatches. To widen a condition, write **one** `whenAny { }` containing both
+alternatives — a second operation would narrow. To switch between parallel modes, write **one** condition
+function returning the mode — a second operation would discard the first.
+
 ### Timeouts and cancellation
 
 Three scopes, settable on a stage or a pipeline: `timeout` (the stage or pipeline as a whole),
@@ -372,8 +458,9 @@ stage "publish" { run push }
 lists `--configuration` *because* a build stage binds it. Hand-registering reintroduces the drift the library
 exists to remove.
 
-**Expecting a second condition to replace the first.** Conditions conjoin. To widen rather than narrow, use a
-single `whenAll` (whenAll { when' ...; whenNot { ... } })`.
+**Expecting a second condition to replace the first.** Conditions conjoin; settings do not. A second
+`whenBranch` narrows to both branches at once (so: never), where a second `parallel'` silently throws the
+first away. To widen a condition, put the alternatives in one `whenAny { }`.
 
 **Marking a CE entry member `inline` when it applies a `Build*` alias.** Those aliases are plain function
 types, not delegates; inlining an application of one fails Release builds with `FS1118` while Debug compiles

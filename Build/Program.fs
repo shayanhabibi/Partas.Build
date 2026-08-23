@@ -25,7 +25,7 @@ let release = lazy ReleaseNotes.load "docs/RELEASE_NOTES.md"
 
 /// <summary>Stages every command opens with. All are skipped by <c>--quick</c>.</summary>
 module Prelude =
-    let restore = inputs {
+    let restore = input {
         let! quick = Options.quick
         return stage "restore" {
             when' (not quick)
@@ -35,7 +35,7 @@ module Prelude =
     }
 
 module HouseKeeping =
-    let clean = inputs {
+    let clean = input {
         let! quick = Options.quick
 
         return stage "clean" {
@@ -53,7 +53,7 @@ module HouseKeeping =
     }
 
 module ProjectManagement =
-    let build = inputs {
+    let build = input {
         let! config = Options.config
 
         return stage "build" {
@@ -77,7 +77,7 @@ module ProjectManagement =
     /// The arguments are given as a list rather than interpolated so that only the key is masked — <c>runSensitive</c>
     /// and <c>Cmd.ofFormattable true</c> mask every hole, which would hide the package path too.
     /// </remarks>
-    let publish = inputs {
+    let publish = input {
         let! key = Options.NuGet.key
         let envKey = Environment.environVarOrNone "NUGET_API_KEY"
         let packages = System.IO.Path.Combine ("bin", "*.nupkg")
@@ -101,7 +101,7 @@ module ProjectManagement =
     }
 
 module Tests =
-    let build = inputs {
+    let build = input {
         let! skipTests = Options.skipTests
         and! config = Options.config
 
@@ -113,7 +113,7 @@ module Tests =
 
     /// The suite is its own executable, so it is run rather than discovered: `--no-build` is safe because the
     /// stage above just built it in the same configuration.
-    let execute = inputs {
+    let execute = input {
         let! skipTests = Options.skipTests
         and! config = Options.config
 
@@ -124,18 +124,8 @@ module Tests =
     }
 
 module Documentation =
-    /// <summary>Builds the library in Release so <c>docs/index.fsx</c> has a DLL to <c>#r</c>.</summary>
-    /// <remarks>
-    /// The guide is a literate script referencing <c>bin/Release/net8.0/Partas.Build.dll</c>, which is what makes it
-    /// fail the docs build when the API drifts. The configuration is pinned rather than bound to
-    /// <c>--configuration</c> because the <c>#r</c> path inside the script is a literal.
-    /// </remarks>
-    let library = stage "build library" {
-        run (cmd $"dotnet build {Projects.FsProj.Solution} -c Release")
-    }
-
     /// Serves under --watch, builds otherwise.
-    let generate = inputs {
+    let generate = input {
         let! watch = Options.watch
 
         return stage "docs" {
@@ -193,7 +183,6 @@ module Commands =
             pipeline "docs" {
                 workingDir root
                 Prelude.restore
-                Documentation.library
                 Documentation.generate
             }
         }

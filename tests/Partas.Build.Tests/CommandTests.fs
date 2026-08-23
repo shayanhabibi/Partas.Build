@@ -22,7 +22,7 @@ let tests =
         test "a command registers the options its stages declared" {
             let config, quick, _ = options ()
 
-            let compile = inputs {
+            let compile = input {
                 let! cfg = config
                 and! q = quick
                 return stage "compile" { run (fun (_: StageContext) -> ignore (cfg, q)) }
@@ -56,7 +56,7 @@ let tests =
         test "an option two pipelines share is registered once" {
             let config, _, _ = options ()
 
-            let declaring name = inputs {
+            let declaring name = input {
                 let! cfg = config
                 return pipeline name { stage name { run (fun (_: StageContext) -> ignore cfg) } }
             }
@@ -73,7 +73,7 @@ let tests =
         test "addInput registers a flag no pipeline asked for" {
             let config, _, verbose = options ()
 
-            let declaring = inputs {
+            let declaring = input {
                 let! cfg = config
                 return pipeline "build" { stage "compile" { run (fun (_: StageContext) -> ignore cfg) } }
             }
@@ -110,7 +110,7 @@ let tests =
             let config, quick, _ = options ()
             let seen = ResizeArray<string>()
 
-            let compile = inputs {
+            let compile = input {
                 let! cfg = config
                 and! q = quick
                 return stage "compile" { run (fun (_: StageContext) -> seen.Add $"compile cfg={cfg} q={q}") }

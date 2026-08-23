@@ -58,4 +58,7 @@ type InputsBuilder() =
     [<EditorBrowsable(EditorBrowsableState.Never)>]
     member inline _.ReturnFrom(spec: InputSpec<'T>): InputSpec<'T> = spec
 
+let input = InputsBuilder()
+
+[<System.Obsolete("Use `input` instead.")>]
 let inputs = InputsBuilder()

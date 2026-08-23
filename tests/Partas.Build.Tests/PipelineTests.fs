@@ -42,14 +42,14 @@ let tests =
             let config, quick, watch = options ()
 
             let compileStage =
-                inputs {
+                input {
                     let! cfg = config
                     and! q = quick
                     return stage "compile" { run (fun (_: StageContext) -> ignore (cfg, q)) }
                 }
 
             let watchStage =
-                inputs {
+                input {
                     let! w = watch
                     return stage "watch" { run (fun (_: StageContext) -> ignore w) }
                 }
@@ -82,7 +82,7 @@ let tests =
         test "stages are re-parented onto the finished pipeline" {
             let config, _, _ = options ()
 
-            let declaring = inputs {
+            let declaring = input {
                 let! cfg = config
                 return stage "compile" { run (fun (_: StageContext) -> ignore cfg) }
             }
@@ -100,7 +100,7 @@ let tests =
         test "a declaring stage may come first" {
             let config, _, _ = options ()
 
-            let declaring = inputs {
+            let declaring = input {
                 let! cfg = config
                 return stage "compile" { run (fun (_: StageContext) -> ignore cfg) }
             }
@@ -119,7 +119,7 @@ let tests =
         test "settings apply on either side of a declaring stage" {
             let config, _, _ = options ()
 
-            let declaring = inputs {
+            let declaring = input {
                 let! cfg = config
                 return stage "compile" { run (fun (_: StageContext) -> ignore cfg) }
             }
@@ -146,12 +146,12 @@ let tests =
         test "a shared option is harvested once across stages" {
             let config, _, _ = options ()
 
-            let first = inputs {
+            let first = input {
                 let! cfg = config
                 return stage "first" { run (fun (_: StageContext) -> ignore cfg) }
             }
 
-            let second = inputs {
+            let second = input {
                 let! cfg = config
                 return stage "second" { run (fun (_: StageContext) -> ignore cfg) }
             }

@@ -20,7 +20,6 @@
         <Compile Include="Builders\Pipeline.fs" />
         <Compile Include="Builders\Inputs.fs" />
         <Compile Include="Builders\Command.fs" />
-        <Compile Include="Builders.fs" />
         <None Include="../../README.md" Pack="true" PackagePath="\"/>
     </ItemGroup>
 

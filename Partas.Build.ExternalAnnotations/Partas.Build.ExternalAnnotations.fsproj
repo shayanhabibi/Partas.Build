@@ -4,7 +4,7 @@
         <TargetFrameworks>net10.0;net8.0;netstandard2.0</TargetFrameworks>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <!-- Owned by `dotnet run bump`; CI packs whatever this says. -->
-        <Version>0.1.0</Version>
+        <Version>0.1.1</Version>
         <AssemblyVersion>0.0.0.0</AssemblyVersion>
     </PropertyGroup>
 
@@ -16,9 +16,13 @@
         <!--
         One copy of the MSBuild logic, used two ways: embedded so `init` can write it out, and
         packed to build/ so a PackageReference to this project imports it automatically.
+
+        NuGet only auto-imports build/$(PackageId).targets, so the packed copy is renamed on the way in;
+        packing it under its own name imports nothing and warns NU5129. The source file keeps the name
+        `init` writes into a consumer repository, which is a different thing from the package id.
         -->
         <EmbeddedResource Include="assets\Partas.ExternalAnnotations.targets" />
-        <None Include="assets\Partas.ExternalAnnotations.targets" Pack="true" PackagePath="build\" />
+        <None Include="assets\Partas.ExternalAnnotations.targets" Pack="true" PackagePath="build\$(PackageId).targets" />
     </ItemGroup>
 
     <ItemGroup>

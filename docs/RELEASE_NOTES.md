@@ -7,6 +7,8 @@
 * Error messages are percent-encoded into GitHub Actions annotations, so a multi-line failure survives one.
 * A step that failed with something to say reported nothing: the runner matched its error with an inverted
   guard, printing only the empty ones. Fixed, and covered by a test that records the console.
+* `Partas.Build.ExternalAnnotations` packs its MSBuild logic as `build/Partas.Build.ExternalAnnotations.targets`.
+  NuGet only auto-imports `build/$(PackageId).targets`, so under its own name it imported nothing (NU5129).
 * Both of a redirected child's streams are always drained, which removes a pipe-buffer deadlock.
 
 ### 0.1.4

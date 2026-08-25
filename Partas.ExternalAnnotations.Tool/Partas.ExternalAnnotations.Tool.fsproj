@@ -10,7 +10,7 @@
         <Description>Generates ReSharper external annotations for an assembly and ships them inside its NuGet package.</Description>
         <RollForward>LatestMajor</RollForward>
         <!-- Owned by `dotnet run bump`; CI packs whatever this says. -->
-        <Version>0.1.0</Version>
+        <Version>0.1.1</Version>
         <AssemblyVersion>0.0.0.0</AssemblyVersion>
     </PropertyGroup>
 

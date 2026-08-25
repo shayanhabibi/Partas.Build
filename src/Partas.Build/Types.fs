@@ -709,7 +709,7 @@ module Runners =
                                     match step with
                                     | Step.StepFn fn -> async {
                                         match! fn stage (i |> LanguagePrimitives.Int32WithMeasure) with
-                                        | Error e when String.IsNullOrEmpty e ->
+                                        | Error e when not (String.IsNullOrEmpty e) ->
                                             if parallelism.IsNone && getNoPrefixForStep stage
                                             then e
                                             else $"{prefix} {e}"

@@ -146,13 +146,17 @@ module Versioning =
     }
 
 module Tests =
+    /// <remarks>
+    /// Sequential, unlike the stage that builds the library: all three suites reference the same fixture
+    /// projects, and two MSBuild invocations racing to write one <c>AnnotationsFixture.Cs.dll</c> fail the
+    /// build with <c>CS2012 … used by another process</c> often enough to matter.
+    /// </remarks>
     let build = input {
         let! skipTests = Options.skipTests
         and! config = Baked.Input.DotNet.configString
         let config = Option.defaultValue "Release" config
         return stage "build tests" {
             when' (not skipTests)
-            parallel'
             run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.Tests``.Build(["-c"; config])))
             run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Build(["-c"; config])))
             run (Cmd.ofList "dotnet" (Repo.Project.``Partas.ExternalAnnotations.Tests``.Build(["-c"; config])))

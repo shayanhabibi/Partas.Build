@@ -8,7 +8,9 @@
 /// </remarks>
 module Partas.Build.Tests.OutputTests
 
+open System.IO
 open System.Threading
+open Spectre.Console
 open Expecto
 open Partas.Build
 open Partas.Build.Internal
@@ -154,12 +156,32 @@ let tests =
         }
 
         test "a lifted message survives being made into a GitHub Actions annotation" {
-            let encoded = StageContext.encodeWorkflowData "100% failed
-assertion at line 3"
+            // Escaped rather than written across two lines: a newline in the source is whatever the checkout
+            // made it, and git hands a Linux runner LF where it hands Windows CRLF.
+            let encoded = StageContext.encodeWorkflowData "100% failed\r\nassertion at line 3"
 
             // A workflow command ends at the first newline, so an unencoded lift would annotate "100% failed"
             // and drop the only line that says why.
             Expect.equal encoded "100%25 failed%0D%0Aassertion at line 3" "every newline and percent has to be encoded"
+        }
+
+        // Guards the printing side, which no other test here touches: a step's error was once matched with an
+        // inverted guard, so every failure with something to say was the one thing that went unreported.
+        testSequenced <| test "a failing step says why on the console, lifted capture and all" {
+            let recorded = new StringWriter()
+            let previous = AnsiConsole.Console
+            let console = AnsiConsole.Create (AnsiConsoleSettings (Ansi = AnsiSupport.No, ColorSystem = ColorSystemSupport.NoColors, Out = AnsiConsoleOutput recorded))
+            // Otherwise the console wraps at 80 columns and the message being looked for is broken across lines.
+            console.Profile.Width <- 1000
+            AnsiConsole.Console <- console
+
+            try
+                let built = pipeline "failing" { stage "one" { captureOutput (OutputCapture()); run loud } }
+                Expect.isFalse (runs built) "the pipeline should fail"
+            finally
+                AnsiConsole.Console <- previous
+
+            Expect.stringContains (recorded.ToString()) "Could not execute" "what the step captured has to reach the console when it fails"
         }
 
         test "noStdRedirectForStep wins, because there is nothing to route without redirection" {

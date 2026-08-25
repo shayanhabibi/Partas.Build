@@ -5,6 +5,8 @@
   any, everything otherwise — into the error message when a step fails.
 * `StageContext.writeLine ctx stream line` is the routable way for a step to emit output; `echo` now uses it.
 * Error messages are percent-encoded into GitHub Actions annotations, so a multi-line failure survives one.
+* A step that failed with something to say reported nothing: the runner matched its error with an inverted
+  guard, printing only the empty ones. Fixed, and covered by a test that records the console.
 * Both of a redirected child's streams are always drained, which removes a pipe-buffer deadlock.
 
 ### 0.1.4

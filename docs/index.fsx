@@ -24,6 +24,7 @@ index: 1
 #load "../src/Partas.Build/Builders/Pipeline.fs"
 #load "../src/Partas.Build/Builders/Inputs.fs"
 #load "../src/Partas.Build/Builders/Command.fs"
+#load "../src/Partas.Build/Baked.fs"
 
 open Partas.Build
 open Partas.Build.Internal
@@ -433,6 +434,98 @@ going after a failed stage; `continueOnStepFailure` sets both. `acceptExitCodes`
 
 `runBeforeEachStage` and `runAfterEachStage` take a `StageContext -> unit` and fire around every stage in the
 pipeline.
+
+## Baked: the batteries
+
+Everything above is the machinery. `Partas.Build.Baked` is the layer of things every build CLI ends up writing
+anyway — the common options, ready made and described, under `Baked.Input` (options) and `Baked.Argument`
+(positional arguments):
+
+| | |
+|---|---|
+| `Baked.Input.DotNet.config` | `--configuration`/`-c`, parsed to a `Configuration` DU and restricted to `Debug`/`Release` |
+| `Baked.Input.DotNet.configString` | the same option left as a string |
+| `Baked.Input.NuGet.apiKey` | `--nuget-key`/`--nuget`, help name `APIKEY` |
+| `Baked.Input.NuGet.apiKeyOrEnv` | the same, defaulting to `$NUGET_API_KEY` |
+| `Baked.Input.Project.target [ … ]` | `--project`/`-p`, one or more, restricted to the names given |
+| `Baked.Input.Versioning.bump` | `--bump`, parsed to a `Bump` DU |
+| `Baked.Argument.Versioning.bump` | the same as a positional argument, defaulting to `patch` |
+| `Baked.Input.CI.isCI` | `--ci`, defaulting to true when the environment looks like CI |
+
+They are `ActionInput` values like any other, so they bind in an `inputs` CE exactly as a hand-rolled option
+does:
+*)
+
+let packaging =
+    input {
+        let! config = Baked.Input.DotNet.configString
+        and! key = Baked.Input.NuGet.apiKeyOrEnv
+
+        let config = Option.defaultValue "Release" config
+
+        return stage "pack" {
+            when' key.IsSome
+            run (cmd $"dotnet pack -c {config}")
+        }
+    }
+
+(**
+### Versioning a project file
+
+`Baked.Version` is semantic-version arithmetic over the `Bump` DU, and `Baked.IO` applies it to a project file.
+A bump command is then a stage that binds the two inputs and edits the projects it was given:
+
+```fsharp
+let bump =
+    input {
+        let! bump = Baked.Argument.Versioning.bump
+        and! projects = Baked.Input.Project.target [ "MyLib"; "MyLib.Tool" ]
+        and! ci = Baked.Input.CI.isCI
+
+        return stage "bump" {
+            when' (not ci)
+
+            run (fun (_: StageContext) ->
+                projects
+                |> List.map (fun project ->
+                    match Baked.IO.bumpVersion (pathOf project) bump with
+                    | Ok (previous, next) -> printfn $"{project}: {previous} -> {next}"; Ok ()
+                    | Error error -> Error error.Message)
+                |> List.tryPick (function Error error -> Some (Error error) | Ok () -> None)
+                |> Option.defaultValue (Ok ()))
+        }
+    }
+```
+
+`IO.writeVersion` rewrites `<Version>` and `<AssemblyVersion>` in the first `PropertyGroup`, adding either
+element if it is absent, and answers what `<Version>` held before. It saves without the `<?xml ?>` declaration
+and byte-order mark `XDocument.Save` would otherwise introduce, so a bump reads as a one-line diff.
+
+The two properties are not the same string. `<Version>` is the package version and moves however you bump it;
+`<AssemblyVersion>` is `Version.assembly` — the major, and nothing else. An assembly's version is its identity
+to everything already compiled against it, so moving it on a patch bump breaks anything not rebuilt in the same
+pass with `Could not load file or assembly '<name>, Version=…'`. Holding it at the major confines that to the
+bump where the contract is allowed to break anyway.
+
+Pair it with `Baked.Input.CI.isCI`, as above, and versions are bumped locally and committed rather than
+invented on a runner: CI packs whatever the project file carries, so a published version is a property of the
+commit.
+
+The arithmetic itself:
+
+| from | bump | to |
+|---|---|---|
+| `1.2.3` | `patch` | `1.2.4` |
+| `1.2.3` | `minor` | `1.3.0` |
+| `1.2.3` | `major` | `2.0.0` |
+| `1.2.3` | `alpha` | `1.2.4-alpha.1` |
+| `1.2.4-alpha.1` | `alpha` | `1.2.4-alpha.2` |
+| `1.2.4-alpha.2` | `rc` | `1.2.4-rc.1` |
+| `1.2.4-rc.1` | `patch` | `1.2.4` |
+| anything | `Target "2.0.0-nightly.7"` | `2.0.0-nightly.7` |
+
+A `patch` on a pre-release *releases* it rather than moving past it, and `major`/`minor` drop the tag outright.
+`Target` is taken verbatim, unparsed.
 
 ## Antipatterns
 

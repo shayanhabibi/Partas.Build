@@ -27,9 +27,10 @@ Every task goes through the `Build` CLI project, not a script:
 ```shell
 dotnet run --project Build.fsproj -- --help
 dotnet run --project Build.fsproj -- build            # restore + build
-dotnet run --project Build.fsproj -- test             # build + Expecto suite
+dotnet run --project Build.fsproj -- test             # build + the three Expecto suites
 dotnet run --project Build.fsproj -- test --quick     # skip restores/clean
 dotnet run --project Build.fsproj -- publish          # pack + push (--nuget-key, else the `local` feed)
+dotnet run --project Build.fsproj -- bump [BUMP] -p <project>...   # rewrite <Version> in a project file
 dotnet run --project Build.fsproj -- docs [--watch]   # fsdocs build / live serve
 ```
 
@@ -46,7 +47,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Current state (verify before assuming)
 
-- Phases 0-7 of `PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (55 Expecto tests under `tests/Partas.Build.Tests`, one file per layer). The `Build/` CLI is itself written against the library, so it is the first thing a breaking change breaks.
+- Phases 0-7 of `PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (209 Expecto tests across three suites — 67 in `tests/Partas.Build.Tests`, one file per layer, plus `tests/Partas.Build.ExternalAnnotations.Tests` and `tests/Partas.ExternalAnnotations.Tests`). The `Build/` CLI is itself written against the library, so it is the first thing a breaking change breaks.
 - The DSL exists end to end: `inputs` (`Builders/Inputs.fs`), `stage` (`Builders/Stage.fs`), `pipeline` (`Builders/Pipeline.fs`), `command`/`rootCommand` (`Builders/Command.fs`). A stage that declares an input turns its pipeline into an `InputSpec<PipelineContext>`, and the command registers whatever those specs declare. Conditions are in `Builders/Conditions.fs` — `whenAll`/`whenAny`/`whenNot`/`whenEnv`/`whenStage` plus the `when'`/`whenEnvVar`/`whenBranch`/`when{Windows,Linux,OSX}` operations on `StageBuilder`. `Builders.fs` is still an empty stub.
 - `run`/`runSensitive` start real processes through `Process.fs`: a `Cmd` keeps the executable and its arguments apart all the way to `ProcessStartInfo.ArgumentList`, so the platform does the escaping. Interpolate through the `cmd` helper — `run (cmd $"dotnet build {project}")` — because `run $"..."` binds to the `string` overload and flattens the holes; `runSensitive $"..."` takes the `FormattableString` directly and masks every hole as `***`. There is no `Fake.Core.Process` dependency; `PLAN.md`'s *The command runner* records why.
 - Fun.Build's `Mode` (`Execution | CommandHelp | Verification`) has **not** been ported. `PipelineContext.Verify` is a placeholder and `buildPipelineVerification` is commented out. `CommandHelp` is redundant now that System.CommandLine generates help; whether `Verification` survives is an open question in `PLAN.md`.
@@ -54,7 +55,12 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Architecture notes
 
-Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Inputs.fs` → `Types.fs` → `Process.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Builders/Command.fs` → `Builders.fs`.
+Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Inputs.fs` → `Types.fs` → `Process.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Builders/Command.fs` → `Baked.fs` → `Builders.fs`.
+
+`Baked.fs` is the batteries-included layer over everything before it: ready-made `Input.*`/`Argument.*` definitions
+for the options every build CLI ends up wanting (`--configuration`, `--nuget-key`, `--project`, `--ci`, a version
+bump), the semver arithmetic in `Version`, and `IO.writeVersion`/`IO.bumpVersion` for editing a project file's
+`<Version>`. It is the only place in the library that writes to disk.
 
 `Types.fs` interleaves namespaces on purpose, in this order:
 1. `Partas.Build` — public `EnvArg`, pipeline exceptions.
@@ -76,15 +82,28 @@ Overload resolution in these builders fails in ways that are invisible by inspec
 
 ## The `Build/` CLI (this repo's own build, not the library)
 
-`Build/Spec.fs` holds the nouns, `Build/Program.fs` the stages and commands. Repository paths come from `EasyBuild.FileSystemProvider` (`type Root = AbsoluteFileSystem<...>`), so a renamed project breaks compilation instead of failing mid-release. Register new projects under `Spec.Projects`.
+`Build/Spec.fs` holds the nouns, `Build/Program.fs` the stages and commands. Repository paths come from `Partas.TypeProvider.BuildHelper` (`type Repo = BuildHelperProvider<...>`, with `Root`/`VRoot` for the real and virtual file systems), so a renamed project breaks compilation instead of failing mid-release. A new packable project goes in `Spec.Options.Project.versioned`, which is simultaneously what `bump` can version and what `pack` packs; `Repo.Project.<name>.Path` is a compile-time constant, while `PackageId`/`AssemblyName`/`Version` are MSBuild evaluations that shell out to `dotnet msbuild -getProperty`, so keep those off any path that runs before parsing.
 
 Since Phase 7 the CLI is written against Partas.Build (`Build.fsproj` has a project reference to `src/Partas.Build`), so it doubles as the design's acceptance test. A step is a stage; a stage that needs a flag binds it in `inputs { let! quick = Options.quick ... return stage "..." { when' (not quick); run (cmd $"dotnet ...") } }`, and the command registers it by running the pipeline that contains it. `Spec.fs` therefore has no per-command option lists and no process wrappers. Custom operations cannot sit under an `if`/`match`, so a stage that branches builds a `Cmd` first and runs it unconditionally — `ProjectManagement.publish` picks `Cmd.ofFormattable true` (masking, as `runSensitive` does) when `--nuget-key` is present and `Cmd.ofString` when it is not.
 
-Fake survives only where it is better than a process call: `ReleaseNotes.load`, `!!`/`Shell.cleanDirs` for the clean, and `Fake.Tools.Git`. Everything else is a `run` step.
+Fake survives only where it is better than a process call: `!!`/`Shell.cleanDirs` for the clean, and `Fake.Tools.Git`. Everything else is a `run` step.
 
 `Build/TargetOperators.fs` (list-taking FAKE operators) is unused, kept for a future real dependency graph.
 
-Versions come from `docs/RELEASE_NOTES.md` via `Fake.Core.ReleaseNotes`; they are not in the fsproj.
+### Versioning
+
+Versions live in the project files. Each packable project carries a `<Version>` (the package version) and an
+`<AssemblyVersion>`, and `dotnet run bump <major|minor|patch|alpha|beta|rc|preview|SEMVER> -p <project>...`
+rewrites both — the second as `<major>.0.0.0`, so it only moves when the major does. Nothing on the pack path
+passes a `Version` property any more: CI packs what the project file says, which makes the published version a
+property of the commit rather than of the machine that ran the pack. `bump` is skipped when `--ci` is set, which
+it is by default under GitHub Actions.
+
+`AssemblyVersion` deliberately trails `Version`. It is the identity every already-compiled assembly references,
+so letting a patch bump move it breaks anything not rebuilt in the same pass with `Could not load file or
+assembly '<name>, Version=…'` — which is exactly what happened when `<Version>` was first introduced here.
+
+`docs/RELEASE_NOTES.md` is a changelog only; no build step reads it.
 
 ## Conventions
 

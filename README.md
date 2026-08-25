@@ -140,11 +140,35 @@ dotnet run --project Build.fsproj -- --help
 | `build` | Restores and builds the solution |
 | `test` | Builds and runs the Expecto suite |
 | `publish` | Packs and pushes to NuGet (`--nuget-key`; falls back to the `local` feed) |
+| `bump` | Rewrites `<Version>` in a project file (`-p <project>`) |
 | `docs` | Builds the fsdocs site (`--watch` to serve it) |
 
 Flags belong to the commands whose stages read them: `--quick` skips restores
 and the clean, `--skip-tests` skips the suite, `--configuration` picks the
 configuration. None of them is registered by hand — see *Adding a step*.
+
+## Versioning
+
+Versions live in the project files, not in a notes file or on the command line:
+
+```shell
+dotnet run --project Build.fsproj -- bump           -p Partas.Build   # patch, the default
+dotnet run --project Build.fsproj -- bump minor     -p Partas.Build Partas.ExternalAnnotations
+dotnet run --project Build.fsproj -- bump rc        -p Partas.Build   # 0.2.0 -> 0.2.1-rc.1
+dotnet run --project Build.fsproj -- bump 2.0.0-nightly.7 -p Partas.Build
+```
+
+Each packable project carries a `<Version>` and an `<AssemblyVersion>`, and a
+bump rewrites both — the second as `<major>.0.0.0`, so it only moves when the
+major does. That is deliberate: an assembly's version is its identity to
+everything already compiled against it, and moving it on a patch bump breaks
+anything not rebuilt in the same pass.
+
+`pack` passes no version property, so CI publishes what the project file says.
+`bump` is skipped when `--ci` is set — which it is by default under GitHub
+Actions — so a version is bumped locally and committed, never invented on a
+runner. Add a project to `Spec.Options.Project.versioned` to make it a bump
+target and have it packed.
 
 ## Layout
 
@@ -155,7 +179,7 @@ Build/
   Spec.fs                 typed repository paths and the CLI options
   Program.fs              the stages and the commands
 src/Partas.Build/      the library
-tests/Partas.Build.Tests/  the Expecto suite
+tests/                    the Expecto suites
 ```
 
 ### Adding a project

@@ -81,7 +81,7 @@ let tests =
         ]
 
         testList "the help" [
-            test "each command's help lists the options its stages declared" {
+            ftest "each command's help lists the options its stages declared" {
                 // The payoff of harvesting: help text is generated from the pipeline, so a stage
                 // that gains an option documents it without anyone writing help text for it.
                 let cases = [
@@ -99,7 +99,7 @@ let tests =
                         Expect.stringContains help option $"{option} is missing from {command.Name}'s help"
             }
 
-            test "each command's help says what the command is for" {
+            ftest "each command's help says what the command is for" {
                 for command in [ generateCommand; verifyCommand; initCommand ] do
                     let _, help = helpOf command "--help"
                     Expect.stringContains help command.Description $"{command.Name}'s description"

@@ -314,5 +314,28 @@ type PipelineBuilder(name: string) =
         post
         (spec: InputSpec<BuildPipeline>, stages: StageContext list): InputSpec<BuildPipeline>
         = InputSpec.map (fun (build: BuildPipeline) -> this.post(build, stages)) spec
-
+    [<CustomOperation>] member inline _.
+        verbosity
+        ([<InlineIfLambda>] build: BuildPipeline, verbosity: Verbosity): BuildPipeline
+        = build >> fun ctx -> { ctx with Verbosity = ValueSome verbosity }
+    [<CustomOperation>] member inline _.
+        verbose
+        ([<InlineIfLambda>] build: BuildPipeline): BuildPipeline
+        = build >> fun ctx -> { ctx with Verbosity = ValueSome Verbosity.Verbose }
+    [<CustomOperation>] member inline _.
+        quiet
+        ([<InlineIfLambda>] build: BuildPipeline): BuildPipeline
+        = build >> fun ctx -> { ctx with Verbosity = ValueSome Verbosity.Quiet }
+    [<CustomOperation>] member inline this.
+        verbosity
+        (build: InputSpec<BuildPipeline>, verbosity: Verbosity): InputSpec<BuildPipeline>
+        = InputSpec.map (fun (build: BuildPipeline) -> this.verbosity(build, verbosity)) build
+    [<CustomOperation>] member inline this.
+        verbose
+        (build: InputSpec<BuildPipeline>): InputSpec<BuildPipeline>
+        = InputSpec.map (fun (build: BuildPipeline) -> this.verbose(build)) build
+    [<CustomOperation>] member inline this.
+        quiet
+        (build: InputSpec<BuildPipeline>): InputSpec<BuildPipeline>
+        = InputSpec.map (fun (build: BuildPipeline) -> this.quiet(build)) build
 let inline pipeline name = PipelineBuilder(name)

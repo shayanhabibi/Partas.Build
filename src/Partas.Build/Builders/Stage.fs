@@ -347,6 +347,20 @@ and [<EditorBrowsable(EditorBrowsableState.Advanced)>]
                   return Ok()
               }) ] }
 
+    [<CustomOperation>] member inline _.
+        verbosity
+        ([<InlineIfLambda>] build: BuildStage, verbosity: Verbosity): BuildStage
+        = build >> fun ctx -> { ctx with Verbosity = ValueSome verbosity }
+    [<CustomOperation>] member inline _.
+        verbose
+        ([<InlineIfLambda>] build: BuildStage): BuildStage
+        = build >> fun ctx -> { ctx with Verbosity = ValueSome Verbosity.Verbose }
+    [<CustomOperation>] member inline _.
+        quiet
+        ([<InlineIfLambda>] build: BuildStage): BuildStage
+        = build >> fun ctx -> { ctx with Verbosity = ValueSome Verbosity.Quiet }
+
+
     /// <summary>Adds a step that prints a message.</summary>
     /// <remarks>The message is prefixed with the step number unless <c>noPrefixForStep</c> is enabled.</remarks>
     [<CustomOperation>] member inline

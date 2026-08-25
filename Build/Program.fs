@@ -21,9 +21,6 @@ initializeContext ()
 
 let private root = Root.``.``
 
-/// Release notes drive the assembly and package version.
-let release = lazy ReleaseNotes.load "docs/RELEASE_NOTES.md"
-
 /// <summary>Stages every command opens with. All are skipped by <c>--quick</c>.</summary>
 module Prelude =
     let restore = input {
@@ -170,6 +167,7 @@ module Tests =
         let config = Option.defaultValue "Release" config
         return stage "test" {
             when' (not skipTests)
+            quiet
             run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.Tests``.Run(["-c"; config; "--no-build"; "--"; "--summary"; "--colours"; "256"])))
             run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Run(["-c"; config; "--no-build"; "--"; "--summary"; "--colours"; "256"])))
             run (Cmd.ofList "dotnet" (Repo.Project.``Partas.ExternalAnnotations.Tests``.Run(["-c"; config; "--no-build"; "--"; "--summary"; "--colours"; "256"])))

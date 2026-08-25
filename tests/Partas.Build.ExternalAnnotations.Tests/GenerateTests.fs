@@ -76,10 +76,14 @@ let tests =
                     let members = membersIn output
                     Expect.isNonEmpty members "the fixture carries JetBrains annotations, so some member must be named"
 
-                    Expect.contains
-                        members
-                        "M:Fixture.Surface.JetBrainsSurface.Clean(System.String)"
-                        "the annotated member")
+                    // Every kind of site the fixture carries: a member, a property, and a type.
+                    for expected in [
+                        "M:Fixture.Surface.JetBrainsSurface.Check(System.String)"
+                        "M:Fixture.Surface.JetBrainsSurface.Inject(System.String)"
+                        "P:Fixture.Surface.JetBrainsSurface.Name"
+                        "T:Fixture.Surface.JetBrainsSurface"
+                    ] do
+                        Expect.contains members expected "the annotated member")
             }
 
             test "the default collects the JetBrains namespace rather than every attribute" {

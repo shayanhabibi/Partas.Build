@@ -54,25 +54,35 @@ module HouseKeeping =
     }
 
 module ProjectManagement =
+    type PartasBuild = Repo.Project.``Partas.Build``
+    type PartasExternalAnnotations = Repo.Project.``Partas.ExternalAnnotations``
+    type PartasExternalAnnotationsTool = Repo.Project.``Partas.ExternalAnnotations.Tool``
+    type PartasBuildExternalAnnotations = Repo.Project.``Partas.Build.ExternalAnnotations``
     let build = input {
-        let! config = Options.config
-
+        let! config = Baked.Input.DotNet.config
+        let config = Option.map _.ToString() config |> Option.defaultValue "Release"
         return stage "build" {
-            run (fun (_: StageContext) ->
-                let version = release.Value.AssemblyVersion
-                Repo.Project.``Partas.Build``.Build(
-                    ["-c"; config; $"-p:PackageVersion={version}"; $"-p:Version={version}"]
-                    )
-                |> Cmd.ofList "dotnet"
-            )
+            parallel'
+            // references all projects one way or another
+            run (Cmd.ofList "dotnet" (PartasBuild.Build [ "-c"; config ]))
+            run (Cmd.ofList "dotnet" (PartasBuildExternalAnnotations.Build ["-c"; config]))
+            run (Cmd.ofList "dotnet" (PartasExternalAnnotations.Build [ "-c"; config ]))
+            run (Cmd.ofList "dotnet" (PartasExternalAnnotationsTool.Build ["-c"; config]))
         }
     }
 
+    let private packArgs = [ "--no-restore"; "-o"; VRoot.bin.ToString() ]
+    /// <remarks>
+    /// No <c>Version</c> property is passed: the version is whatever <c>&lt;Version&gt;</c> in the project file says,
+    /// which <c>bump</c> writes locally and CI only reads. Overriding it here would make the packed version a
+    /// property of the machine that ran the pack rather than of the commit.
+    /// </remarks>
     let pack = stage "pack" {
-        run (fun (_: StageContext) ->
-            let version = release.Value.AssemblyVersion
-            Repo.Project.``Partas.Build``.Pack(["--no-restore"; "-o"; VRoot.bin.ToString(); $"-p:PackageVersion={version}"; $"-p:Version={version}"])
-            |> Cmd.ofList "dotnet")
+        parallel'
+        run (Cmd.ofList "dotnet" (PartasBuild.Pack packArgs))
+        run (Cmd.ofList "dotnet" (PartasBuildExternalAnnotations.Pack packArgs))
+        run (Cmd.ofList "dotnet" (PartasExternalAnnotations.Pack packArgs))
+        run (Cmd.ofList "dotnet" (PartasExternalAnnotationsTool.Pack packArgs))
     }
 
     /// <summary>Pushes every package in <c>bin</c>, to nuget.org with a key and to the <c>local</c> feed without one.</summary>
@@ -84,12 +94,11 @@ module ProjectManagement =
     /// and <c>Cmd.ofFormattable true</c> mask every hole, which would hide the package path too.
     /// </remarks>
     let publish = input {
-        let! key = Options.NuGet.key
-        let envKey = Environment.environVarOrNone "NUGET_API_KEY"
+        let! key = Baked.Input.NuGet.apiKeyOrEnv
         let packages = Path.Combine (VRoot.bin.ToString(), "*.nupkg")
 
         let push =
-            match key |> Option.orElse envKey with
+            match key with
             | Some key ->
                 let args =
                     [ "nuget"; "push"; packages
@@ -106,14 +115,50 @@ module ProjectManagement =
         }
     }
 
+module Versioning =
+    /// <summary>Rewrites <c>&lt;Version&gt;</c> in each <c>--project</c>, in place.</summary>
+    /// <remarks>
+    /// Skipped when <c>--ci</c> is set (which it is by default under GitHub Actions and friends): a version is
+    /// bumped locally and committed, so CI packs what the project file already carries rather than deciding a
+    /// version of its own.
+    /// </remarks>
+    let bump = input {
+        let! bump = Baked.Argument.Versioning.bump
+        and! projects = Options.Project.target
+        and! ci = Baked.Input.CI.isCI
+
+        return stage "bump" {
+            when' (not ci)
+
+            run (fun (_: StageContext) ->
+                projects
+                |> List.map (fun project ->
+                    match Options.Project.getProj project with
+                    // Unreachable while `acceptOnlyFromAmong` is fed from the same list, but the two are only
+                    // conventionally in step, and a typo here should not silently bump nothing.
+                    | None -> Error $"'%s{project}' is not a known project."
+                    | Some path ->
+                        match Baked.IO.bumpVersion path bump with
+                        | Ok (previous, next) ->
+                            printfn $"%s{project}: %s{previous} -> %s{next}"
+                            Ok ()
+                        | Error error -> Error $"%s{project}: %s{error.Message}")
+                |> List.tryPick (function Error error -> Some (Error error) | Ok () -> None)
+                |> Option.defaultValue (Ok ()))
+        }
+    }
+
 module Tests =
     let build = input {
         let! skipTests = Options.skipTests
-        and! config = Options.config
-
+        and! config = Baked.Input.DotNet.configString
+        let config = Option.defaultValue "Release" config
         return stage "build tests" {
             when' (not skipTests)
+            parallel'
             run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.Tests``.Build(["-c"; config])))
+            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Build(["-c"; config])))
+            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.ExternalAnnotations.Tests``.Build(["-c"; config])))
         }
     }
 
@@ -121,11 +166,14 @@ module Tests =
     /// stage above just built it in the same configuration.
     let execute = input {
         let! skipTests = Options.skipTests
-        and! config = Options.config
-
+        and! config = Baked.Input.DotNet.configString
+        let config = Option.defaultValue "Release" config
         return stage "test" {
             when' (not skipTests)
             run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.Tests``.Run(["-c"; config; "--no-build"; "--"; "--summary"; "--colours"; "256"])))
+            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Run(["-c"; config; "--no-build"; "--"; "--summary"; "--colours"; "256"])))
+            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.ExternalAnnotations.Tests``.Run(["-c"; config; "--no-build"; "--"; "--summary"; "--colours"; "256"])))
+
         }
     }
 
@@ -182,6 +230,16 @@ module Commands =
             }
         }
 
+    let bump =
+        command "bump" {
+            description "Bumps the <Version> of the target project(s): dotnet run bump [major|minor|patch|alpha|beta|rc|preview|<SEMVER>] -p <project>"
+
+            pipeline "bump" {
+                workingDir root
+                Versioning.bump
+            }
+        }
+
     let docs =
         command "docs" {
             description "Builds the documentation, or serves it with --watch"
@@ -201,6 +259,7 @@ let mainBuilder argsv =
             [ Commands.build
               Commands.test
               Commands.publish
+              Commands.bump
               Commands.docs ]
     }
 

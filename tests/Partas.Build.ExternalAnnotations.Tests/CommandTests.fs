@@ -1,4 +1,4 @@
-/// <summary>
+﻿/// <summary>
 /// The three commands as a consumer meets them, and the tool that is nothing but the three.
 /// </summary>
 /// <remarks>
@@ -21,17 +21,17 @@ open Partas.Build.ExternalAnnotationsTests.Helpers
 let private optionsOf (command: Command) =
     [ for option in command.Options -> option.Name ] |> List.sort
 
-/// Runs <paramref name="body"/> with the console captured, which is how the tool's own output is read.
-let private capturing (body: unit -> 'a) =
-    let original = Console.Out
+/// <summary>The help a command renders, read without touching the console.</summary>
+/// <remarks>
+/// Through <c>InvocationConfiguration.Output</c> rather than <c>Console.SetOut</c>: the console is
+/// process-wide, and Expecto runs these lists in parallel, so a captured console reads whatever
+/// another test happened to write.
+/// </remarks>
+let private helpOf (command: Command) (commandLine: string) =
     use writer = new StringWriter ()
-
-    try
-        Console.SetOut writer
-        let result = body ()
-        result, writer.ToString ()
-    finally
-        Console.SetOut original
+    let config = InvocationConfiguration (Output = writer)
+    let exitCode = command.Parse(commandLine).Invoke config
+    exitCode, writer.ToString ()
 
 [<Tests>]
 let tests =
@@ -80,40 +80,51 @@ let tests =
             }
         ]
 
+        testList "the help" [
+            test "each command's help lists the options its stages declared" {
+                // The payoff of harvesting: help text is generated from the pipeline, so a stage
+                // that gains an option documents it without anyone writing help text for it.
+                let cases = [
+                    generateCommand, [ "--assembly"; "--output"; "--attribute"; "--strict" ]
+                    verifyCommand, [ "--package"; "--min-members" ]
+                    initCommand, [ "--annotations-tool"; "--force"; "--directory" ]
+                ]
+
+                for command, options in cases do
+                    let exitCode, help = helpOf command "--help"
+
+                    Expect.equal exitCode 0 $"{command.Name} --help exit code"
+
+                    for option in options do
+                        Expect.stringContains help option $"{option} is missing from {command.Name}'s help"
+            }
+
+            test "each command's help says what the command is for" {
+                for command in [ generateCommand; verifyCommand; initCommand ] do
+                    let _, help = helpOf command "--help"
+                    Expect.stringContains help command.Description $"{command.Name}'s description"
+            }
+        ]
+
         testList "the tool" [
-            test "is the three commands and no more" {
-                let _, help = capturing (fun () -> Partas.ExternalAnnotations.Tool.mainBuilder [| "--help" |])
-
+            // Asserted through what the tool accepts rather than through captured output: it builds
+            // and runs its own root command, so there is nothing to hand a writer to.
+            test "accepts each of the three commands" {
                 for name in [ "generate"; "verify"; "init" ] do
-                    Expect.stringContains help name $"{name} is missing from the tool's help"
-            }
-
-            test "exits zero for help" {
-                let exitCode, _ = capturing (fun () -> Partas.ExternalAnnotations.Tool.mainBuilder [| "--help" |])
-                Expect.equal exitCode 0 "the exit code"
-            }
-
-            test "a command's help lists the options its stages declared" {
-                // This is the payoff of harvesting: the help is generated from the pipeline, so a
-                // stage that gains an option documents it without anyone writing help text.
-                let _, help = capturing (fun () -> Partas.ExternalAnnotations.Tool.mainBuilder [| "generate"; "--help" |])
-
-                for option in [ "--assembly"; "--output"; "--attribute"; "--strict" ] do
-                    Expect.stringContains help option $"{option} is missing from generate's help"
+                    Expect.equal (Partas.ExternalAnnotations.Tool.mainBuilder [| name; "--help" |]) 0 $"{name} --help"
             }
 
             test "an unknown command fails rather than doing something else" {
-                let exitCode, _ = capturing (fun () -> Partas.ExternalAnnotations.Tool.mainBuilder [| "genrate" |])
-                Expect.notEqual exitCode 0 "the exit code"
+                Expect.notEqual (Partas.ExternalAnnotations.Tool.mainBuilder [| "genrate" |]) 0 "the exit code"
             }
 
             test "generates through the tool exactly as through the command" {
                 inDirectory (fun dir ->
                     let output = Path.Combine (dir, "out.xml")
 
-                    let exitCode, _ =
-                        capturing (fun () ->
-                            Partas.ExternalAnnotations.Tool.mainBuilder [| "generate"; "--assembly"; fixtureAssembly; "--output"; output |])
+                    let exitCode =
+                        Partas.ExternalAnnotations.Tool.mainBuilder
+                            [| "generate"; "--assembly"; fixtureAssembly; "--output"; output |]
 
                     Expect.equal exitCode 0 "the exit code"
                     Expect.isTrue (File.Exists output) "the file")

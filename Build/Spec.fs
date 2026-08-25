@@ -1,4 +1,4 @@
-/// <summary>
+﻿/// <summary>
 /// Everything the build commands are written against: typed paths into the
 /// repository and the CLI option set.
 ///
@@ -45,47 +45,11 @@ module DirectoryManagement =
      -- "**/obj/**/*.*"
      -- "**/AssemblyInfo.fs"
 
-[<AutoOpen>]
-module GitManagement =
-    [<Literal>]
-    let githubUsername = "GitHub Action"
-
-    [<Literal>]
-    let githubEmail = "41898282+github-actions[bot]@users.noreply.github.com"
-
-    [<Literal>]
-    let gitCiPrefix =
-        "-c user.name=\""
-      + githubUsername
-      + "\" -c user.email=\""
-      + githubEmail
-      + "\""
-
-    [<Literal>]
-    let gitCiCommand =
-        "git "
-      + gitCiPrefix
-
-    let gitCiArgs =
-        [ "-c"
-          $"user.name=\"{githubUsername}\""
-          "-c"
-          $"user.email=\"{githubEmail}\"" ]
-
 #nowarn 3391
 
 [<AutoOpen>]
 module CliApiManagement =
     module Options =
-        let config =
-            Input.option<string> "--configuration"
-            |> Input.alias "-c"
-            |> Input.desc "Build/pack configuration"
-            |> Input.def "Release"
-            |> Input.arity Arity.ExactlyOne
-            |> Input.helpName "Debug|Release"
-            |> Input.acceptOnlyFromAmong [ "Debug"; "Release" ]
-
         let quick =
             Input.option<bool> "--quick"
             |> Input.alias "-q"
@@ -104,20 +68,6 @@ module CliApiManagement =
             |> Input.alias "-i"
             |> Input.desc "Runs the operation in interactive mode."
 
-        module NuGet =
-            let environmentKey =
-                try
-                let result = System.Environment.GetEnvironmentVariable "NUGET_API_KEY"
-                if System.String.IsNullOrEmpty result then None else Some result
-                with _ -> None
-            let key =
-                Input.optionMaybe<string> "--nuget-key"
-                |> Input.alias "--nuget"
-                |> Input.arity Arity.ExactlyOne
-                |> Input.desc "NuGet API key"
-                |> Input.helpName "APIKEY"
-                |> Input.def environmentKey
-
         module GitHub =
             let key =
                 Input.optionMaybe<string> "--github-key"
@@ -126,6 +76,41 @@ module CliApiManagement =
                 |> Input.desc "GitHub API key"
                 |> Input.helpName "APIKEY"
 
+        module Project =
+            /// <summary>Every packable project: what <c>bump</c> versions and what <c>pack</c> packs. Add a project here to ship it.</summary>
+            /// <remarks>
+            /// Keyed off the file name rather than <c>PackageId</c>/<c>AssemblyName</c>: those are MSBuild
+            /// properties, which the provider evaluates by shelling out to <c>dotnet msbuild -getProperty</c>.
+            /// The accepted values are needed to *construct* the option, so paying for that would put an
+            /// MSBuild evaluation per project in front of every command, <c>--help</c> included. <c>Path</c>
+            /// is a compile-time constant.
+            /// </remarks>
+            let versioned =
+                [ Repo.Project.``Partas.Build``.Path
+                  Repo.Project.``Partas.ExternalAnnotations``.Path
+                  Repo.Project.``Partas.ExternalAnnotations.Tool``.Path
+                  Repo.Project.``Partas.Build.ExternalAnnotations``.Path ]
+
+            let private name (path: string) = System.IO.Path.GetFileNameWithoutExtension path
+
+            let projMap =
+                versioned
+                |> List.map (fun path -> (name path).ToLowerInvariant(), path)
+                |> Map.ofList
+
+            /// Resolves a `--project` value to the project file it names, case-insensitively.
+            let getProj (key: string) = Map.tryFind (key.ToLowerInvariant()) projMap
+
+            /// `acceptOnlyFromAmong` compares verbatim, so this is the exact spelling `--project` accepts.
+            let targets =
+                versioned
+                |> List.collect (fun path -> [ name path ])
+                |> List.distinct
+
+            /// Requires at least one project: bumping every package because a flag was forgotten is not a default worth having.
+            let target =
+                Baked.Input.Project.target targets
+                |> Input.required
     // No per-command option lists: a command registers whatever the stages of its pipelines declare, so
     // `--configuration` appears under `build` because the build stage binds `Options.config`.
 
@@ -137,46 +122,3 @@ module FakeInitializationAndUtilities =
     let initializeContext () =
         let execContext = FakeExecutionContext.Create false "build.fsx" []
         setExecutionContext (RuntimeContext.Fake execContext)
-
-    module Git =
-        open Fake.Tools.Git
-
-        let inline private run command =
-            CommandHelper.directRunGitCommandAndFail root command
-
-        let pushTags pass =
-            run $"{gitCiPrefix} push --tags origin"
-            pass
-
-        let pushBranch branchName pass =
-            run $"{gitCiPrefix} push origin {branchName}"
-            pass
-
-        let pushBranchAndTags branchName pass =
-            pushBranch branchName pass
-            |> pushTags
-
-        let branchName () =
-            Information.getBranchName root
-
-        let pushCurrentBranch pass =
-            branchName ()
-            |> pushBranch
-            |> funApply pass
-
-        let pushCurrentBranchAndTags pass =
-            branchName ()
-            |> pushBranchAndTags
-            |> funApply pass
-
-        let commitFiles msg files =
-            files
-            |> List.iter (
-                   Staging.stageFile root
-                >> ignore
-                   )
-
-            Commit.exec root msg
-
-        let tagBranch tag =
-            Branches.tag root tag

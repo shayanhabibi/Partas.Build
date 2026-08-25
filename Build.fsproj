@@ -30,7 +30,7 @@
         <PackageReference Include="FsToolkit.ErrorHandling" Version="5.2.0"/>
         <PackageReference Include="Fake.Core.ReleaseNotes" Version="6.1.4"/>
         <PackageReference Include="Partas.GitNet" Version="3.0.0"/>
-        <PackageReference Include="Partas.TypeProvider.BuildHelper" Version="0.2.0" />
+        <PackageReference Include="Partas.TypeProvider.BuildHelper" Version="0.2.2" />
     </ItemGroup>
 
     <ItemGroup>

@@ -3,6 +3,9 @@
     <PropertyGroup>
         <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <!-- Owned by `dotnet run bump`; CI packs whatever this says. -->
+        <Version>0.1.0</Version>
+        <AssemblyVersion>0.0.0.0</AssemblyVersion>
     </PropertyGroup>
 
     <ItemGroup>

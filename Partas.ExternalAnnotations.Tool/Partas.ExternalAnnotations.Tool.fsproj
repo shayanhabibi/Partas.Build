@@ -9,14 +9,17 @@
         <PackageId>Partas.ExternalAnnotations.Tool</PackageId>
         <Description>Generates ReSharper external annotations for an assembly and ships them inside its NuGet package.</Description>
         <RollForward>LatestMajor</RollForward>
+        <!-- Owned by `dotnet run bump`; CI packs whatever this says. -->
+        <Version>0.1.0</Version>
+        <AssemblyVersion>0.0.0.0</AssemblyVersion>
     </PropertyGroup>
 
     <ItemGroup>
-        <Compile Include="Program.fs"/>
+        <Compile Include="Program.fs" />
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\Partas.Build.ExternalAnnotations\Partas.Build.ExternalAnnotations.fsproj"/>
+        <ProjectReference Include="..\Partas.Build.ExternalAnnotations\Partas.Build.ExternalAnnotations.fsproj" />
     </ItemGroup>
 
 </Project>

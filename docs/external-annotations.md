@@ -1,4 +1,4 @@
----
+﻿---
 title: External Annotations
 category: Documentation
 index: 2
@@ -35,18 +35,17 @@ The generator therefore emits at member level wherever the attribute sits on a m
 
 ## The pieces
 
-| Project | TFMs | What it is |
-|---|---|---|
-| `Partas.ExternalAnnotations` | `netstandard2.0;net8.0` | The generator. Reflection-only scan of an assembly, XML doc-id emission. No dependency on Partas.Build. |
-| `Partas.Build.ExternalAnnotations` | `net10.0;net8.0;netstandard2.0` | Partas.Build stages and commands over the generator, plus the MSBuild `.targets` as an embedded resource and a packed `build/` asset. |
-| `Partas.ExternalAnnotations.Tool` | `net8.0` | The `partas-annotations` dotnet tool: a `rootCommand` over the library's three commands, presentation only. |
+| Project | What it is |
+|---|---|
+| `Partas.ExternalAnnotations` | The generator. Reflection-only scan of an assembly, XML doc-id emission. No dependency on Partas.Build. |
+| `Partas.Build.ExternalAnnotations` | Partas.Build stages and commands over the generator, plus the MSBuild `.targets` as an embedded resource and a packed `build/` asset. |
+| `Partas.ExternalAnnotations.Tool` | The `partas-annotations` dotnet tool: a `rootCommand` over the library's three commands. |
 
-The tool exists because MSBuild has to shell out to *something* during pack, and a dotnet tool is the one form
-of "something" a consumer can restore from a manifest. It cannot drift from the library, because it contains no
-logic of its own — see [the F# surface](external-annotations-api.html).
+The tool is what MSBuild shells out to during pack — see [the F# surface](external-annotations-api.html) if you
+would rather own the behaviour in your own build.
 
-The scan uses `System.Reflection.MetadataLoadContext`, so your assembly is never loaded for execution and its
-target framework is irrelevant: a `net8.0` tool host produces byte-identical output from a `net6.0` assembly.
+Your assembly is never loaded for execution and its target framework is irrelevant: any tool host produces
+byte-identical output from any assembly.
 
 ## Quick start
 
@@ -109,30 +108,17 @@ Two injection routes, and both may be active at once without duplicate-import wa
 `Exec` runs with `ContinueOnError="WarnAndContinue"`: a missing or unrestored tool degrades to packing the
 committed file rather than failing your build.
 
-## Design decisions
+## Behaviour to know
 
-**`init` is a developer command, not a CI stage.** The file it writes is ordinary build configuration, meant to
-be reviewed and committed. Running it in CI would make package contents differ between local and CI machines
-with nothing visible to show for it.
-
-**Generation happens at pack time, not in a build stage.** Staleness is then structurally impossible: the
-annotations come from the assembly being packed, in the same invocation. A build stage that generated them
-beforehand would be correct only for packs that went through that stage — not for Rider's Pack button.
-
-**A committed file is a valid fallback, not a second-class one.** Before the tool is published — or in a repo
-that will not take a tool dependency — commit `ExternalAnnotations/<AssemblyName>.ExternalAnnotations.xml` and
-packs are correct today, with no tool and no warnings.
-
-**Failed generation must not ship the last good run's file.** The targets delete the previous output first
-(only ever their own `obj/` path, never a caller-supplied one) and use the generated file only on exit code
-`0`. Without this a broken generator silently ships stale annotations — found by testing, not by inspection.
-
-**Skips warn and continue by default.** `--strict` is for pipelines with a known-good number; defaulting to
-failure would let one type's reflection quirk break every consumer's build.
-
-**The `netstandard2.0` leg is kept** at the cost of two conditioned polyfill packages, to keep the in-process
-MSBuild-task route open for other library authors. `PackAsTool` cannot target it (`NETSDK1054`), so the tool is
-`net8.0` with `RollForward=LatestMajor`.
+- **`init` is a developer command, not a CI stage.** The file it writes is ordinary build configuration, meant
+  to be reviewed and committed.
+- **Generation happens at pack time**, from the assembly being packed, in the same invocation — so it is also
+  correct for Rider's Pack button, not only for packs that went through a build stage.
+- **A committed file is a valid fallback.** With no tool available, commit
+  `ExternalAnnotations/<AssemblyName>.ExternalAnnotations.xml` and packs are correct, with no warnings.
+- **A failed generation never ships the last good run's file.** The targets delete their own previous output
+  first and use the generated file only on exit code `0`.
+- **Skips warn and continue.** Pass `--strict` to fail instead, in a pipeline with a known-good count.
 
 ## Known limits
 

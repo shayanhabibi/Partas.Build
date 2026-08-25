@@ -27,4 +27,9 @@
   <run>
     <remarks>The generic <c>run</c> overload accepts multiple step signatures: <c>Async&lt;unit></c>, <c>StageContext -&gt; unit</c>, <c>StageContext -&gt; int</c>, <c>StageContext -&gt; Async&lt;unit></c>, <c>StageContext -&gt; Async&lt;int></c>, <c>StageContext -&gt; Result&lt;unit, string></c>, <c>StageContext -&gt; Task&lt;unit></c>, <c>StageContext -&gt; Task&lt;int></c>, <c>StageContext -&gt; Task</c>, and <c>StageContext -&gt; Task&lt;Result&lt;unit, string>></c>. Exit code 0 is treated as success; non-zero codes are failures unless added to <c>acceptExitCodes</c>.</remarks>
   </run>
+  <mirror>
+    <remarks>This is the <c>InputSpec&lt;BuildStage></c> mirror of the operation of the same name. It exists so
+    that a setting placed <em>after</em> a nested stage that declares CLI inputs is still accepted; without it the
+    placement would be an overload error rather than a no-op. The behaviour is identical.</remarks>
+  </mirror>
 </stage>

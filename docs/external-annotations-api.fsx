@@ -1,4 +1,4 @@
-(**
+﻿(**
 ---
 title: External Annotations — F# surface
 category: Documentation
@@ -50,10 +50,8 @@ Each operation exists twice:
 | verify | `verifyPackage nupkg`, `verifyPackageOf min nupkg` | `verifyStage` / `verifyCommand` |
 | init | `initIn directory` | `initStage` / `initCommand` |
 
-The split is forced by the design of `input`. It is applicative and has no `Bind`, so a value read from an
-option cannot be fed to a function that produces further inputs — `generateTo` applied to an option's value
-would need an `InputSpec<InputSpec<_>>` and there is nothing to flatten it with. Both forms sit over one
-implementation, so they cannot disagree.
+Use the left column when your pipeline already knows the paths, the right when the user supplies them. Both
+forms sit over one implementation.
 
 ## In a pipeline
 

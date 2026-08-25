@@ -199,7 +199,7 @@ module Documentation =
         let! watch = Options.watch
 
         return stage "docs" {
-            run (if watch then "dotnet fsdocs watch --eval" else "dotnet fsdocs build --eval --clean")
+            run (if watch then "dotnet fsdocs watch --eval --saveimages" else "dotnet fsdocs build --eval --clean --saveimages")
         }
     }
 

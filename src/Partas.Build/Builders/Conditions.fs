@@ -337,6 +337,90 @@ type StageBuilder with
         ([<InlineIfLambda>] build: BuildStage, platform: OSPlatform): BuildStage
         = StageContext.buildStageIsActive build (Conditions.whenPlatform platform)
 
+
+    // =================================================================
+    //                        InputSpec mirrors
+    // =================================================================
+    // One per custom operation above, for a stage that has already picked up a sub-stage declaring inputs.
+    // Without these, placing a setting *after* such a sub-stage is an overload error rather than a no-op.
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("when'")>] member inline this.
+        when'
+        (spec: InputSpec<BuildStage>, value: bool): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.when'(build, value)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("when'")>] member inline this.
+        when'
+        (spec: InputSpec<BuildStage>, stage: StageContext): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.when'(build, stage)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("whenEnvVar")>] member inline this.
+        whenEnvVar
+        (spec: InputSpec<BuildStage>, arg: EnvArg): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.whenEnvVar(build, arg)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("whenEnvVar")>] member inline this.
+        whenEnvVar
+        (spec: InputSpec<BuildStage>, name: string): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.whenEnvVar(build, name)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("whenEnvVar")>] member inline this.
+        whenEnvVar
+        (spec: InputSpec<BuildStage>, name: string, value: string): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.whenEnvVar(build, name, value)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("whenBranch")>] member inline this.
+        whenBranch
+        (spec: InputSpec<BuildStage>, branch: string): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.whenBranch(build, branch)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("whenBranches")>] member inline this.
+        whenBranches
+        (spec: InputSpec<BuildStage>, branches: string seq): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.whenBranches(build, branches)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("whenWindows")>] member inline this.
+        whenWindows
+        (spec: InputSpec<BuildStage>, ?isTrue: bool): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.whenWindows(build, ?isTrue = isTrue)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("whenLinux")>] member inline this.
+        whenLinux
+        (spec: InputSpec<BuildStage>, ?isTrue: bool): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.whenLinux(build, ?isTrue = isTrue)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("whenOSX")>] member inline this.
+        whenOSX
+        (spec: InputSpec<BuildStage>, ?isTrue: bool): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.whenOSX(build, ?isTrue = isTrue)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("whenPlatform")>] member inline this.
+        whenPlatform
+        (spec: InputSpec<BuildStage>, platform: OSPlatform): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.whenPlatform(build, platform)) spec
+
 /// The stage is active when any of the conditions in the body is met. An empty body is never active.
 let whenAny = WhenAnyBuilder()
 /// The stage is active when every condition in the body is met. An empty body is always active.

@@ -15,6 +15,16 @@ open FSharp.Data.UnitSystems.SI
 
 type StepFnSignature = StageContext -> StepIndex -> Async<Result<unit, string>>
 
+/// Appends a nested stage to the stage being built. A nested stage *is* one step of its parent.
+let inline private addSubStage (stage: StageContext): BuildStage = fun ctx -> { ctx with Steps = ctx.Steps @ [ Step.StepOfStage stage ] }
+
+/// Appends several nested stages, in order.
+let inline private addSubStages (stages: StageContext seq): BuildStage = fun ctx ->
+    { ctx with Steps = stages |> Seq.map Step.StepOfStage |> Seq.append ctx.Steps |> Seq.toList }
+
+/// Appends a step function to the stage being built.
+let inline private addStep ([<InlineIfLambda>] step: BuildStep): BuildStage = fun ctx -> { ctx with Steps = ctx.Steps @ [ Step.StepFn step ] }
+
 [<EditorBrowsable(EditorBrowsableState.Never)>]
 type SRTPStageBuilderRunner =
     static member inline unifyResult(step: Async<unit>): StepFnSignature = fun _ _ -> Async.map Ok step
@@ -36,64 +46,158 @@ and [<EditorBrowsable(EditorBrowsableState.Advanced)>]
     // and inlining an application of one defeats the optimiser (`FS1118`) in Release builds only.
     // It applies a closure once at construction time, so there is nothing to gain by inlining it.
     member _.Run(build: BuildStage): StageContext = build <| StageContext.create name
-    [<EditorBrowsable(EditorBrowsableState.Never)>] member inline _.Yield (_: unit): BuildStage = id
-    [<EditorBrowsable(EditorBrowsableState.Never)>] member inline _.Zero(): BuildStage = id
-    [<EditorBrowsable(EditorBrowsableState.Never)>] member inline _.Yield(stage: StageContext): StageContext = stage
-    [<EditorBrowsable(EditorBrowsableState.Never)>] member inline _.Delay([<InlineIfLambda>] fn: unit -> BuildStage): BuildStage = fn()
+    // The `InputSpec` mirror of the above: a nested stage that declares a CLI input turns the whole stage into
+    // an `InputSpec<StageContext>`, which is what `pipeline` and `command` already know how to yield.
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member _.Run(spec: InputSpec<BuildStage>): InputSpec<StageContext> =
+        InputSpec.map (fun (build: BuildStage) -> build <| StageContext.create name) spec
+    // =================================================================
+    //                              Yield
+    // =================================================================
+
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Yield (_: unit): BuildStage = id
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Yield(stage: StageContext): BuildStage = addSubStage stage
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Yield([<InlineIfLambda>] builder: BuildStep): BuildStep = builder
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Yield([<InlineIfLambda>] condition: BuildStageIsActive): BuildStageIsActive = condition
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Yield(stages: StageContext seq): BuildStage = addSubStages stages
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Yield(spec: InputSpec<StageContext>): InputSpec<BuildStage> = InputSpec.map addSubStage spec
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Yield(spec: InputSpec<StageContext seq>): InputSpec<BuildStage> = InputSpec.map addSubStages spec
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Yield(spec: InputSpec<StageContext list>): InputSpec<BuildStage> = InputSpec.map addSubStages spec
+    /// A list of ready-made blocks - `[ Blocks.restore; Blocks.build ]` - rather than one block yielding many stages.
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Yield(specs: InputSpec<StageContext> seq): InputSpec<BuildStage> =
+        InputSpec.map addSubStages (InputSpec.sequence specs)
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Yield(spec: InputSpec<BuildStep>): InputSpec<BuildStage> = InputSpec.map addStep spec
+    // =================================================================
+    //                              Zero
+    // =================================================================
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Zero(): BuildStage = id
+    // =================================================================
+    //                              Delay
+    // =================================================================
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Delay([<InlineIfLambda>] fn: unit -> BuildStage): BuildStage = fn()
     [<EditorBrowsable(EditorBrowsableState.Never)>]
     member inline _.Delay([<InlineIfLambda>] fn: unit -> StageContext): BuildStage = fun ctx ->
         { ctx with Steps = ctx.Steps @ [ Step.StepOfStage(fn ()) ] }
     [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine(stage: StageContext, [<InlineIfLambda>] build: BuildStage): BuildStage = fun ctx ->
-        build { ctx with Steps = ctx.Steps @ [ Step.StepOfStage stage ]  }
-
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> BuildStage) : BuildStage = build >> fn ()
-
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> StageContext): BuildStage = build >> fun ctx ->
-        { ctx with Steps = ctx.Steps @ [ Step.StepOfStage <| fn() ] }
-
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Yield([<InlineIfLambda>] condition: BuildStageIsActive): BuildStageIsActive = condition
-
+    member inline _.Delay([<InlineIfLambda>] fn: unit -> BuildStep): BuildStage = fun ctx ->
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn <| fn() ] }
     [<EditorBrowsable(EditorBrowsableState.Never)>]
     member inline _.Delay([<InlineIfLambda>] fn: unit -> BuildStageIsActive): BuildStage = fun ctx ->
         { ctx with IsActive = fn () }
-
     [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Yield([<InlineIfLambda>] builder: BuildStep): BuildStep = builder
-
+    member inline _.Delay([<InlineIfLambda>] fn: unit -> InputSpec<BuildStage>): InputSpec<BuildStage> = fn ()
     [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Delay([<InlineIfLambda>] fn: unit -> BuildStep): BuildStage = fun ctx ->
-        { ctx with Steps = ctx.Steps @ [ Step.StepFn <| fn() ] }
-
+    member inline _.Delay([<InlineIfLambda>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildStage> = InputSpec.map addSubStage (fn ())
+    // =================================================================
+    //                              Combine
+    // =================================================================
     [<EditorBrowsable(EditorBrowsableState.Never)>]
     member inline _.Combine([<InlineIfLambda>] builder: BuildStep, [<InlineIfLambda>] build: BuildStage): BuildStage = fun ctx ->
         build { ctx with Steps = ctx.Steps @ [ Step.StepFn builder ] }
-
     [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> BuildStep): BuildStage = build >> fun ctx ->
-        { ctx with Steps = ctx.Steps @ [ Step.StepFn <| fn() ] }
-
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine([<InlineIfLambda>] build1: BuildStage, [<InlineIfLambda>] build2: BuildStage): BuildStage = build1 >> build2
-
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For<'T>(items: 'T seq, [<InlineIfLambda>] fn: 'T -> StageContext): BuildStage = fun ctx ->
-        { ctx with Steps = items |> Seq.map (fn >> Step.StepOfStage) |> Seq.append ctx.Steps |> Seq.toList }
-
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.YieldFrom(stages: StageContext seq): BuildStage = fun ctx ->
-        { ctx with Steps = stages |> Seq.map Step.StepOfStage |> Seq.append ctx.Steps |> Seq.toList }
-
+    member inline _.Combine(stage: StageContext, [<InlineIfLambda>] build: BuildStage): BuildStage = fun ctx ->
+        build { ctx with Steps = ctx.Steps @ [ Step.StepOfStage stage ]  }
     [<EditorBrowsable(EditorBrowsableState.Never)>]
     member inline _.Combine([<InlineIfLambda>] condition: BuildStageIsActive, [<InlineIfLambda>] build: BuildStage): BuildStage =
         StageContext.buildStageIsActive build condition
-
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Combine([<InlineIfLambda>] build1: BuildStage, [<InlineIfLambda>] build2: BuildStage): BuildStage = build1 >> build2
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Combine([<InlineIfLambda>] build: BuildStage, spec: InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map (fun rest -> build >> rest) spec
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Combine(spec: InputSpec<BuildStage>, rest: InputSpec<BuildStage>): InputSpec<BuildStage> = InputSpec.map2 (>>) spec rest
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Combine(spec: InputSpec<BuildStage>, [<InlineIfLambda>] rest: BuildStage): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> build >> rest) spec
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Combine(spec: InputSpec<StageContext>, [<InlineIfLambda>] build: BuildStage): InputSpec<BuildStage> =
+        InputSpec.map (fun stage -> addSubStage stage >> build) spec
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Combine(spec: InputSpec<StageContext>, rest: InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map2 (fun stage build -> addSubStage stage >> build) spec rest
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Combine(stage: StageContext, spec: InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> addSubStage stage >> build) spec
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Combine([<InlineIfLambda>] builder: BuildStep, spec: InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> addStep builder >> build) spec
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Combine([<InlineIfLambda>] condition: BuildStageIsActive, spec: InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> StageContext.buildStageIsActive build condition) spec
+    // =================================================================
+    //                              For
+    // =================================================================
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> BuildStage) : BuildStage = build >> fn ()
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> StageContext): BuildStage = build >> fun ctx ->
+        { ctx with Steps = ctx.Steps @ [ Step.StepOfStage <| fn() ] }
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> BuildStep): BuildStage = build >> fun ctx ->
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn <| fn() ] }
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For<'T>(items: 'T seq, [<InlineIfLambda>] fn: 'T -> StageContext): BuildStage = addSubStages (Seq.map fn items)
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For<'T>(items: 'T seq, [<InlineIfLambda>] fn: 'T -> BuildStage): BuildStage =
+        fun ctx -> items |> Seq.fold (fun ctx item -> fn item ctx) ctx
     [<EditorBrowsable(EditorBrowsableState.Never)>]
     member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> BuildStageIsActive): BuildStage =
         StageContext.buildStageIsActive build (fn ())
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For<'T>(items: 'T seq, [<InlineIfLambda>] fn: 'T -> InputSpec<StageContext>): InputSpec<BuildStage> =
+        InputSpec.map addSubStages (InputSpec.traverse fn items)
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For<'T>(items: 'T seq, [<InlineIfLambda>] fn: 'T -> InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map (fun builds ctx -> builds |> List.fold (fun ctx build -> build ctx) ctx) (InputSpec.traverse fn items)
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map (fun rest -> build >> rest) (fn ())
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildStage> =
+        InputSpec.map (fun stage -> build >> addSubStage stage) (fn ())
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> BuildStage): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> build >> fn ()) spec
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> StageContext): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> build >> addSubStage (fn ())) spec
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> BuildStep): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> build >> addStep (fn ())) spec
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> BuildStageIsActive): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> StageContext.buildStageIsActive build (fn ())) spec
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map2 (>>) spec (fn ())
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildStage> =
+        InputSpec.map2 (fun build stage -> build >> addSubStage stage) spec (fn ())
+    // =================================================================
+    //                              YieldFrom
+    // =================================================================
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.YieldFrom(stages: StageContext seq): BuildStage = addSubStages stages
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.YieldFrom(specs: InputSpec<StageContext> seq): InputSpec<BuildStage> =
+        InputSpec.map addSubStages (InputSpec.sequence specs)
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.YieldFrom(steps: BuildStep seq): BuildStage = fun ctx ->
+        { ctx with Steps = steps |> Seq.map Step.StepFn |> Seq.append ctx.Steps |> Seq.toList }
+
 
     /// <summary>Adds environment variables to the stage.</summary>
     /// <remarks>Variables set here override inherited values from parent contexts. A stage-level variable shadows any pipeline-level variable with the same name.</remarks>
@@ -406,6 +510,316 @@ and [<EditorBrowsable(EditorBrowsableState.Advanced)>]
         this.echo
         ([<InlineIfLambda>] build: BuildStage, msg: string): BuildStage
         = this.echo(build, fun _ -> msg)
+
+
+    // =================================================================
+    //                        InputSpec mirrors
+    // =================================================================
+    // One per custom operation above, for a stage that has already picked up a sub-stage declaring inputs.
+    // Without these, placing a setting *after* such a sub-stage is an overload error rather than a no-op.
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("envVars")>] member inline this.
+        envVars
+        (spec: InputSpec<BuildStage>, kvs: seq<string * string>): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.envVars(build, kvs)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("acceptExitCodes")>] member inline this.
+        acceptExitCodes
+        (spec: InputSpec<BuildStage>, codes: int seq): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.acceptExitCodes(build, codes)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("failIfIgnored")>] member inline this.
+        failIfIgnored
+        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.failIfIgnored(build, ?flag = flag)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("failIfNoActiveSubStage")>] member inline this.
+        failIfNoActiveSubStage
+        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.failIfNoActiveSubStage(build, ?flag = flag)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("continueStepsOnFailure")>] member inline this.
+        continueStepsOnFailure
+        (spec: InputSpec<BuildStage>, ?flag): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.continueStepsOnFailure(build, ?flag = flag)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("continueStageOnFailure")>] member inline this.
+        continueStageOnFailure
+        (spec: InputSpec<BuildStage>, ?flag): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.continueStageOnFailure(build, ?flag = flag)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("continueOnStepFailure")>] member inline this.
+        continueOnStepFailure
+        (spec: InputSpec<BuildStage>, ?flag): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.continueOnStepFailure(build, ?flag = flag)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("timeout")>] member inline this.
+        timeout
+        (spec: InputSpec<BuildStage>, seconds: int<second>): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.timeout(build, seconds)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("timeout")>] member inline this.
+        timeout
+        (spec: InputSpec<BuildStage>, seconds: float): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.timeout(build, seconds)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("timeout")>] member inline this.
+        timeout
+        (spec: InputSpec<BuildStage>, timespan: TimeSpan): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.timeout(build, timespan)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("timeoutForStep")>] member inline this.
+        timeoutForStep
+        (spec: InputSpec<BuildStage>, seconds: int<second>): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.timeoutForStep(build, seconds)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("timeoutForStep")>] member inline this.
+        timeoutForStep
+        (spec: InputSpec<BuildStage>, seconds: float): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.timeoutForStep(build, seconds)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("timeoutForStep")>] member inline this.
+        timeoutForStep
+        (spec: InputSpec<BuildStage>, timeSpan: TimeSpan): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.timeoutForStep(build, timeSpan)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("parallel'")>] member inline this.
+        parallel'
+        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, ?flag = flag)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("parallel'")>] member inline this.
+        parallel'
+        (spec: InputSpec<BuildStage>, throttle: int): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, throttle)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("parallel'")>] member inline this.
+        parallel'
+        (spec: InputSpec<BuildStage>, condition: StageContext -> int voption): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, condition)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("parallel'")>] member inline this.
+        parallel'
+        (spec: InputSpec<BuildStage>, condition: StageContext -> Choice<bool, int>): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, condition)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("parallel'")>] member inline this.
+        parallel'
+        (spec: InputSpec<BuildStage>, condition: StageContext -> Choice<int, bool>): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, condition)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("parallel'")>] member inline this.
+        parallel'
+        (spec: InputSpec<BuildStage>, condition: StageContext -> bool): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, condition)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("workingDir")>] member inline this.
+        workingDir
+        (spec: InputSpec<BuildStage>, path: string): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.workingDir(build, path)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("workingDir")>] member inline this.
+        workingDir
+        (spec: InputSpec<BuildStage>, path: IO.DirectoryInfo): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.workingDir(build, path)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("noPrefixForStep")>] member inline this.
+        noPrefixForStep
+        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.noPrefixForStep(build, ?flag = flag)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("noStdRedirectForStep")>] member inline this.
+        noStdRedirectForStep
+        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.noStdRedirectForStep(build, ?flag = flag)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("outputTo")>] member inline this.
+        outputTo
+        (spec: InputSpec<BuildStage>, output: StageOutput): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.outputTo(build, output)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("silentOutput")>] member inline this.
+        silentOutput
+        (spec: InputSpec<BuildStage>): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.silentOutput(build)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("captureOutput")>] member inline this.
+        captureOutput
+        (spec: InputSpec<BuildStage>, ?capture: OutputCapture): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.captureOutput(build, ?capture = capture)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("redirectOutput")>] member inline this.
+        redirectOutput
+        (spec: InputSpec<BuildStage>, write: StdStream -> string -> unit): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.redirectOutput(build, write)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("shuffleExecuteSequence")>] member inline this.
+        shuffleExecuteSequence
+        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.shuffleExecuteSequence(build, ?flag = flag)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("run")>] member inline this.
+        run
+        (spec: InputSpec<BuildStage>, buildStep: StageContext -> BuildStep): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, buildStep)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("run")>] member inline this.
+        run
+        (spec: InputSpec<BuildStage>, exe: string, args: string, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, exe, args, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("run")>] member inline this.
+        run
+        (spec: InputSpec<BuildStage>, command: string, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, command, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("run")>] member inline this.
+        run
+        (spec: InputSpec<BuildStage>, command: Cmd, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, command, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("run")>] member inline this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> string, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("run")>] member inline this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> Async<string>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("run")>] member inline this.
+        run
+        (spec: InputSpec<BuildStage>, buildCmd: StageContext -> Cmd, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, buildCmd)) spec
+
+    // `runSensitive` deliberately has no mirror. Its argument is a `FormattableString`, and F# only applies the
+    // `string` -> `FormattableString` conversion when a single overload is in play: adding a second one turns
+    // `runSensitive $"docker login -p {password}"` - the whole point of the operation - into an overload error.
+    // Bind the input outside the stage instead, so the stage itself stays a plain `BuildStage`.
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("run")>] member inline _.
+        run
+        (spec: InputSpec<BuildStage>, step): InputSpec<BuildStage>
+        // Inlines the flexible-signature step itself rather than delegating: forwarding to the `BuildStage`
+        // overload would resolve `step` to one concrete signature, colliding with the mirror above it.
+        = InputSpec.map (fun (build: BuildStage) -> build >> fun ctx -> {
+            ctx with Steps = ctx.Steps @ [ Step.StepFn((^T or SRTPStageBuilderRunner):(static member unifyResult: ^T -> StepFnSignature) step) ]
+        }) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("runHttpHealthCheck")>] member inline this.
+        runHttpHealthCheck
+        (spec: InputSpec<BuildStage>, url: string, ?configRequest, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.runHttpHealthCheck(build, url, ?configRequest = configRequest, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("echo")>] member inline this.
+        echo
+        (spec: InputSpec<BuildStage>, msg: StageContext -> string): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.echo(build, msg)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("verbosity")>] member inline this.
+        verbosity
+        (spec: InputSpec<BuildStage>, verbosity: Verbosity): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.verbosity(build, verbosity)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("verbose")>] member inline this.
+        verbose
+        (spec: InputSpec<BuildStage>): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.verbose(build)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("quiet")>] member inline this.
+        quiet
+        (spec: InputSpec<BuildStage>): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.quiet(build)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("echo")>] member inline this.
+        echo
+        (spec: InputSpec<BuildStage>, msg: string): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.echo(build, msg)) spec
 
 let inline stage name = StageBuilder(name)
 let inline step x: BuildStep = x

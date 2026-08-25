@@ -18,6 +18,7 @@
         <Compile Include="CmdTests.fs"/>
         <Compile Include="OutputTests.fs"/>
         <Compile Include="CommandTests.fs"/>
+        <Compile Include="CompositionTests.fs"/>
         <Compile Include="Main.fs"/>
     </ItemGroup>
 

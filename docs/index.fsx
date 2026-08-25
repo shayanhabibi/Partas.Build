@@ -1,4 +1,4 @@
-(**
+﻿(**
 ---
 title: Partas.Build
 category: Documentation
@@ -32,18 +32,16 @@ open Partas.Build.Internal
 (**
 # Partas.Build
 
-A [Fun.Build](https://github.com/slaveOftime/Fun.Build)-style pipeline DSL whose pipelines *declare the CLI
-inputs they need*. Commands derive their [System.CommandLine](https://github.com/dotnet/command-line-api)
-option set from the pipelines they run, so options, validation and `--help` are generated from the pipeline
-definition instead of registered by hand.
+<img src=".\content\img\sun-ztu.jpeg" width="50%" />
 
-The design follows from one constraint. To register an option you must know it exists; to read its value you
-need a `ParseResult`, which only exists after registration. Input collection is therefore **applicative, not
-monadic**: an `InputSpec<'T>` carries `Inputs: ActionInput list` alongside `Read: ParseResult -> 'T`, so the
-input set is readable *without* a parse result. That is the entire trick.
+Command line & build pipelines in F#. Composable, hints of elderberry - thick in tannins; a glorious vintage.
 
-This page is a literate script — every snippet is compiled when the docs are built, so it cannot drift from
-the API.
+A pipeline DSL originally based off [Fun.Build](https://github.com/slaveOftime/Fun.Build) that scaffolds over
+[FSharp.SystemCommandLine](https://github.com/jordanmarr/FSharp.SystemCommandLine) inputs and commands to build
+no nonsense CLIs.
+
+You declare CLI inputs where you use them, and they get lifted into the command line help section for the commands
+the pipeline runs. Automatic validation and help generation.
 
 ## Layers
 
@@ -70,8 +68,10 @@ let hello =
     }
 
 (**
-`stage` yields into `pipeline`, `pipeline` yields into `command`, `command` is added to `rootCommand`. Nothing
-executes until the root command is invoked.
+
+`step` -> `stage` -> `stage` -> ... -> `pipeline` -> `command` -> `rootCommand`
+
+No execution happens until the root command is run.
 
 ## Steps
 
@@ -98,6 +98,7 @@ whitespace — a path containing a space becomes two arguments. Route interpolat
 each hole as exactly one argument and lets the platform do the escaping:
 *)
 
+                                   // v------- will break if directly passed verbatim
 let project = "src/My Project/My Project.fsproj"
 
 let interpolated =
@@ -110,7 +111,7 @@ let interpolated =
 log while passing the real value to the process:
 *)
 
-let password = "hunter2"
+let password = "drowssap"
 
 let login =
     stage "login" {
@@ -164,7 +165,8 @@ included — and its success taken as the answer.
 
 ## Inputs
 
-This is where the library departs from Fun.Build. A stage that needs a CLI flag binds it in an `inputs` CE:
+A stage that needs a CLI flag binds it in an `inputs` CE. And then jus' fo'get abou' it! It will be lifted into
+any command that asks for it. *Chef's kiss*:
 *)
 
 module Options =
@@ -205,16 +207,18 @@ let build =
     }
 
 (**
-`InputsBuilder` deliberately has **no `Bind`**. A sequential `let!` would let the second source depend on the
-first's *value*, which is unknowable before parsing — so the input set would no longer be statically readable.
-Omitting `Bind` turns that mistake into a compile error (`FS0708`) rather than a silently incomplete option
-set.
+The CE explicitly will not allow you to have a second `let!`. Bind every source in one `let! … and! …`
+block. Otherwise we would not be able to lift the flags into the command line help without evaluating
+pipelines.
 
 ### Harvesting upward
 
-A pipeline containing at least one `InputSpec<StageContext>` becomes an `InputSpec<PipelineContext>`, unioning
-the inputs of every stage. The command registers exactly those, so `--quick` and `--configuration` appear
-under `build --help` without being named anywhere but the stages that read them:
+Whenever a pipeline or stage asks for an input, or has a nested `input` request, it becomes wrapped in
+an `InputSpec<'T>`. These track inputs, and are unioned by reference.
+
+`--quick` and `--configuration` appear under `build --help` without being named anywhere but the
+stages that read them:
+
 *)
 
 let buildCommand =
@@ -244,15 +248,16 @@ let main argv =
     }
 
 (**
-A command with no pipelines is a grouping node: it gets no action, so System.CommandLine reports the missing
+A command with no pipelines is a grouping node: it gets no action (like me until my 20s), so System.CommandLine reports the missing
 subcommand and prints help instead of succeeding silently.
 
 ## Composition
 
 ### Stages nest
 
-`Step` is `StepFn | StepOfStage`, so a nested stage *is* one step of its parent and stages nest arbitrarily.
-That is the whole composition story — there is no separate grouping concept:
+A stage can be yielded inside another stage, arbitrarily deep.....
+
+There is no separate grouping concept:
 *)
 
 let nested =
@@ -268,8 +273,8 @@ let nested =
 (**
 ### Settings inherit
 
-Settings resolve by walking `ParentContext` upward — stage, then parent stage, then pipeline. A pipeline-level
-`workingDir` or `envVars` is the default for every stage that does not override it:
+Settings resolve outward — stage, then parent stage, then pipeline. A pipeline-level `workingDir` or `envVars`
+is the default for every stage that does not override it:
 *)
 
 let inherited =
@@ -303,7 +308,8 @@ let testAll =
 
 (**
 The same works one layer up: a `pipeline` is a value, and a `command` can run several of them in declaration
-order.
+order. [Composing reusable blocks](composition.html) goes further — nesting, lists of blocks, and stages that
+carry their own inputs.
 
 ### Nameless Pipelines
 
@@ -354,10 +360,7 @@ let fanOut =
     }
 
 (**
-The bound is exact — a stage set to `2` never has a third step in flight. That is worth stating because it is
-easy to implement otherwise: the per-step `Async.StartChild` that applies `timeoutForStep` also *starts* the
-step, so if it happened while producing the step sequence the throttle would gate the waiting, not the
-running, and one extra step would already be underway.
+The bound is exact — a stage set to `2` never has a third step in flight.
 
 To choose a mode at runtime, return the choice from a single condition rather than writing two operations:
 *)
@@ -406,9 +409,7 @@ function returning the mode — a second operation would discard the first.
 Three scopes, settable on a stage or a pipeline: `timeout` (the stage or pipeline as a whole),
 `timeoutForStage` and `timeoutForStep`. All three accept `int<second>`, `float` seconds, or a `TimeSpan`.
 
-A timeout cancels the ambient `CancellationToken`, and the command runner kills the whole process tree from a
-token registration. That detail matters: killing from an `Async.OnCancel` continuation instead kills the child
-and silently leaves its grandchildren running.
+A timeout cancels the stage and kills the whole process tree it started, grandchildren included.
 
 ### Post stages
 
@@ -459,10 +460,8 @@ let quietTests =
     }
 
 (**
-`captureOutput` lifts stderr if the process wrote any and everything it wrote otherwise — a test runner
-reporting failures on stdout is the ordinary case, and lifting only stderr there would lift nothing. The
-message travels in the step's `Error`, which is what reaches the console and the GitHub Actions annotation, so
-a failing stage still says why.
+`captureOutput` lifts stderr if the process wrote any and everything it wrote otherwise, into the step's
+error — so a failing stage still says why, on the console and in the GitHub Actions annotation.
 
 Pass an `OutputCapture` to keep a handle on the lines whatever the outcome:
 
@@ -483,18 +482,17 @@ let audited =
 `Lines` is both streams in the order they arrived, `Errors` only stderr, `Text`/`ErrorText` the same joined,
 and `FailureText` is what a failure lifts.
 
-Three things this deliberately does not do. It does not touch the pipeline's own log — the stage rules, the
-command lines, the timings — which is what `verbosity` controls; a stage wanting both quiet is `quiet` *and*
-`silentOutput`. It cannot route a bare `printfn` from inside a step, because nothing intercepts it: write
-through `StageContext.writeLine ctx StdStream.Out` to emit something the stage can suppress, which is what
-`echo` does. And `noStdRedirectForStep` overrides all of it, since without redirection there is no stream to
-route.
+Three things it does not cover:
+
+- The pipeline's own log — stage rules, command lines, timings — is `verbosity`, not `outputTo`. A stage that
+  wants both quiet needs `quiet` *and* `silentOutput`.
+- A bare `printfn` inside a step is not routable. Use `echo`, or `StageContext.writeLine ctx StdStream.Out`.
+- `noStdRedirectForStep` overrides all of it: without redirection there is no stream to route.
 
 
 ## Baked: the batteries
 
-Everything above is the machinery. `Partas.Build.Baked` is the layer of things every build CLI ends up writing
-anyway — the common options, ready made and described, under `Baked.Input` (options) and `Baked.Argument`
+`Partas.Build.Baked` is the layer of things every build CLI ends up writing anyway — the common options, ready made and described, under `Baked.Input` (options) and `Baked.Argument`
 (positional arguments):
 
 | | |
@@ -558,14 +556,11 @@ element if it is absent, and answers what `<Version>` held before. It saves with
 and byte-order mark `XDocument.Save` would otherwise introduce, so a bump reads as a one-line diff.
 
 The two properties are not the same string. `<Version>` is the package version and moves however you bump it;
-`<AssemblyVersion>` is `Version.assembly` — the major, and nothing else. An assembly's version is its identity
-to everything already compiled against it, so moving it on a patch bump breaks anything not rebuilt in the same
-pass with `Could not load file or assembly '<name>, Version=…'`. Holding it at the major confines that to the
-bump where the contract is allowed to break anyway.
+`<AssemblyVersion>` only takes the major. Letting the assembly version move on a patch bump breaks anything not
+rebuilt in the same pass with `Could not load file or assembly '<name>, Version=…'`.
 
 Pair it with `Baked.Input.CI.isCI`, as above, and versions are bumped locally and committed rather than
-invented on a runner: CI packs whatever the project file carries, so a published version is a property of the
-commit.
+invented on a runner: CI packs whatever the project file carries.
 
 The arithmetic itself:
 
@@ -585,6 +580,7 @@ A `patch` on a pre-release *releases* it rather than moving past it, and `major`
 
 ## Antipatterns
 
+
 **Interpolating straight into `run`.** `run $"dotnet build {path}"` picks the `string` overload and re-splits
 on whitespace. Use `run (cmd $"...")`.
 
@@ -603,6 +599,18 @@ let push = if hasKey then pushToNuget else pushToLocal
 stage "publish" { run push }
 ```
 
+A whole *stage* under an `if` is fine, though — an untaken branch simply contributes nothing:
+
+```fsharp
+pipeline "ci" {
+    stage "build" { run "dotnet build" }
+    if not skipTests then stage "test" { run "dotnet test" }
+}
+```
+
+**Mixing `yield!` with a custom operation in the same CE.** F# rejects it (`FS3086`). Yield a list instead:
+`pipeline "p" { [ yield! blocks; yield extra ] }`, and put the settings on a stage inside.
+
 **Registering options on the root so every command has them.** The point of the design is that `build --help`
 lists `--configuration` *because* a build stage binds it. Hand-registering reintroduces the drift the library
 exists to remove.
@@ -611,9 +619,11 @@ exists to remove.
 `whenBranch` narrows to both branches at once (so: never), where a second `parallel'` silently throws the
 first away. To widen a condition, put the alternatives in one `whenAny { }`.
 
-**Marking a CE entry member `inline` when it applies a `Build*` alias.** Those aliases are plain function
-types, not delegates; inlining an application of one fails Release builds with `FS1118` while Debug compiles
-cleanly. `Run` members are the usual offenders.
+**`runSensitive` with a bound interpolation.** `runSensitive` takes a `FormattableString`, which F# will only
+convert a `string` into when a single overload is in play. It has no `InputSpec` form: bind the value outside
+the stage and use `runSensitive $"…"` inside it as normal.
+
+<img src="content\img\the-glass.jpeg" width="400"/>
 
 ## API reference
 

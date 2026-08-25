@@ -86,12 +86,12 @@ type StageOutput =
 namespace Partas.Build.Internal
 
 open System
-open System.Runtime.CompilerServices
 open Partas.Build
 
 type StepSoftCancelledException(msg: string) = inherit Exception(msg)
 type StageSoftCancelledException(msg: string) = inherit Exception(msg)
 
+[<Struct>]
 type InputSpec<'T> = { Inputs: ActionInput list; Read: CommandLine.ParseResult -> 'T }
 
 [<Measure>] type stepIndex
@@ -102,6 +102,9 @@ type [<Struct; RequireQualifiedAccess>]
     | StepFn of fn: (StageContext -> StepIndex -> Async<Result<unit, string>>)
     | StepOfStage of stage: StageContext
 
+/// <summary>
+/// Stage can nest in a pipeline or another stage.
+/// </summary>
 and [<Struct; RequireQualifiedAccess>]
     StageParent =
     | Stage of stage: StageContext
@@ -479,6 +482,13 @@ module InputSpec =
     let map f s = { Inputs = s.Inputs; Read = s.Read >> f }
     let map2 f a b = { Inputs = union [ a.Inputs; b.Inputs ]; Read = fun pr -> f (a.Read pr) (b.Read pr) }
     let ofInput (input: ActionInput<'T>) = { Inputs = [ input :> ActionInput ]; Read = input.GetValue }
+    /// Collapses a sequence of specs into one spec of a list, unioning their inputs.
+    /// This is what lets a collection of ready-made blocks - a stage per project, say - be yielded as a unit.
+    let sequence (specs: InputSpec<'T> seq) =
+        let specs = List.ofSeq specs
+        { Inputs = union [ for spec in specs -> spec.Inputs ]; Read = fun pr -> specs |> List.map (fun spec -> spec.Read pr) }
+    /// <c>sequence</c> over the results of mapping <c>fn</c>, for <c>for x in xs do</c> over an input-declaring body.
+    let traverse (fn: 'T -> InputSpec<'U>) (items: 'T seq) = items |> Seq.map fn |> sequence
 
 module CommandSpec =
     let create name = {

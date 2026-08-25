@@ -1,3 +1,12 @@
+### 0.1.5
+
+* Stage-level output sinks: `silentOutput`, `captureOutput`, `redirectOutput` and `outputTo` on both the stage
+  and pipeline builders. A captured stage prints nothing and lifts what it held — stderr if the process wrote
+  any, everything otherwise — into the error message when a step fails.
+* `StageContext.writeLine ctx stream line` is the routable way for a step to emit output; `echo` now uses it.
+* Error messages are percent-encoded into GitHub Actions annotations, so a multi-line failure survives one.
+* Both of a redirected child's streams are always drained, which removes a pipe-buffer deadlock.
+
 ### 0.1.4
 
 * `bump` command: `dotnet run --project Build.fsproj -- bump <major|minor|patch|alpha|beta|rc|preview|SEMVER> -p <project>...`

@@ -435,6 +435,62 @@ going after a failed stage; `continueOnStepFailure` sets both. `acceptExitCodes`
 `runBeforeEachStage` and `runAfterEachStage` take a `StageContext -> unit` and fire around every stage in the
 pipeline.
 
+### Where step output goes
+
+By default a step's output goes straight to the console. `outputTo` sends it somewhere else, and the setting
+is inherited by sub-stages the way every other setting is:
+
+| | |
+|---|---|
+| `silentOutput` | dropped |
+| `captureOutput` | held, and lifted into the error message if a step fails |
+| `redirectOutput (fun stream line -> …)` | handed over line by line, as it arrives |
+| `outputTo sink` | any of the above as a `StageOutput` value, for when the choice is made at run time |
+
+The common case is a test run: silent when it passes, and its own output as the reason when it does not.
+*)
+
+let quietTests =
+    pipeline "test" {
+        stage "test" {
+            captureOutput
+            run "dotnet test"
+        }
+    }
+
+(**
+`captureOutput` lifts stderr if the process wrote any and everything it wrote otherwise — a test runner
+reporting failures on stdout is the ordinary case, and lifting only stderr there would lift nothing. The
+message travels in the step's `Error`, which is what reaches the console and the GitHub Actions annotation, so
+a failing stage still says why.
+
+Pass an `OutputCapture` to keep a handle on the lines whatever the outcome:
+
+```fsharp
+let log = OutputCapture()
+
+let audited =
+    pipeline "audit" {
+        stage "scan" {
+            captureOutput log
+            run "dotnet list package --vulnerable"
+        }
+
+        post [ stage "report" { run (fun _ -> File.WriteAllText ("scan.log", log.Text)) } ]
+    }
+```
+
+`Lines` is both streams in the order they arrived, `Errors` only stderr, `Text`/`ErrorText` the same joined,
+and `FailureText` is what a failure lifts.
+
+Three things this deliberately does not do. It does not touch the pipeline's own log — the stage rules, the
+command lines, the timings — which is what `verbosity` controls; a stage wanting both quiet is `quiet` *and*
+`silentOutput`. It cannot route a bare `printfn` from inside a step, because nothing intercepts it: write
+through `StageContext.writeLine ctx StdStream.Out` to emit something the stage can suppress, which is what
+`echo` does. And `noStdRedirectForStep` overrides all of it, since without redirection there is no stream to
+route.
+
+
 ## Baked: the batteries
 
 Everything above is the machinery. `Partas.Build.Baked` is the layer of things every build CLI ends up writing

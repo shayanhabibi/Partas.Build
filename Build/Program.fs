@@ -159,19 +159,33 @@ module Tests =
         }
     }
 
-    /// The suite is its own executable, so it is run rather than discovered: `--no-build` is safe because the
-    /// stage above just built it in the same configuration.
+    /// <summary>Runs the three suites, each of which is its own executable.</summary>
+    /// <remarks>
+    /// <c>--no-build</c> is safe because the stage above just built them in the same configuration.
+    ///
+    /// <c>--sequenced</c> is not a preference. Every suite drives real pipelines, and a pipeline writes to one
+    /// process-wide console and holds a thread in <c>Async.RunSynchronously</c> for the length of every stage;
+    /// running the tests in parallel on a two-core runner produces a log whose lines belong to no test in
+    /// particular, and enough blocked workers that the thread pool has to grow its way out one thread at a time.
+    ///
+    /// Under <c>--ci</c> the suites' output is held back and lifted into the error if one fails, so a green run
+    /// says nothing and a red one says everything. Locally it stays live: watching a suite run is most of the
+    /// reason for running it by hand.
+    /// </remarks>
     let execute = input {
         let! skipTests = Options.skipTests
         and! config = Baked.Input.DotNet.configString
+        and! ci = Baked.Input.CI.isCI
         let config = Option.defaultValue "Release" config
+        let args = [ "-c"; config; "--no-build"; "--"; "--summary"; "--sequenced"; "--colours"; "256" ]
+
         return stage "test" {
             when' (not skipTests)
             quiet
-            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.Tests``.Run(["-c"; config; "--no-build"; "--"; "--summary"; "--colours"; "256"])))
-            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Run(["-c"; config; "--no-build"; "--"; "--summary"; "--colours"; "256"])))
-            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.ExternalAnnotations.Tests``.Run(["-c"; config; "--no-build"; "--"; "--summary"; "--colours"; "256"])))
-
+            outputTo (if ci then StageOutput.Captured(OutputCapture()) else StageOutput.Console)
+            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.Tests``.Run args))
+            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Run args))
+            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.ExternalAnnotations.Tests``.Run args))
         }
     }
 

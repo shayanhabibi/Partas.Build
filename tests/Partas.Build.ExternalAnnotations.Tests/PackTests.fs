@@ -33,17 +33,22 @@ let private toolCommand =
     let dll = Path.Combine (AppContext.BaseDirectory, "Partas.ExternalAnnotations.Tool.dll")
     dll, $"dotnet \"{dll}\""
 
-/// Runs a process to completion, returning its exit code and everything it wrote.
+/// <summary>Runs a process to completion, returning its exit code and everything it wrote.</summary>
+/// <remarks>
+/// Both streams are drained at once. Draining one and then the other deadlocks the moment the child fills the
+/// other's pipe buffer - a few kilobytes - which for a <c>dotnet pack</c> that decides to warn about something
+/// is a coin toss rather than a rare case.
+/// </remarks>
 let private exec (workingDirectory: string) (fileName: string) (arguments: string) =
     let info = ProcessStartInfo (fileName, arguments, WorkingDirectory = workingDirectory)
     info.RedirectStandardOutput <- true
     info.RedirectStandardError <- true
 
     use proc = Process.Start info
-    let output = proc.StandardOutput.ReadToEnd ()
-    let error = proc.StandardError.ReadToEnd ()
+    let output = proc.StandardOutput.ReadToEndAsync ()
+    let error = proc.StandardError.ReadToEndAsync ()
     proc.WaitForExit ()
-    proc.ExitCode, output + error
+    proc.ExitCode, output.Result + error.Result
 
 /// A minimal library with one annotated member, packed the way a consumer's project would be.
 let private project (targetFrameworks: string) = $"""<Project Sdk="Microsoft.NET.Sdk">

@@ -32,6 +32,57 @@ type EnvArg =
     member inline this.WithValues values = { this with Values = values }
     member inline this.WithIsOptional isOptional = { this with IsOptional = isOptional }
 
+/// <summary>Which of a step's two streams a line of output came from.</summary>
+[<Struct; RequireQualifiedAccess>]
+type StdStream =
+    | Out
+    | Err
+
+/// <summary>The lines a stage held back, in the order they were written.</summary>
+/// <remarks>
+/// One capture is shared by every step of the stage that declared it and by its sub-stages, so it locks:
+/// steps run in parallel, and a process's two streams are read on two threads of their own.
+/// </remarks>
+type OutputCapture() =
+    let lines = ResizeArray<struct (StdStream * string)>()
+
+    member _.Add(stream, line) = lock lines (fun () -> lines.Add (struct (stream, line)))
+    member _.Clear() = lock lines lines.Clear
+    member _.IsEmpty = lock lines (fun () -> lines.Count = 0)
+
+    /// Everything written, both streams, interleaved in the order it arrived.
+    member _.Lines = lock lines (fun () -> [ for struct (_, line) in lines -> line ])
+
+    /// Only what went to stderr.
+    member _.Errors = lock lines (fun () -> [ for struct (stream, line) in lines do if stream = StdStream.Err then yield line ])
+
+    member this.Text = String.Join (Environment.NewLine, this.Lines)
+    member this.ErrorText = String.Join (Environment.NewLine, this.Errors)
+
+    /// <summary>What a failure lifts.</summary>
+    /// <remarks>
+    /// stderr when the process used it, and everything otherwise: a test runner that reports its failures on
+    /// stdout is the ordinary case, and lifting only stderr there would lift nothing at all.
+    /// </remarks>
+    member this.FailureText = if this.Errors.IsEmpty then this.Text else this.ErrorText
+
+/// <summary>Where the output of a stage's steps goes.</summary>
+/// <remarks>
+/// This is the steps' output only — what the child processes write, and what <c>echo</c> says. The pipeline's
+/// own log (the stage rules, the command lines, the timings) always goes to the console; <c>verbosity</c> is
+/// what controls that.
+/// </remarks>
+[<RequireQualifiedAccess>]
+type StageOutput =
+    /// Straight to the console, both streams merged. The default.
+    | Console
+    /// Dropped.
+    | Silent
+    /// Held, and lifted into the error message if a step fails.
+    | Captured of capture: OutputCapture
+    /// Handed to a function, line by line, as it arrives.
+    | Redirect of write: (StdStream -> string -> unit)
+
 namespace Partas.Build.Internal
 
 open System
@@ -79,6 +130,7 @@ and StageContext = {
     FailIfNoActiveSubStage: bool
     NoPrefixForStep: bool
     NoStdRedirectForStep: bool
+    Output: StageOutput voption
     ShuffleExecuteSequence: bool
     ParentContext: StageParent voption
     Steps: Step list
@@ -96,6 +148,7 @@ and PipelineContext = {
     WorkingDir: string voption
     NoPrefixForStep: bool
     NoStdRedirectForStep: bool
+    Output: StageOutput voption
     Stages: StageContext list
     PostStages: StageContext list
     RunBeforeEachStage: StageContext -> unit
@@ -149,6 +202,7 @@ module StageContext =
             FailIfNoActiveSubStage = false
             NoPrefixForStep = true
             NoStdRedirectForStep = false
+            Output = ValueNone
             ShuffleExecuteSequence = false
             ParentContext = ValueNone
             Steps = []
@@ -191,6 +245,31 @@ module StageContext =
         | ValueSome(StageParent.Pipeline pipeline) -> pipeline.NoStdRedirectForStep
         | ValueSome(StageParent.Stage parentStage) -> getNoStdRedirectForStep parentStage
 
+    /// <summary>Where this stage's step output goes, taking the nearest declaration walking upward.</summary>
+    /// <remarks><c>ValueNone</c> means nobody asked for anything, which is <c>StageOutput.Console</c>.</remarks>
+    let rec getOutput (ctx: StageContext) =
+        ctx.Output
+        |> ValueOption.orElseWith (fun () -> mapParentContext ValueNone _.Output getOutput ctx)
+
+    /// The capture this stage writes into, if that is where its output goes.
+    let tryGetCapture (ctx: StageContext) =
+        match getOutput ctx with
+        | ValueSome(StageOutput.Captured capture) -> ValueSome capture
+        | _ -> ValueNone
+
+    /// <summary>Writes one line of step output wherever <see cref="M:getOutput"/> says it belongs.</summary>
+    /// <remarks>
+    /// The way for a step to emit something the stage can suppress or capture. A bare <c>printfn</c> goes to
+    /// the console whatever the stage says, because nothing routes it.
+    /// </remarks>
+    let writeLine (ctx: StageContext) (stream: StdStream) (line: string) =
+        match getOutput ctx with
+        // Both streams merged onto stdout, as they were before there was anywhere else to put them.
+        | ValueNone | ValueSome StageOutput.Console -> Console.WriteLine line
+        | ValueSome StageOutput.Silent -> ()
+        | ValueSome(StageOutput.Captured capture) -> capture.Add (stream, line)
+        | ValueSome(StageOutput.Redirect write) -> write stream line
+
     let rec buildEnvVars (ctx: StageContext) =
         mapParentContext Map.empty _.EnvVars buildEnvVars ctx
         |> Map.foldBack Map.add ctx.EnvVars
@@ -229,13 +308,21 @@ module StageContext =
 
     open Spectre.Console
 
+    /// <summary>Percent-encodes a message for a GitHub Actions workflow command.</summary>
+    /// <remarks>
+    /// A workflow command ends at the first newline, so a multi-line message — which is exactly what a
+    /// captured failure lifts — loses everything after its first line unless it arrives encoded.
+    /// </remarks>
+    let encodeWorkflowData (msg: string) =
+        msg.Replace("%", "%25").Replace("\r", "%0D").Replace("\n", "%0A")
+
     let printError (stage: StageContext) (msg: string) =
         match tryGetEnvVar stage "GITHUB_ENV" with
         | ValueSome _ ->
             getNamePath stage
             |> _.Replace(",", "_")
             |> (+) "[STAGE] "
-            |> fun title -> $"::error title={title}::{msg}"
+            |> fun title -> $"::error title={title}::{encodeWorkflowData msg}"
             |> AnsiConsole.WriteLine
         | _ ->
             AnsiConsole.MarkupLineInterpolated $"""[red]Error: {msg}[/]"""
@@ -272,6 +359,7 @@ module PipelineContext =
             WorkingDir = ValueNone
             NoPrefixForStep = true
             NoStdRedirectForStep = false
+            Output = ValueNone
             Stages = []
             PostStages = []
             RunBeforeEachStage = ignore
@@ -292,7 +380,7 @@ module PipelineContext =
             ctx.EnvVars
             |> Map.containsKey "GITHUB_ENV"
         then
-            (ctx.Name.Replace(",", "_"), msg)
+            (ctx.Name.Replace(",", "_"), StageContext.encodeWorkflowData msg)
             ||> sprintf "::error title=[PIPELINE] %s::%s"
             |> AnsiConsole.WriteLine
         else
@@ -553,6 +641,11 @@ module Runners =
                             $"Pipeline failed because there were no active sub-stages; stage ({getNamePath stage}) required at least one"
                             |> raisePipelineFailedException
                     let stageSw = Stopwatch.StartNew()
+                    // Only a capture this stage declared itself: one it inherited belongs to an ancestor that is
+                    // still running, and clearing that would throw away what its earlier stages wrote.
+                    match stage.Output with
+                    | ValueSome(StageOutput.Captured capture) -> capture.Clear()
+                    | _ -> ()
                     let parallelism = stage.IsParallel stage
                     let timeoutForStep: int = getTimeoutForStep stage
                     let timeoutForStage: int = getTimeoutForStage stage

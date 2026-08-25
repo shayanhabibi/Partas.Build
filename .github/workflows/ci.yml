@@ -25,6 +25,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    # A hung test suite would otherwise hold the runner for six hours before anyone hears about it.
+    timeout-minutes: 30
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5
@@ -46,6 +48,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   build-docs:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Setup .NET

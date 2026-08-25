@@ -238,8 +238,17 @@ module CmdRunner =
         if not noPrefix then AnsiConsole.Markup $"[green]{prefix}[/] "
         AnsiConsole.nWriteLine(ctx, Cmd.toLogString cmd)
 
-        // Redirection costs the child's colours, so it is only worth it when the output has to be prefixed.
-        let redirect = not noPrefix && not (StageContext.getNoStdRedirectForStep ctx)
+        let output = StageContext.getOutput ctx
+
+        let toConsole =
+            match output with
+            | ValueNone | ValueSome StageOutput.Console -> true
+            | _ -> false
+
+        // Redirection costs the child's colours, so it is only worth it when the output has to be prefixed --
+        // or when the stage has said it goes somewhere that is not the console, which cannot be done without it.
+        // `noStdRedirectForStep` is the explicit opt out and wins over both: it makes capture impossible, by design.
+        let redirect = (not noPrefix || not toConsole) && not (StageContext.getNoStdRedirectForStep ctx)
         let startInfo = toStartInfo ctx cmd
 
         if redirect then
@@ -251,11 +260,13 @@ module CmdRunner =
         use proc = Process.Start startInfo
 
         if redirect then
-            // Both streams are read: processes write to whichever they please, and mixing them here loses less.
-            let onData (ev: DataReceivedEventArgs) =
-                if not (String.IsNullOrEmpty ev.Data) then Console.WriteLine (prefix + " " + ev.Data)
-            proc.OutputDataReceived.Add onData
-            proc.ErrorDataReceived.Add onData
+            // Both streams are read, always: a child whose stderr is redirected and never drained blocks on a
+            // full pipe once it has written a few kilobytes there, and waits for a reader that never comes.
+            let onData (stream: StdStream) (ev: DataReceivedEventArgs) =
+                if not (String.IsNullOrEmpty ev.Data) then
+                    StageContext.writeLine ctx stream (if noPrefix then ev.Data else prefix + " " + ev.Data)
+            proc.OutputDataReceived.Add (onData StdStream.Out)
+            proc.ErrorDataReceived.Add (onData StdStream.Err)
             proc.BeginOutputReadLine()
             proc.BeginErrorReadLine()
 
@@ -283,7 +294,16 @@ module CmdRunner =
 
         return
             if cancellationToken.IsCancellationRequested then Ok()
-            else StageContext.mapExitCodeToResult ctx proc.ExitCode
+            else
+                match StageContext.mapExitCodeToResult ctx proc.ExitCode with
+                | Ok () -> Ok()
+                // The point of holding the output back: nothing was printed, so the reason has to travel in the
+                // error instead, which is what reaches `printError` and the GitHub Actions annotation.
+                | Error message ->
+                    match output with
+                    | ValueSome(StageOutput.Captured capture) when not capture.IsEmpty ->
+                        Error $"%s{message}%s{Environment.NewLine}%s{capture.FailureText}"
+                    | _ -> Error message
     }
 
     /// The step function for a command that is only known once the stage is running.

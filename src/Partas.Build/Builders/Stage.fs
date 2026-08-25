@@ -240,6 +240,45 @@ and [<EditorBrowsable(EditorBrowsableState.Advanced)>]
         ([<InlineIfLambda>] build: BuildStage, ?flag: bool): BuildStage
         = build >> fun ctx -> { ctx with NoStdRedirectForStep = defaultArg flag true }
 
+    /// <summary>Sends the output of this stage's steps somewhere other than the console.</summary>
+    /// <remarks>
+    /// Inherited by sub-stages that declare nothing of their own. Only the steps' output moves: the pipeline's
+    /// log — the stage rules, the command lines, the timings — stays on the console, and <c>verbosity</c> is
+    /// what quietens that. <c>noStdRedirectForStep</c> overrides this, since without redirection there is
+    /// nothing to route.
+    ///
+    /// Named <c>outputTo</c> rather than <c>output</c> because a custom operation's name shadows every
+    /// identifier of that name inside the CE, and <c>output</c> is a value a stage very often has in scope.
+    /// </remarks>
+    [<CustomOperation>] member inline _.
+        outputTo
+        ([<InlineIfLambda>] build: BuildStage, output: StageOutput): BuildStage
+        = build >> fun ctx -> { ctx with Output = ValueSome output }
+
+    /// <summary>Drops the output of this stage's steps.</summary>
+    /// <remarks>For a step whose noise is never worth reading. A failure still reports its exit code.</remarks>
+    [<CustomOperation>] member inline _.
+        silentOutput
+        ([<InlineIfLambda>] build: BuildStage): BuildStage
+        = build >> fun ctx -> { ctx with Output = ValueSome StageOutput.Silent }
+
+    /// <summary>Holds the output of this stage's steps back, and lifts it into the error message if one fails.</summary>
+    /// <remarks>
+    /// A quiet run that still says why it failed: stderr if the process used it, and everything it wrote
+    /// otherwise. Pass an <c>OutputCapture</c> to keep a handle on the lines regardless of the outcome.
+    /// </remarks>
+    [<CustomOperation>] member inline _.
+        captureOutput
+        ([<InlineIfLambda>] build: BuildStage, ?capture: OutputCapture): BuildStage
+        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture()))) }
+
+    /// <summary>Hands each line of this stage's step output to <paramref name="write"/> as it arrives.</summary>
+    /// <remarks>Called from the reader threads of both streams, so <paramref name="write"/> must tolerate that.</remarks>
+    [<CustomOperation>] member inline _.
+        redirectOutput
+        ([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] write: StdStream -> string -> unit): BuildStage
+        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Redirect write) }
+
     /// <summary>Randomizes the execution order of steps in this stage.</summary>
     /// <remarks>By default, steps execute in the order they are declared. Enable this to shuffle the order randomly at each run.</remarks>
     [<CustomOperation>] member inline _.
@@ -342,8 +381,8 @@ and [<EditorBrowsable(EditorBrowsableState.Advanced)>]
         { ctx with
               Steps = ctx.Steps @ [ Step.StepFn(fun ctx i -> async {
                   if StageContext.getNoPrefixForStep ctx
-                  then printfn $"%s{msg ctx}"
-                  else printfn $"%s{StageContext.buildStepPrefix ctx i}: %s{msg ctx}"
+                  then StageContext.writeLine ctx StdStream.Out $"%s{msg ctx}"
+                  else StageContext.writeLine ctx StdStream.Out $"%s{StageContext.buildStepPrefix ctx i}: %s{msg ctx}"
                   return Ok()
               }) ] }
 

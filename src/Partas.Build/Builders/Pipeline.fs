@@ -177,6 +177,34 @@ type PipelineBuilder(name: string) =
         ([<InlineIfLambda>] build: BuildPipeline, ?flag: bool): BuildPipeline
         = build >> fun ctx -> { ctx with NoStdRedirectForStep = defaultArg flag true }
 
+    /// <summary>Sends the output of every stage's steps somewhere other than the console.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
+    [<CustomOperation>] member inline _.
+        outputTo
+        ([<InlineIfLambda>] build: BuildPipeline, output: StageOutput): BuildPipeline
+        = build >> fun ctx -> { ctx with Output = ValueSome output }
+
+    /// <summary>Drops the output of every stage's steps.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
+    [<CustomOperation>] member inline _.
+        silentOutput
+        ([<InlineIfLambda>] build: BuildPipeline): BuildPipeline
+        = build >> fun ctx -> { ctx with Output = ValueSome StageOutput.Silent }
+
+    /// <summary>Holds every stage's step output back, lifting it into the error message when a step fails.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
+    [<CustomOperation>] member inline _.
+        captureOutput
+        ([<InlineIfLambda>] build: BuildPipeline, ?capture: OutputCapture): BuildPipeline
+        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture()))) }
+
+    /// <summary>Hands each line of step output to <paramref name="write"/> as it arrives.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
+    [<CustomOperation>] member inline _.
+        redirectOutput
+        ([<InlineIfLambda>] build: BuildPipeline, [<InlineIfLambda>] write: StdStream -> string -> unit): BuildPipeline
+        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Redirect write) }
+
     /// <summary>Runs a function immediately before each stage of the pipeline.</summary>
     /// <include file="../xmldoc/pipeline.xml" path="/pipeline/hooks/*"/>
     [<CustomOperation>] member inline _.
@@ -296,6 +324,30 @@ type PipelineBuilder(name: string) =
         noStdRedirectForStep
         (spec: InputSpec<BuildPipeline>, ?flag: bool): InputSpec<BuildPipeline>
         = InputSpec.map (fun (build: BuildPipeline) -> this.noStdRedirectForStep(build, ?flag = flag)) spec
+    /// <summary>Sends the output of every stage's steps somewhere other than the console.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
+    [<CustomOperation>] member inline this.
+        outputTo
+        (spec: InputSpec<BuildPipeline>, output: StageOutput): InputSpec<BuildPipeline>
+        = InputSpec.map (fun (build: BuildPipeline) -> this.outputTo(build, output)) spec
+    /// <summary>Drops the output of every stage's steps.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
+    [<CustomOperation>] member inline this.
+        silentOutput
+        (spec: InputSpec<BuildPipeline>): InputSpec<BuildPipeline>
+        = InputSpec.map (fun (build: BuildPipeline) -> this.silentOutput build) spec
+    /// <summary>Holds every stage's step output back, lifting it into the error message when a step fails.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
+    [<CustomOperation>] member inline this.
+        captureOutput
+        (spec: InputSpec<BuildPipeline>, ?capture: OutputCapture): InputSpec<BuildPipeline>
+        = InputSpec.map (fun (build: BuildPipeline) -> this.captureOutput(build, ?capture = capture)) spec
+    /// <summary>Hands each line of step output to <paramref name="write"/> as it arrives.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
+    [<CustomOperation>] member inline this.
+        redirectOutput
+        (spec: InputSpec<BuildPipeline>, [<InlineIfLambda>] write: StdStream -> string -> unit): InputSpec<BuildPipeline>
+        = InputSpec.map (fun (build: BuildPipeline) -> this.redirectOutput(build, write)) spec
     /// <summary>Runs a function immediately before each stage of the pipeline.</summary>
     /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
     [<CustomOperation>] member inline this.

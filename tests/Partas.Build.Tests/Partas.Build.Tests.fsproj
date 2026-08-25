@@ -16,6 +16,7 @@
         <Compile Include="PipelineTests.fs"/>
         <Compile Include="ConditionsTests.fs"/>
         <Compile Include="CmdTests.fs"/>
+        <Compile Include="OutputTests.fs"/>
         <Compile Include="CommandTests.fs"/>
         <Compile Include="Main.fs"/>
     </ItemGroup>

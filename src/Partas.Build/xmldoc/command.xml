@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Fragments spliced at the top level of a documentation comment, as a sibling of <summary>,
+so each child here is a complete <remarks> element.
+-->
+<command>
+  <aliasRemark>
+    <remarks>Aliases accumulate: calling this twice adds both rather than replacing the first.</remarks>
+  </aliasRemark>
+  <addInputRemark>
+    <remarks>Only for inputs no pipeline asks for. A command normally harvests its options from the
+    <c>InputSpec</c> of each pipeline it runs, so a stage that binds <c>--configuration</c> is what puts
+    <c>--configuration</c> in <c>--help</c>; registering the same option here as well would duplicate it.</remarks>
+  </addInputRemark>
+</command>

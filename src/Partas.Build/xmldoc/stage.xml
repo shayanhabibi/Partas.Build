@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<stage>
+  <timeout>
+    <remarks>Accepts <c>int&lt;second></c>, <c>float</c> seconds, or a <c>TimeSpan</c>. All are converted internally to a <c>TimeSpan</c>. If the stage exceeds this timeout, it is cancelled.</remarks>
+  </timeout>
+  <timeoutForStep>
+    <remarks>Accepts <c>int&lt;second></c>, <c>float</c> seconds, or a <c>TimeSpan</c>. All are converted internally to a <c>TimeSpan</c>. If any step exceeds this timeout, that step is cancelled.</remarks>
+  </timeoutForStep>
+  <parallel>
+    <remarks>
+    <para>By default, steps run sequentially. Every overload resolves to an <c>int voption</c>: <c>ValueNone</c> and
+    <c>ValueSome 1</c> are sequential, <c>ValueSome n</c> for <c>n</c> greater than one throttles the stage to
+    <c>n</c> steps at a time, and <c>ValueSome n</c> for <c>n</c> less than one is unbounded. So <c>false</c> and
+    <c>1</c> both mean sequential, while <c>true</c>, <c>0</c> and <c>-1</c> all mean unbounded. A condition
+    function allows dynamic control based on the stage context.</para>
+    <para>A throttle is exact: a stage set to <c>n</c> never has an <c>n + 1</c>th step in flight, because the
+    per-step <c>Async.StartChild</c> that applies <c>timeoutForStep</c> happens inside the throttle rather than
+    while producing the step sequence.</para>
+    <para>Unlike the <c>when</c> conditions, which conjoin, this is an ordinary setting: a second
+    <c>parallel'</c> overwrites the first rather than combining with it. To decide between modes, return the
+    choice from one condition function instead of writing two operations.</para>
+    </remarks>
+  </parallel>
+  <workingDir>
+    <remarks>Sets the working directory for commands in this stage. Both overloads accept a string path or a <c>DirectoryInfo</c> object.</remarks>
+  </workingDir>
+  <run>
+    <remarks>The generic <c>run</c> overload accepts multiple step signatures: <c>Async&lt;unit></c>, <c>StageContext -&gt; unit</c>, <c>StageContext -&gt; int</c>, <c>StageContext -&gt; Async&lt;unit></c>, <c>StageContext -&gt; Async&lt;int></c>, <c>StageContext -&gt; Result&lt;unit, string></c>, <c>StageContext -&gt; Task&lt;unit></c>, <c>StageContext -&gt; Task&lt;int></c>, <c>StageContext -&gt; Task</c>, and <c>StageContext -&gt; Task&lt;Result&lt;unit, string>></c>. Exit code 0 is treated as success; non-zero codes are failures unless added to <c>acceptExitCodes</c>.</remarks>
+  </run>
+</stage>

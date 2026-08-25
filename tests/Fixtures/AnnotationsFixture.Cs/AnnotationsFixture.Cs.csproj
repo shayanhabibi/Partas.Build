@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+    A fixture, not a product: it exists to be *scanned*, so every construct the generator has to
+    name lives here exactly once. `dotnet build` writing the doc file is deliberate - Roslyn's
+    <member name="..."> ids are the oracle OracleTests compares XmlDocId against.
+    -->
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <AssemblyName>AnnotationsFixture.Cs</AssemblyName>
+        <RootNamespace>Fixture</RootNamespace>
+        <IsPackable>false</IsPackable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <Nullable>disable</Nullable>
+        <!-- JetBrains' attributes are [Conditional("JETBRAINS_ANNOTATIONS")]; without this they
+             compile away and never reach metadata, so nothing would be there to find. -->
+        <DefineConstants>$(DefineConstants);JETBRAINS_ANNOTATIONS</DefineConstants>
+        <!-- CS0067: the fixture's event is never raised, which is the point. -->
+        <NoWarn>$(NoWarn);CS0067</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="JetBrains.Annotations" Version="2024.3.0"/>
+    </ItemGroup>
+
+</Project>

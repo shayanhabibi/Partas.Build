@@ -1,5 +1,30 @@
 <Solution>
-  <Project Path="Build.fsproj" />
-  <Project Path="src/Partas.Build/Partas.Build.fsproj" />
-  <Project Path="tests/Partas.Build.Tests/Partas.Build.Tests.fsproj" />
+  <Folder Name="/ci/">
+    <File Path=".github/workflows/ci.yml" />
+    <Project Path="Build.fsproj" />
+  </Folder>
+  <Folder Name="/env/">
+    <File Path=".config/dotnet-tools.json" />
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Build.targets" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Partas.Build/Partas.Build.fsproj" />
+  </Folder>
+  <Folder Name="/src/external-annotations/">
+    <Project Path="Partas.Build.ExternalAnnotations/Partas.Build.ExternalAnnotations.fsproj" />
+    <Project Path="Partas.ExternalAnnotations.Tool/Partas.ExternalAnnotations.Tool.fsproj" />
+    <Project Path="Partas.ExternalAnnotations/Partas.ExternalAnnotations.fsproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Partas.Build.ExternalAnnotations.Tests/Partas.Build.ExternalAnnotations.Tests.fsproj" />
+    <Project Path="tests/Partas.Build.Tests/Partas.Build.Tests.fsproj" />
+    <Project Path="tests/Partas.ExternalAnnotations.Tests/Partas.ExternalAnnotations.Tests.fsproj" />
+  </Folder>
+  <Folder Name="/tests/fixtures/">
+    <Project Path="tests/Fixtures/AnnotationsFixture.Cs/AnnotationsFixture.Cs.csproj" />
+    <Project Path="tests/Fixtures/AnnotationsFixture.Fs/AnnotationsFixture.Fs.fsproj" />
+  </Folder>
 </Solution>

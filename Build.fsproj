@@ -22,7 +22,6 @@
              `Update` modifies the existing implicit reference instead of
              adding a duplicate (which would trigger NU1504). -->
         <PackageReference Update="FSharp.Core" Version="10.1.400"/>
-        <PackageReference Include="EasyBuild.FileSystemProvider" Version="1.1.0"/>
         <PackageReference Include="Fake.Core.Target" Version="6.1.4"/>
         <PackageReference Include="Fake.Core.UserInput" Version="6.1.4"/>
         <PackageReference Include="Fake.DotNet.Cli" Version="6.1.4"/>
@@ -31,6 +30,7 @@
         <PackageReference Include="FsToolkit.ErrorHandling" Version="5.2.0"/>
         <PackageReference Include="Fake.Core.ReleaseNotes" Version="6.1.4"/>
         <PackageReference Include="Partas.GitNet" Version="3.0.0"/>
+        <PackageReference Include="Partas.TypeProvider.BuildHelper" Version="0.2.0" />
     </ItemGroup>
 
     <ItemGroup>

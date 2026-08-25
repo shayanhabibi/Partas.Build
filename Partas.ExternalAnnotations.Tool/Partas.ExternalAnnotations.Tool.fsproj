@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <!-- PackAsTool cannot target netstandard2.0 (NETSDK1054); net8.0 is the lowest host we support. -->
+        <TargetFramework>net8.0</TargetFramework>
+        <PackAsTool>true</PackAsTool>
+        <ToolCommandName>partas-annotations</ToolCommandName>
+        <PackageId>Partas.ExternalAnnotations.Tool</PackageId>
+        <Description>Generates ReSharper external annotations for an assembly and ships them inside its NuGet package.</Description>
+        <RollForward>LatestMajor</RollForward>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="Program.fs"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Partas.Build.ExternalAnnotations\Partas.Build.ExternalAnnotations.fsproj"/>
+    </ItemGroup>
+
+</Project>

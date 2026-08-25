@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="Library.fs"/>
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="System.Reflection.MetadataLoadContext" Version="10.0.11" />
+      <!-- Not in-box on netstandard2.0; backs the deps.json probe. System.Reflection.Metadata,
+           used for the attribute-blob decode, arrives transitively via MetadataLoadContext. -->
+      <PackageReference Include="System.Text.Json" Version="8.0.5" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
+    </ItemGroup>
+
+</Project>

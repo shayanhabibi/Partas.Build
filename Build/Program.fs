@@ -9,6 +9,7 @@
 /// </summary>
 module Build
 
+open System.IO
 open Fake.Core
 open Fake.IO
 open Fake.IO.Globbing.Operators
@@ -30,7 +31,7 @@ module Prelude =
         return stage "restore" {
             when' (not quick)
             run "dotnet tool restore --verbosity q"
-            run (cmd $"dotnet restore {Solutions.Main}")
+            run (cmd $"dotnet restore {Repo.Project.SolutionFile}")
         }
     }
 
@@ -42,11 +43,11 @@ module HouseKeeping =
             when' (not quick)
 
             run (fun (_: StageContext) ->
-                !!"bin/*.nupkg"
-                |> Seq.iter Shell.rm
+                VRoot.bin.``.``.EnumerateFiles("*.nupkg", SearchOption.AllDirectories)
+                |> Seq.iter (_.ToString() >> Shell.rm)
                 !! "**/**/bin"
-                ++ "temp"
-                -- "bin"
+                ++ VRoot.tmp.ToString()
+                -- VRoot.bin.ToString()
                 |> Shell.cleanDirs
                 )
         }
@@ -59,14 +60,19 @@ module ProjectManagement =
         return stage "build" {
             run (fun (_: StageContext) ->
                 let version = release.Value.AssemblyVersion
-                cmd $"dotnet build {Projects.FsProj.Solution} -c {config} -p:PackageVersion={version} -p:Version={version}")
+                Repo.Project.``Partas.Build``.Build(
+                    ["-c"; config; $"-p:PackageVersion={version}"; $"-p:Version={version}"]
+                    )
+                |> Cmd.ofList "dotnet"
+            )
         }
     }
 
     let pack = stage "pack" {
         run (fun (_: StageContext) ->
             let version = release.Value.AssemblyVersion
-            cmd $"dotnet pack {Projects.FsProj.Solution} --no-restore -o bin -p:PackageVersion={version} -p:Version={version}")
+            Repo.Project.``Partas.Build``.Pack(["--no-restore"; "-o"; VRoot.bin.ToString(); $"-p:PackageVersion={version}"; $"-p:Version={version}"])
+            |> Cmd.ofList "dotnet")
     }
 
     /// <summary>Pushes every package in <c>bin</c>, to nuget.org with a key and to the <c>local</c> feed without one.</summary>
@@ -80,7 +86,7 @@ module ProjectManagement =
     let publish = input {
         let! key = Options.NuGet.key
         let envKey = Environment.environVarOrNone "NUGET_API_KEY"
-        let packages = System.IO.Path.Combine ("bin", "*.nupkg")
+        let packages = Path.Combine (VRoot.bin.ToString(), "*.nupkg")
 
         let push =
             match key |> Option.orElse envKey with
@@ -107,7 +113,7 @@ module Tests =
 
         return stage "build tests" {
             when' (not skipTests)
-            run (cmd $"dotnet build {Tests.FsProj.Solution} -c {config}")
+            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.Tests``.Build(["-c"; config])))
         }
     }
 
@@ -119,7 +125,7 @@ module Tests =
 
         return stage "test" {
             when' (not skipTests)
-            run (cmd $"dotnet run --project {Tests.FsProj.Solution} -c {config} --no-build -- --summary --colours 256")
+            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.Tests``.Run(["-c"; config; "--no-build"; "--"; "--summary"; "--colours"; "256"])))
         }
     }
 

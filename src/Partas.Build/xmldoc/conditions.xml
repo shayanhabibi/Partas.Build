@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Fragments spliced INSIDE an existing <remarks> element, so every child here must be
+remarks-level content (<para>, <c>, text) and never a <remarks> of its own.
+-->
+<conditions>
+  <conjoin>
+    <para>Conditions conjoin rather than replace: a second condition narrows the stage to the logical AND of
+    both, it does not overwrite the first. To widen instead of narrow, pass a single <c>whenAny { }</c> block.</para>
+  </conjoin>
+  <ceRestriction>
+    <para>A custom operation cannot sit under an <c>if</c> or a <c>match</c> inside a computation expression.
+    A stage that needs to branch must build the value first and apply the operation unconditionally.</para>
+  </ceRestriction>
+  <envVar>
+    <para>An <c>EnvArg</c> with an empty <c>Values</c> list is satisfied by the variable merely being set. When
+    <c>Values</c> is non-empty the current value must be one of them, and an optional <c>EnvArg</c> is satisfied
+    whether or not the variable exists. An empty name throws.</para>
+  </envVar>
+  <gitBranch>
+    <para>The branch is read with <c>git branch --show-current</c> in the stage's working directory. If git is
+    missing or fails, the message is printed and the condition evaluates to false rather than throwing — so a
+    branch-gated stage is skipped, not failed, outside a checkout.</para>
+  </gitBranch>
+  <platformNote>
+    <para>Evaluated on the machine running the pipeline via <c>RuntimeInformation.IsOSPlatform</c>, not at
+    compile time.</para>
+  </platformNote>
+</conditions>

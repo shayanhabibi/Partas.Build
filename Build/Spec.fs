@@ -6,7 +6,7 @@
 /// </summary>
 module Spec
 
-open EasyBuild.FileSystemProvider
+open Partas.TypeProvider.BuildHelper
 open Partas.Build
 open Fake.Core
 open Fake.Core.Context
@@ -15,13 +15,23 @@ open Fake.Core.Context
 let __REPOSITORY_DIRECTORY__ =
     __SOURCE_DIRECTORY__
   + "/.."
+type Repo =
+    BuildHelperProvider<__REPOSITORY_DIRECTORY__,
+                        capabilityFullOverride = true,
+                        virtualPathConfig = """
+bin/
+tmp/
+""">
 
 /// <summary>
 /// Typed view of the repository on disk. Every path below is checked at
 /// compile time, so renaming a project without updating the build breaks the
 /// build project rather than failing halfway through a release.
 /// </summary>
-type Root = AbsoluteFileSystem<__REPOSITORY_DIRECTORY__>
+type Root = Repo.FileSystem
+
+/// Virtual paths that don't exist at design time (output artifacts).
+type VRoot = Repo.VirtualFileSystem
 
 let inline funApply value fn = fn value
 
@@ -34,26 +44,6 @@ module DirectoryManagement =
         !! "**/*.fs"
      -- "**/obj/**/*.*"
      -- "**/AssemblyInfo.fs"
-
-    module Projects =
-        module Directory =
-            type Solution = Root.src.``Partas.Build``
-
-        module FsProj =
-            [<Literal>]
-            let Solution = Directory.Solution.``Partas.Build.fsproj``
-
-    module Tests =
-        module Directory =
-            type Solution = Root.tests.``Partas.Build.Tests``
-
-        module FsProj =
-            [<Literal>]
-            let Solution = Directory.Solution.``Partas.Build.Tests.fsproj``
-
-    module Solutions =
-        [<Literal>]
-        let Main = Root.``Partas.Build.slnx``
 
 [<AutoOpen>]
 module GitManagement =
@@ -141,7 +131,7 @@ module CliApiManagement =
 
 [<AutoOpen>]
 module FakeInitializationAndUtilities =
-    let private root = Root.``.``
+    let private root = Root.ToString()
 
     // Credit SAFE STACK
     let initializeContext () =

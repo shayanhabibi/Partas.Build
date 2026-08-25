@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<pipeline>
+  <twoFlavours>
+    <remarks>This operation has two overloads: one taking <c>BuildPipeline</c>, and one taking <c>InputSpec&lt;BuildPipeline></c> for use after a stage that declares CLI inputs. Both apply the same setting to the pipeline.</remarks>
+  </twoFlavours>
+  <pipelineDefault>
+    <remarks>Settings declared on a pipeline act as defaults for all stages unless overridden at the stage level. A stage-level setting takes precedence over the pipeline's.</remarks>
+  </pipelineDefault>
+  <timeoutUnits>
+    <remarks>Accepts <c>int&lt;second></c>, <c>float</c> seconds, or a <c>TimeSpan</c>. All are converted internally to <c>TimeSpan</c>.</remarks>
+  </timeoutUnits>
+  <acceptableExitCodes>
+    <remarks>By default, only exit code 0 is acceptable. Setting this replaces (rather than appends to) the acceptable codes. A stage-level setting overrides the pipeline's.</remarks>
+  </acceptableExitCodes>
+  <envVars>
+    <remarks>Appends to the pipeline's environment variables rather than replacing them. Keys set here override any inherited from parent contexts. A stage can declare additional variables that shadow these.</remarks>
+  </envVars>
+  <postStages>
+    <remarks>Post stages run after the main stages whether or not the pipeline succeeded, which makes them the
+    place for teardown. Setting this replaces any post stages already declared rather than appending.</remarks>
+  </postStages>
+  <hooks>
+    <remarks>Setting this replaces the previous hook rather than chaining onto it. The hook receives the
+    <c>StageContext</c> of the stage it brackets, and runs for every stage in the pipeline.</remarks>
+  </hooks>
+  <mirror>
+    <remarks>This is the <c>InputSpec&lt;BuildPipeline></c> mirror of the operation of the same name. It exists so
+    that a setting placed <em>after</em> a stage that declares CLI inputs is still accepted; without it the
+    placement would be an overload error rather than a no-op. The behaviour is identical.</remarks>
+  </mirror>
+</pipeline>

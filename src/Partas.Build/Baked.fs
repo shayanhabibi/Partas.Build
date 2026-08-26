@@ -357,3 +357,52 @@ module IO =
             next <- Version.apply bump (defaultArg previous Version.zero)
             next)
         |> Result.map (fun previous -> defaultArg previous Version.zero, next)
+
+/// Ready-made stages for the commands every build CLI ends up wanting.
+module Pipelines =
+
+    /// <summary>The <c>bump</c> stage, over whichever source supplies the bump kind.</summary>
+    /// <remarks>
+    /// <paramref name="bumpSource"/> and <paramref name="projects"/> arrive as sources rather than as read
+    /// values because <c>InputSpec</c> is applicative: a spec built inside <c>return</c> nests as
+    /// <c>InputSpec&lt;InputSpec&lt;_&gt;&gt;</c>, and the inner <c>Inputs</c> are then unreachable without a
+    /// <c>ParseResult</c> — the circularity the whole design exists to avoid (<c>PLAN.md</c>, finding 5).
+    /// Every source is therefore bound in one <c>let!</c>/<c>and!</c> group here, and the callers below vary
+    /// only which spec they hand in.
+    /// </remarks>
+    let private bumpImpl (bumpSource: Internal.InputSpec<Versioning.Bump>) (allProjects: string list) (projects: ActionInput<string list>) = input {
+        let! ci = Input.CI.isCI
+        and! bump = bumpSource
+        and! projects = projects
+
+        return stage "bump" {
+            when' (not ci)
+            run (fun (_: Internal.StageContext) ->
+                match projects with
+                | [ "all" ] when not <| List.isEmpty allProjects ->
+                    allProjects
+                | [ "all" ] -> []
+                | projects -> projects
+                |> List.map (fun project ->
+                    match IO.bumpVersion project bump with
+                    | Ok (previous, next) ->
+                        printfn $"%s{project}: %s{previous} -> %s{next}"
+                        Ok()
+                    | Error error -> Error $"%s{project}: %s{error.Message}"
+                    )
+                |> List.tryPick (function Error _ as error -> Some error | Ok () -> None)
+                |> Option.defaultValue (Ok())
+            )
+        }
+    }
+
+    /// The bump kind as a positional argument - `bump minor -p src/Foo`.
+    let bumpArgument (allProjects: string list) (projects: ActionInput<string list>): Internal.InputSpec<Internal.StageContext> =
+        bumpImpl (InputSpec.ofInput Argument.Versioning.bump) allProjects projects
+
+    /// The bump kind as an option - `release --bump minor -p src/Foo` - defaulting to a patch when omitted.
+    let bumpOption (allProjects: string list) (projects: ActionInput<string list>): Internal.InputSpec<Internal.StageContext> =
+        let source =
+            InputSpec.ofInput Input.Versioning.bump
+            |> InputSpec.map (Option.defaultValue Versioning.Bump.Patch)
+        bumpImpl source allProjects projects

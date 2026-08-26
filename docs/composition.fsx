@@ -262,6 +262,71 @@ let tested =
 (**
 `test --help` now lists `--skip-tests` next to the three the blocks declared.
 
+## What does not compose: a block returning a block's spec
+
+There is one shape the CE cannot express, and it is worth recognising on sight. A block that binds inputs
+returns an `InputSpec<StageContext>`. If a *second* `input { }` builds one of those inside its own `return`,
+the result is an `InputSpec<InputSpec<StageContext>>`, and nothing downstream accepts it:
+
+```fsharp
+// Does not work. `bumpBlock` is itself an `input { }`, so `return` wraps a spec inside a spec.
+let bumpFromArgument project = input {
+    let! config = Options.config
+    return bumpBlock (InputSpec.ofInput Sources.bumpArgument) project
+}
+```
+
+There is no `InputSpec.flatten`, and there cannot be a sound one. Flattening means reading the inner spec's
+`Inputs`, which only exist once its `Read` has run, which needs the `ParseResult` that those very inputs were
+supposed to configure. That circularity is the thing `InputSpec` exists to break, which is also why `input`
+has no `Bind`: a sequential `let!` fails with `FS0708` rather than compiling into an option set that cannot
+be registered.
+
+The rule that follows is that **binding is a layer boundary**. One layer binds; the layers above harvest.
+So when two blocks share a body but differ in where a value comes from, pass the *source* in as an
+`InputSpec` rather than passing a read value out as one — the shared body keeps its single `let!`/`and!`
+group and the callers vary only the spec they hand over:
+*)
+
+module Sources =
+    /// The bump kind as a positional argument — `bump minor`.
+    let bumpArgument = Input.argument<string> "bump" |> Input.def "patch"
+
+    /// The same value as an option — `release --bump minor`.
+    let bumpOption = Input.optionMaybe<string> "--bump"
+
+/// The shared body. `bumpSource` arrives as a spec, so it joins the one bind group like any other source.
+let bumpBlock (bumpSource: InputSpec<string>) (project: string) = input {
+    let! bump = bumpSource
+    and! config = Options.config
+
+    return stage $"bump {project}" {
+        run (cmd $"dotnet build {project} -c {config} /p:Bump={bump}")
+    }
+}
+
+let bumpFromArgument project =
+    bumpBlock (InputSpec.ofInput Sources.bumpArgument) project
+
+let bumpFromOption project =
+    let source = InputSpec.ofInput Sources.bumpOption |> InputSpec.map (Option.defaultValue "patch")
+    bumpBlock source project
+
+(**
+`InputSpec.ofInput` lifts a bare `ActionInput` into a spec and `InputSpec.map` adapts its value, so a source
+can be defaulted or reshaped before it is handed over. Both commands below declare `--configuration`; only
+one of them declares the argument, and only the other declares `--bump`:
+*)
+
+let bumping =
+    [ command "bump" { bumpFromArgument "MyLib.fsproj" }
+      command "release" { bumpFromOption "MyLib.fsproj" } ]
+
+(**
+The same rule covers the simpler case where a helper needs no source of its own: give it the already-read
+values as plain arguments and let the caller do all the binding. Either way, an `input { }` nested inside a
+`return` is always the error.
+
 ## Commands over stages
 
 A command does not need an explicit `pipeline`. Yield stages straight into it and they become one implicit

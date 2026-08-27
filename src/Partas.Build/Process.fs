@@ -18,6 +18,27 @@ type Cmd = {
 }
 
 module Cmd =
+    /// <summary>
+    /// Marks a string as containing sensitive information, so it is never printed when
+    /// processed in a <see cref="T:Partas.Build.Cmd"/>.
+    /// </summary>
+    /// <remarks>If the secret contains spaces, then it is also quoted as a literal.</remarks>
+    /// <param name="input"></param>
+    let secret (input: string) =
+#if NETSTANDARD2_0
+        if input.Contains(" ")
+#else
+        if input.Contains(' ')
+#endif
+        then input.Insert(0, "\u001f\"") + "\""
+        else input.Insert(0, "\u001F")
+    /// <summary>
+    /// Marks a string as containing sensitive information, so it is never printed when
+    /// processed in a <see cref="T:Partas.Build.Cmd"/>.
+    /// </summary>
+    /// <remarks>If the secret contains spaces, then it is also quoted as a literal.</remarks>
+    /// <param name="input"></param>
+    let inline sensitive (input: string) = secret input
     [<Literal>]
     let private mask = "***"
 
@@ -33,9 +54,14 @@ module Cmd =
         let mutable started = false
         let mutable isSecret = false
         let mutable quote = '\000'
+        let mutable secretDelimiter = '\u001F'
 
         member private _.Flush() =
             if started then
+                if current[0] = secretDelimiter then
+                    tokens.Add(current.Remove(0, 1).ToString())
+                    secrets.Add (tokens.Count - 1)
+                else
                 tokens.Add (current.ToString())
                 if isSecret then secrets.Add (tokens.Count - 1)
             current.Clear() |> ignore

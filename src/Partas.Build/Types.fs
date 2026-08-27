@@ -74,7 +74,6 @@ type OutputCapture() =
 /// </remarks>
 [<RequireQualifiedAccess>]
 type StageOutput =
-    /// Straight to the console, both streams merged. The default.
     | Console
     /// Dropped.
     | Silent
@@ -608,6 +607,20 @@ module StageContext =
             let newCtx = build ctx
             { newCtx with IsActive = fun ctx -> newCtx.IsActive ctx && conditionFn ctx }
 
+    let inline addStep (step: Step) (stage: StageContext) = { stage with Steps = stage.Steps @ [ step ] }
+    let inline addSteps (steps: Step seq) (stage: StageContext) = { stage with Steps = stage.Steps @ (steps |> Seq.toList) }
+    let inline addSubStage (subStage: StageContext) stage = addStep (Step.StepOfStage subStage) stage
+    let inline addSubStages (subStages: StageContext seq) stage = addSteps (subStages |> Seq.map Step.StepOfStage) stage
+    let inline addBuildStep ([<InlineIfLambda>] step: BuildStep) stage = addStep (Step.StepFn step) stage
+    let inline addBuildSteps (steps: BuildStep seq) stage = addSteps (steps |> Seq.map Step.StepFn) stage
+    let addStepFn = addBuildStep
+    let inline addPredicate ([<InlineIfLambda>] condition: BuildStageIsActive) stage =
+        { stage with IsActive = fun ctx -> stage.IsActive ctx && condition ctx }
+
+module BuildStage =
+    let inline merge ([<InlineIfLambda>] firstStage: BuildStage) ([<InlineIfLambda>] secondStage: BuildStage) = firstStage >> secondStage
+    let inline mergeMany (stages: BuildStage seq) = Seq.reduce merge stages
+    let inline mergeManyWith (mergeFn: BuildStage -> BuildStage -> BuildStage) (stages: BuildStage seq) = Seq.reduce mergeFn stages
 
 namespace Partas.Build.Internal
 

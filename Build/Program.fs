@@ -10,16 +10,78 @@
 module Build
 
 open System.IO
-open Fake.Core
+open Fake.Core.Context
 open Fake.IO
 open Fake.IO.Globbing.Operators
 open Partas.Build
 open Partas.Build.Internal
-open Spec
+open Partas.TypeProvider.BuildHelper
 
-initializeContext ()
+let execContext = FakeExecutionContext.Create false "build.fsx" []
+setExecutionContext (RuntimeContext.Fake execContext)
 
-let private root = Root.``.``
+[<Literal>]
+let __REPOSITORY_DIRECTORY__ =
+    __SOURCE_DIRECTORY__
+  + "/.."
+type Repo =
+    BuildHelperProvider<__REPOSITORY_DIRECTORY__,
+                        capabilityFullOverride = true,
+                        virtualPathConfig = """
+        bin/
+        tmp/
+    """>
+
+let private root = Repo.FileSystem.``.``.ToString()
+
+let formatFiles =
+    !! "**/*.fs"
+    -- "**/obj/**/*.*"
+    -- "**/AssemblyInfo.fs"
+
+module Options =
+    let quick =
+        Input.option<bool> "--quick"
+        |> Input.alias "-q"
+        |> Input.desc "Skips restores, installations, formatting etc"
+    let skipTests =
+        Input.option<bool> "--skip-tests"
+        |> Input.desc "Skips running tests"
+    let watch =
+        Input.option<bool> "--watch"
+        |> Input.desc "Runs the operation in watch mode."
+
+    let config =
+        Baked.Input.DotNet.configString
+        |> InputSpec.ofInput
+        |> InputSpec.map (Option.defaultValue "Release")
+
+module Project =
+    let allProjects =
+        [
+            "build", Repo.Project.``Partas.Build``.Path
+            "external-annotations", Repo.Project.``Partas.ExternalAnnotations``.Path
+            "external-annotations-tool", Repo.Project.``Partas.ExternalAnnotations.Tool``.Path
+            "build-external-annotations", Repo.Project.``Partas.Build.ExternalAnnotations``.Path
+        ]
+    let target =
+        Input.option<string list> "--project"
+        |> Input.alias "-p"
+        |> Input.arity Arity.OneOrMore
+        |> Input.desc "The project(s) to target"
+        |> Input.allowMultipleArgumentsPerToken
+        |> Input.acceptOnlyFromAmong (allProjects |> List.map fst)
+        |> Input.customParser (fun tok ->
+            match Seq.toArray tok.Tokens with
+            | [||] -> []
+            | projects ->
+                let map =
+                    allProjects
+                    |> Map.ofList
+                projects
+                |> Array.map (fun project -> map |> Map.find project.Value )
+                |> Array.toList
+            )
 
 /// <summary>Stages every command opens with. All are skipped by <c>--quick</c>.</summary>
 module Prelude =
@@ -31,8 +93,6 @@ module Prelude =
             run (cmd $"dotnet restore {Repo.Project.SolutionFile}")
         }
     }
-
-module HouseKeeping =
     let clean = input {
         let! quick = Options.quick
 
@@ -40,156 +100,102 @@ module HouseKeeping =
             when' (not quick)
 
             run (fun (_: StageContext) ->
-                VRoot.bin.``.``.EnumerateFiles("*.nupkg", SearchOption.AllDirectories)
+                Repo.VirtualFileSystem.bin.``.``.EnumerateFiles("*.nupkg", SearchOption.AllDirectories)
                 |> Seq.iter (_.ToString() >> Shell.rm)
                 !! "**/**/bin"
-                ++ VRoot.tmp.ToString()
-                -- VRoot.bin.ToString()
+                ++ Repo.VirtualFileSystem.tmp.ToString()
+                -- Repo.VirtualFileSystem.bin.ToString()
                 |> Shell.cleanDirs
                 )
         }
     }
 
 module ProjectManagement =
-    type PartasBuild = Repo.Project.``Partas.Build``
-    type PartasExternalAnnotations = Repo.Project.``Partas.ExternalAnnotations``
-    type PartasExternalAnnotationsTool = Repo.Project.``Partas.ExternalAnnotations.Tool``
-    type PartasBuildExternalAnnotations = Repo.Project.``Partas.Build.ExternalAnnotations``
-    let build = input {
-        let! config = Baked.Input.DotNet.config
-        let config = Option.map _.ToString() config |> Option.defaultValue "Release"
-        return stage "build" {
-            parallel'
-            // references all projects one way or another
-            run (Cmd.ofList "dotnet" (PartasBuild.Build [ "-c"; config ]))
-            run (Cmd.ofList "dotnet" (PartasBuildExternalAnnotations.Build ["-c"; config]))
-            run (Cmd.ofList "dotnet" (PartasExternalAnnotations.Build [ "-c"; config ]))
-            run (Cmd.ofList "dotnet" (PartasExternalAnnotationsTool.Build ["-c"; config]))
+    let build (project: InputSpec<string>) = input {
+        let! config = Options.config
+        and! project = project
+        return stage $"build {project}" {
+            run (cmd $"dotnet build {project} -c {config}")
         }
     }
-
-    let private packArgs = [ "--no-restore"; "-o"; VRoot.bin.ToString() ]
-    /// <remarks>
-    /// No <c>Version</c> property is passed: the version is whatever <c>&lt;Version&gt;</c> in the project file says,
-    /// which <c>bump</c> writes locally and CI only reads. Overriding it here would make the packed version a
-    /// property of the machine that ran the pack rather than of the commit.
-    /// </remarks>
-    let pack = stage "pack" {
+    let buildAll = stage "build" {
+        quiet
         parallel'
-        run (Cmd.ofList "dotnet" (PartasBuild.Pack packArgs))
-        run (Cmd.ofList "dotnet" (PartasBuildExternalAnnotations.Pack packArgs))
-        run (Cmd.ofList "dotnet" (PartasExternalAnnotations.Pack packArgs))
-        run (Cmd.ofList "dotnet" (PartasExternalAnnotationsTool.Pack packArgs))
+        for _, project in Project.allProjects do
+        build (InputSpec.ret project)
     }
 
-    /// <summary>Pushes every package in <c>bin</c>, to nuget.org with a key and to the <c>local</c> feed without one.</summary>
-    /// <remarks>
-    /// The glob is left to <c>dotnet nuget push</c>, which expands it itself — no shell is involved. It is built
-    /// with the platform separator because NuGet resolves a wildcard by taking <c>Path.GetDirectoryName</c> of it:
-    /// on Windows <c>bin/*.nupkg</c> fails with <c>File does not exist</c> where <c>bin\*.nupkg</c> succeeds.
-    /// The arguments are given as a list rather than interpolated so that only the key is masked — <c>runSensitive</c>
-    /// and <c>Cmd.ofFormattable true</c> mask every hole, which would hide the package path too.
-    /// </remarks>
-    let publish = input {
+    let pack (project: InputSpec<string>) = input {
+        let! project = project
+        return stage $"pack {project}" {
+            quiet
+            run (cmd $"dotnet pack {project} --no-restore -o {Repo.VirtualFileSystem.bin.ToString()}")
+        }
+    }
+    let packAll = stage "pack" {
+        quiet
+        parallel'
+        for _, project in Project.allProjects do
+        InputSpec.ret project
+        |> pack
+    }
+    let publish (project: InputSpec<string>) = input {
         let! key = Baked.Input.NuGet.apiKeyOrEnv
-        let packages = Path.Combine (VRoot.bin.ToString(), "*.nupkg")
-
-        let push =
-            match key with
-            | Some key ->
-                let args =
-                    [ "nuget"; "push"; packages
-                      "--source"; "https://api.nuget.org/v3/index.json"
-                      "--api-key"; key
-                      "--skip-duplicate" ]
-
-                { Cmd.ofList "dotnet" args with Secrets = Set.singleton (List.findIndex ((=) key) args) }
-            | None -> Cmd.ofString $"dotnet nuget push {packages} --source local --skip-duplicate"
-
-        return stage "publish" {
-            echo (if key.IsSome then "Publishing to nuget.org." else "No NuGet API key provided. Publishing to the local feed if it exists.")
-            run push
+        return stage $"publish {project}" {
+            stage "local publish" {
+                when' key.IsNone
+                echo "Publishing to local feed"
+                run $"dotnet nuget push {project} --source local --skip-duplicate"
+            }
+            stage "nuget publish" {
+                when' key.IsSome
+                echo "Publishing to nuget.org"
+                runSensitive
+                    $"dotnet nuget push {project} --source https://api.nuget.org/v3/index.json --api-key {key.Value} --skip-duplicate"
+            }
         }
     }
-
-module Versioning =
-    /// <summary>Rewrites <c>&lt;Version&gt;</c> in each <c>--project</c>, in place.</summary>
-    /// <remarks>
-    /// Skipped when <c>--ci</c> is set (which it is by default under GitHub Actions and friends): a version is
-    /// bumped locally and committed, so CI packs what the project file already carries rather than deciding a
-    /// version of its own.
-    /// </remarks>
-    let bump = input {
-        let! bump = Baked.Argument.Versioning.bump
-        and! projects = Options.Project.target
-        and! ci = Baked.Input.CI.isCI
-
-        return stage "bump" {
-            when' (not ci)
-
-            run (fun (_: StageContext) ->
-                projects
-                |> List.map (fun project ->
-                    match Options.Project.getProj project with
-                    // Unreachable while `acceptOnlyFromAmong` is fed from the same list, but the two are only
-                    // conventionally in step, and a typo here should not silently bump nothing.
-                    | None -> Error $"'%s{project}' is not a known project."
-                    | Some path ->
-                        match Baked.IO.bumpVersion path bump with
-                        | Ok (previous, next) ->
-                            printfn $"%s{project}: %s{previous} -> %s{next}"
-                            Ok ()
-                        | Error error -> Error $"%s{project}: %s{error.Message}")
-                |> List.tryPick (function Error error -> Some (Error error) | Ok () -> None)
-                |> Option.defaultValue (Ok ()))
-        }
+    let publishAll = stage "publish" {
+        quiet
+        Path.Combine(Repo.VirtualFileSystem.bin.ToString(), "*.nupkg")
+        |> InputSpec.ret
+        |> publish
     }
+    let bumpArgument =
+        Baked.Pipelines.bumpArgument (Project.allProjects |> List.map snd) Project.target
 
 module Tests =
-    /// <remarks>
-    /// Sequential, unlike the stage that builds the library: all three suites reference the same fixture
-    /// projects, and two MSBuild invocations racing to write one <c>AnnotationsFixture.Cs.dll</c> fail the
-    /// build with <c>CS2012 … used by another process</c> often enough to matter.
-    /// </remarks>
-    let build = input {
+    let buildAll = input {
         let! skipTests = Options.skipTests
-        and! config = Baked.Input.DotNet.configString
-        let config = Option.defaultValue "Release" config
+        and! projects =
+            [
+                Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Path
+                Repo.Project.``Partas.Build.Tests``.Path
+                Repo.Project.``Partas.ExternalAnnotations.Tests``.Path
+            ]
+            |> List.map (InputSpec.ret >> ProjectManagement.build)
+            |> InputSpec.sequence
         return stage "build tests" {
             when' (not skipTests)
-            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.Tests``.Build(["-c"; config])))
-            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Build(["-c"; config])))
-            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.ExternalAnnotations.Tests``.Build(["-c"; config])))
+            projects
         }
     }
-
-    /// <summary>Runs the three suites, each of which is its own executable.</summary>
-    /// <remarks>
-    /// <c>--no-build</c> is safe because the stage above just built them in the same configuration.
-    ///
-    /// <c>--sequenced</c> is not a preference. Every suite drives real pipelines, and a pipeline writes to one
-    /// process-wide console and holds a thread in <c>Async.RunSynchronously</c> for the length of every stage;
-    /// running the tests in parallel on a two-core runner produces a log whose lines belong to no test in
-    /// particular, and enough blocked workers that the thread pool has to grow its way out one thread at a time.
-    ///
-    /// Under <c>--ci</c> the suites' output is held back and lifted into the error if one fails, so a green run
-    /// says nothing and a red one says everything. Locally it stays live: watching a suite run is most of the
-    /// reason for running it by hand.
-    /// </remarks>
     let execute = input {
         let! skipTests = Options.skipTests
-        and! config = Baked.Input.DotNet.configString
+        and! config = Options.config
         and! ci = Baked.Input.CI.isCI
-        let config = Option.defaultValue "Release" config
-        let args = [ "-c"; config; "--no-build"; "--"; "--summary"; "--sequenced"; "--colours"; "256" ]
-
         return stage "test" {
             when' (not skipTests)
             quiet
             outputTo (if ci then StageOutput.Captured(OutputCapture()) else StageOutput.Console)
-            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.Tests``.Run args))
-            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Run args))
-            run (Cmd.ofList "dotnet" (Repo.Project.``Partas.ExternalAnnotations.Tests``.Run args))
+            for project in [
+                Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Path
+                Repo.Project.``Partas.Build.Tests``.Path
+                Repo.Project.``Partas.ExternalAnnotations.Tests``.Path
+            ] do stage $"test {project}" {
+                run (Cmd.ofString $"""dotnet run --project {project} --no-build -c {config} -- {if ci then "--summary" else null} --colours 256 --sequenced""")
+            }
+
         }
     }
 
@@ -197,7 +203,6 @@ module Documentation =
     /// Serves under --watch, builds otherwise.
     let generate = input {
         let! watch = Options.watch
-
         return stage "docs" {
             run (if watch then "dotnet fsdocs watch --eval --saveimages" else "dotnet fsdocs build --eval --clean --saveimages")
         }
@@ -207,25 +212,23 @@ module Commands =
     let build =
         command "build" {
             description "Builds the solution"
-
-            pipeline "build" {
+            Command.pipeline {
                 workingDir root
                 Prelude.restore
-                HouseKeeping.clean
-                ProjectManagement.build
+                Prelude.clean
+                ProjectManagement.buildAll
             }
         }
 
     let test =
         command "test" {
             description "Builds and runs the test suite"
-
-            pipeline "test" {
+            Command.pipeline {
                 workingDir root
                 Prelude.restore
-                HouseKeeping.clean
-                ProjectManagement.build
-                Tests.build
+                Prelude.clean
+                ProjectManagement.buildAll
+                Tests.buildAll
                 Tests.execute
             }
         }
@@ -233,26 +236,24 @@ module Commands =
     let publish =
         command "publish" {
             description "Packs the solution and pushes it to NuGet"
-
-            pipeline "publish" {
+            Command.pipeline {
                 workingDir root
                 Prelude.restore
-                HouseKeeping.clean
-                ProjectManagement.build
-                Tests.build
+                Prelude.clean
+                ProjectManagement.buildAll
+                Tests.buildAll
                 Tests.execute
-                ProjectManagement.pack
-                ProjectManagement.publish
+                ProjectManagement.packAll
+                ProjectManagement.publishAll
             }
         }
 
     let bump =
         command "bump" {
             description "Bumps the <Version> of the target project(s): dotnet run bump [major|minor|patch|alpha|beta|rc|preview|<SEMVER>] -p <project>"
-
             pipeline "bump" {
                 workingDir root
-                Versioning.bump
+                ProjectManagement.bumpArgument
             }
         }
 
@@ -270,7 +271,6 @@ module Commands =
 let mainBuilder argsv =
     rootCommand argsv {
         description "Partas.Build"
-
         addCommands
             [ Commands.build
               Commands.test

@@ -15,17 +15,15 @@ open FSharp.Data.UnitSystems.SI
 
 type StepFnSignature = StageContext -> StepIndex -> Async<Result<unit, string>>
 
-/// Appends a nested stage to the stage being built. A nested stage *is* one step of its parent.
-let inline private addSubStage (stage: StageContext): BuildStage = fun ctx -> { ctx with Steps = ctx.Steps @ [ Step.StepOfStage stage ] }
+type private IILAttribute = InlineIfLambdaAttribute
+type private EBAttribute = EditorBrowsableAttribute
+[<Literal>]
+let private never = EditorBrowsableState.Never
+[<Literal>]
+let private advanced = EditorBrowsableState.Advanced
 
-/// Appends several nested stages, in order.
-let inline private addSubStages (stages: StageContext seq): BuildStage = fun ctx ->
-    { ctx with Steps = stages |> Seq.map Step.StepOfStage |> Seq.append ctx.Steps |> Seq.toList }
 
-/// Appends a step function to the stage being built.
-let inline private addStep ([<InlineIfLambda>] step: BuildStep): BuildStage = fun ctx -> { ctx with Steps = ctx.Steps @ [ Step.StepFn step ] }
-
-[<EditorBrowsable(EditorBrowsableState.Never)>]
+[<EB(never)>]
 type SRTPStageBuilderRunner =
     static member inline unifyResult(step: Async<unit>): StepFnSignature = fun _ _ -> Async.map Ok step
     static member inline unifyResult(step: Async<int>): StepFnSignature = fun ctx _ -> step |> Async.map (StageContext.mapExitCodeToResult ctx)
@@ -40,165 +38,148 @@ type SRTPStageBuilderRunner =
     static member inline unifyResult(step: StageContext -> Task<unit>): StepFnSignature = fun ctx _ -> step ctx |> Task.map Ok |> Async.AwaitTask
     static member inline unifyResult(step: StageContext -> Task<int>): StepFnSignature = fun ctx _ -> step ctx |> Task.map (StageContext.mapExitCodeToResult ctx) |> Async.AwaitTask
 
-and [<EditorBrowsable(EditorBrowsableState.Advanced)>]
+and [<EB(advanced)>]
     StageBuilder(name: string) =
-    [<EditorBrowsable(EditorBrowsableState.Never)>] // `Run` is deliberately not `inline`: `BuildStage` is a plain function type rather than a delegate,
+    [<EB(never)>] // `Run` is deliberately not `inline`: `BuildStage` is a plain function type rather than a delegate,
     // and inlining an application of one defeats the optimiser (`FS1118`) in Release builds only.
     // It applies a closure once at construction time, so there is nothing to gain by inlining it.
     member _.Run(build: BuildStage): StageContext = build <| StageContext.create name
     // The `InputSpec` mirror of the above: a nested stage that declares a CLI input turns the whole stage into
     // an `InputSpec<StageContext>`, which is what `pipeline` and `command` already know how to yield.
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    [<EB(never)>]
     member _.Run(spec: InputSpec<BuildStage>): InputSpec<StageContext> =
         InputSpec.map (fun (build: BuildStage) -> build <| StageContext.create name) spec
     // =================================================================
     //                              Yield
     // =================================================================
 
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    [<EB(never)>]
     member inline _.Yield (_: unit): BuildStage = id
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Yield(stage: StageContext): BuildStage = addSubStage stage
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Yield([<InlineIfLambda>] builder: BuildStep): BuildStep = builder
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Yield([<InlineIfLambda>] condition: BuildStageIsActive): BuildStageIsActive = condition
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Yield(stages: StageContext seq): BuildStage = addSubStages stages
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Yield(spec: InputSpec<StageContext>): InputSpec<BuildStage> = InputSpec.map addSubStage spec
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Yield(spec: InputSpec<StageContext seq>): InputSpec<BuildStage> = InputSpec.map addSubStages spec
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Yield(spec: InputSpec<StageContext list>): InputSpec<BuildStage> = InputSpec.map addSubStages spec
+    [<EB(never)>]
+    member inline _.Yield stage = StageContext.addSubStage stage
+    [<EB(never)>]
+    member inline _.Yield ([<IIL>] builder): BuildStep = builder
+    [<EB(never)>]
+    member inline _.Yield ([<IIL>] condition): BuildStageIsActive = condition
+    [<EB(never)>]
+    member inline _.Yield stages = StageContext.addSubStages stages
+    [<EB(never)>]
+    member inline _.Yield spec = InputSpec.map StageContext.addSubStage spec
+    [<EB(never)>]
+    member inline _.Yield spec = InputSpec.map StageContext.addSubStages spec
     /// A list of ready-made blocks - `[ Blocks.restore; Blocks.build ]` - rather than one block yielding many stages.
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Yield(specs: InputSpec<StageContext> seq): InputSpec<BuildStage> =
-        InputSpec.map addSubStages (InputSpec.sequence specs)
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Yield(spec: InputSpec<BuildStep>): InputSpec<BuildStage> = InputSpec.map addStep spec
+    [<EB(never)>]
+    member inline _.Yield specs = InputSpec.map StageContext.addSubStages (InputSpec.sequence specs)
+    [<EB(never)>]
+    member inline _.Yield spec = InputSpec.map StageContext.addStepFn spec
     // =================================================================
     //                              Zero
     // =================================================================
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    [<EB(never)>]
     member inline _.Zero(): BuildStage = id
     // =================================================================
     //                              Delay
     // =================================================================
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Delay([<InlineIfLambda>] fn: unit -> BuildStage): BuildStage = fn()
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Delay([<InlineIfLambda>] fn: unit -> StageContext): BuildStage = fun ctx ->
-        { ctx with Steps = ctx.Steps @ [ Step.StepOfStage(fn ()) ] }
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Delay([<InlineIfLambda>] fn: unit -> BuildStep): BuildStage = fun ctx ->
-        { ctx with Steps = ctx.Steps @ [ Step.StepFn <| fn() ] }
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Delay([<InlineIfLambda>] fn: unit -> BuildStageIsActive): BuildStage = fun ctx ->
-        { ctx with IsActive = fn () }
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Delay([<InlineIfLambda>] fn: unit -> InputSpec<BuildStage>): InputSpec<BuildStage> = fn ()
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Delay([<InlineIfLambda>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildStage> = InputSpec.map addSubStage (fn ())
+    [<EB(never)>]
+    member inline _.Delay ([<IIL>] fn): BuildStage = fn()
+    [<EB(never)>]
+    member inline _.Delay ([<IIL>] fn) = StageContext.addSubStage (fn())
+    [<EB(never)>]
+    member inline _.Delay ([<IIL>] fn) = StageContext.addStepFn (fn())
+    [<EB(never)>]
+    member inline _.Delay ([<IIL>] fn) = StageContext.addPredicate (fn())
+    [<EB(never)>]
+    member inline _.Delay ([<IIL>] fn): InputSpec<BuildStage> = fn ()
+    [<EB(never)>]
+    member inline _.Delay ([<IIL>] fn) = InputSpec.map StageContext.addSubStage (fn())
     // =================================================================
     //                              Combine
     // =================================================================
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine([<InlineIfLambda>] builder: BuildStep, [<InlineIfLambda>] build: BuildStage): BuildStage = fun ctx ->
-        build { ctx with Steps = ctx.Steps @ [ Step.StepFn builder ] }
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine(stage: StageContext, [<InlineIfLambda>] build: BuildStage): BuildStage = fun ctx ->
-        build { ctx with Steps = ctx.Steps @ [ Step.StepOfStage stage ]  }
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine([<InlineIfLambda>] condition: BuildStageIsActive, [<InlineIfLambda>] build: BuildStage): BuildStage =
-        StageContext.buildStageIsActive build condition
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine([<InlineIfLambda>] build1: BuildStage, [<InlineIfLambda>] build2: BuildStage): BuildStage = build1 >> build2
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine([<InlineIfLambda>] build: BuildStage, spec: InputSpec<BuildStage>): InputSpec<BuildStage> =
-        InputSpec.map (fun rest -> build >> rest) spec
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine(spec: InputSpec<BuildStage>, rest: InputSpec<BuildStage>): InputSpec<BuildStage> = InputSpec.map2 (>>) spec rest
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine(spec: InputSpec<BuildStage>, [<InlineIfLambda>] rest: BuildStage): InputSpec<BuildStage> =
-        InputSpec.map (fun build -> build >> rest) spec
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine(spec: InputSpec<StageContext>, [<InlineIfLambda>] build: BuildStage): InputSpec<BuildStage> =
-        InputSpec.map (fun stage -> addSubStage stage >> build) spec
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine(spec: InputSpec<StageContext>, rest: InputSpec<BuildStage>): InputSpec<BuildStage> =
-        InputSpec.map2 (fun stage build -> addSubStage stage >> build) spec rest
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine(stage: StageContext, spec: InputSpec<BuildStage>): InputSpec<BuildStage> =
-        InputSpec.map (fun build -> addSubStage stage >> build) spec
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine([<InlineIfLambda>] builder: BuildStep, spec: InputSpec<BuildStage>): InputSpec<BuildStage> =
-        InputSpec.map (fun build -> addStep builder >> build) spec
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.Combine([<InlineIfLambda>] condition: BuildStageIsActive, spec: InputSpec<BuildStage>): InputSpec<BuildStage> =
-        InputSpec.map (fun build -> StageContext.buildStageIsActive build condition) spec
+    [<EB(never)>]
+    member inline _.Combine ([<IIL>] builder, [<IIL>] build): BuildStage = StageContext.addStepFn builder >> build
+    [<EB(never)>]
+    member inline _.Combine (stage: StageContext, [<IIL>] build: BuildStage): BuildStage = StageContext.addSubStage stage >> build
+    [<EB(never)>]
+    member inline _.Combine ([<IIL>] condition, [<IIL>] build) = StageContext.buildStageIsActive build condition
+    [<EB(never)>]
+    member inline _.Combine ([<IIL>] build1, [<IIL>] build2) = BuildStage.merge build1 build2
+    [<EB(never)>]
+    member inline _.Combine ([<IIL>] build, spec) = InputSpec.map (BuildStage.merge build) spec
+    [<EB(never)>]
+    member inline _.Combine (spec, rest): InputSpec<BuildStage> = InputSpec.map2 (>>) spec rest
+    [<EB(never)>]
+    member inline _.Combine (spec, [<IIL>] rest: BuildStage): InputSpec<BuildStage> = InputSpec.map (fun build -> build >> rest) spec
+    [<EB(never)>]
+    member inline _.Combine (spec, [<IIL>] build: BuildStage): InputSpec<BuildStage> = InputSpec.map (fun stage -> StageContext.addSubStage stage >> build) spec
+    [<EB(never)>]
+    member inline _.Combine (spec, rest): InputSpec<BuildStage> = InputSpec.map2 (fun stage ->  (>>) (StageContext.addSubStage stage)) spec rest
+    [<EB(never)>]
+    member inline _.Combine (stage, spec): InputSpec<BuildStage> = InputSpec.map ((>>) (StageContext.addSubStage stage)) spec
+    [<EB(never)>]
+    member inline _.Combine ([<IIL>] builder, spec): InputSpec<BuildStage> = InputSpec.map ((>>) (StageContext.addStepFn builder)) spec
+    [<EB(never)>]
+    member inline _.Combine ([<IIL>] condition, spec): InputSpec<BuildStage> = InputSpec.map (StageContext.buildStageIsActive >> fun build -> build condition) spec
     // =================================================================
     //                              For
     // =================================================================
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> BuildStage) : BuildStage = build >> fn ()
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> StageContext): BuildStage = build >> fun ctx ->
-        { ctx with Steps = ctx.Steps @ [ Step.StepOfStage <| fn() ] }
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> BuildStep): BuildStage = build >> fun ctx ->
-        { ctx with Steps = ctx.Steps @ [ Step.StepFn <| fn() ] }
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For<'T>(items: 'T seq, [<InlineIfLambda>] fn: 'T -> StageContext): BuildStage = addSubStages (Seq.map fn items)
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For<'T>(items: 'T seq, [<InlineIfLambda>] fn: 'T -> BuildStage): BuildStage =
-        fun ctx -> items |> Seq.fold (fun ctx item -> fn item ctx) ctx
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> BuildStageIsActive): BuildStage =
-        StageContext.buildStageIsActive build (fn ())
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For<'T>(items: 'T seq, [<InlineIfLambda>] fn: 'T -> InputSpec<StageContext>): InputSpec<BuildStage> =
-        InputSpec.map addSubStages (InputSpec.traverse fn items)
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For<'T>(items: 'T seq, [<InlineIfLambda>] fn: 'T -> InputSpec<BuildStage>): InputSpec<BuildStage> =
+    [<EB(never)>]
+    member inline _.For ([<IIL>] build, [<IIL>] fn: unit -> BuildStage) : BuildStage = build >> fn ()
+    [<EB(never)>]
+    member inline _.For ([<IIL>] build: BuildStage, [<IIL>] fn: unit -> StageContext): BuildStage = build >> StageContext.addSubStage (fn())
+    [<EB(never)>]
+    member inline _.For ([<IIL>] build: BuildStage, [<IIL>] fn: unit -> BuildStep): BuildStage = build >> StageContext.addStepFn (fn())
+    [<EB(never)>]
+    member inline _.For ([<IIL>] build, [<IIL>] fn) = StageContext.buildStageIsActive build (fn ())
+    [<EB(never)>]
+    member inline _.For<'T> (items: 'T seq, [<IIL>] fn: 'T -> StageContext): BuildStage = StageContext.addSubStages (Seq.map fn items)
+    [<EB(never)>]
+    member inline _.For<'T> (items: 'T seq, [<IIL>] fn: 'T -> BuildStage): BuildStage = fun ctx -> items |> Seq.fold (fun ctx item -> fn item ctx) ctx
+    [<EB(never)>]
+    member inline _.For<'T>(items: 'T seq, [<IIL>] fn: 'T -> InputSpec<StageContext>): InputSpec<BuildStage> = InputSpec.map StageContext.addSubStages (InputSpec.traverse fn items)
+    [<EB(never)>]
+    member inline _.For<'T>(items: 'T seq, [<IIL>] fn: 'T -> InputSpec<BuildStage>): InputSpec<BuildStage> =
         InputSpec.map (fun builds ctx -> builds |> List.fold (fun ctx build -> build ctx) ctx) (InputSpec.traverse fn items)
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> InputSpec<BuildStage>): InputSpec<BuildStage> =
-        InputSpec.map (fun rest -> build >> rest) (fn ())
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildStage> =
-        InputSpec.map (fun stage -> build >> addSubStage stage) (fn ())
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> BuildStage): InputSpec<BuildStage> =
+    [<EB(never)>]
+    member inline _.For<'T>(items: 'T seq, [<IIL>]fn: 'T -> BuildStep): BuildStage = fun ctx -> items |> Seq.fold (fun ctx item -> StageContext.addStepFn (fn item) ctx) ctx
+    [<EB(never)>]
+    member inline _.For ([<IIL>] build, [<IIL>] fn: unit -> InputSpec<BuildStage>): InputSpec<BuildStage> = InputSpec.map (fun rest -> build >> rest) (fn ())
+    [<EB(never)>]
+    member inline _.For ([<IIL>] build: BuildStage, [<IIL>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildStage> =
+        InputSpec.map (fun stage -> build >> StageContext.addSubStage stage) (fn ())
+    [<EB(never)>]
+    member inline _.For (spec, [<IIL>] fn: unit -> BuildStage): InputSpec<BuildStage> =
         InputSpec.map (fun build -> build >> fn ()) spec
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> StageContext): InputSpec<BuildStage> =
-        InputSpec.map (fun build -> build >> addSubStage (fn ())) spec
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> BuildStep): InputSpec<BuildStage> =
-        InputSpec.map (fun build -> build >> addStep (fn ())) spec
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> BuildStageIsActive): InputSpec<BuildStage> =
+    [<EB(never)>]
+    member inline _.For (spec, [<IIL>] fn: unit -> StageContext): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> build >> StageContext.addSubStage (fn ())) spec
+    [<EB(never)>]
+    member inline _.For (spec, [<IIL>] fn: unit -> BuildStep): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> build >> StageContext.addStepFn (fn ())) spec
+    [<EB(never)>]
+    member inline _.For (spec, [<IIL>] fn: unit -> BuildStageIsActive): InputSpec<BuildStage> =
         InputSpec.map (fun build -> StageContext.buildStageIsActive build (fn ())) spec
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> InputSpec<BuildStage>): InputSpec<BuildStage> =
+    [<EB(never)>]
+    member inline _.For (spec, [<IIL>] fn: unit -> InputSpec<BuildStage>): InputSpec<BuildStage> =
         InputSpec.map2 (>>) spec (fn ())
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.For(spec: InputSpec<BuildStage>, [<InlineIfLambda>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildStage> =
-        InputSpec.map2 (fun build stage -> build >> addSubStage stage) spec (fn ())
+    [<EB(never)>]
+    member inline _.For(spec: InputSpec<BuildStage>, [<IIL>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildStage> =
+        InputSpec.map2 (fun build stage -> build >> StageContext.addSubStage stage) spec (fn ())
     // =================================================================
     //                              YieldFrom
     // =================================================================
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
-    member inline _.YieldFrom(stages: StageContext seq): BuildStage = addSubStages stages
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
+    [<EB(never)>]
+    member inline _.YieldFrom(stages: StageContext seq): BuildStage = StageContext.addSubStages stages
+    [<EB(never)>]
     member inline _.YieldFrom(specs: InputSpec<StageContext> seq): InputSpec<BuildStage> =
-        InputSpec.map addSubStages (InputSpec.sequence specs)
-    [<EditorBrowsable(EditorBrowsableState.Never)>]
+        InputSpec.map StageContext.addSubStages (InputSpec.sequence specs)
+    [<EB(never)>]
     member inline _.YieldFrom(steps: BuildStep seq): BuildStage = fun ctx ->
         { ctx with Steps = steps |> Seq.map Step.StepFn |> Seq.append ctx.Steps |> Seq.toList }
 
 
+    // =================================================================
+    //                         CustomOperations
+    // =================================================================
     /// <summary>Adds environment variables to the stage.</summary>
     /// <remarks>Variables set here override inherited values from parent contexts. A stage-level variable shadows any pipeline-level variable with the same name.</remarks>
     [<CustomOperation>] member inline _.
@@ -376,8 +357,8 @@ and [<EditorBrowsable(EditorBrowsableState.Advanced)>]
         ([<InlineIfLambda>] build: BuildStage, ?capture: OutputCapture): BuildStage
         = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture()))) }
 
-    /// <summary>Hands each line of this stage's step output to <paramref name="write"/> as it arrives.</summary>
-    /// <remarks>Called from the reader threads of both streams, so <paramref name="write"/> must tolerate that.</remarks>
+    /// <summary>Hands each line of this stage's step output to write as it arrives.</summary>
+    /// <remarks>Called from the reader threads of both streams, so write must tolerate that.</remarks>
     [<CustomOperation>] member inline _.
         redirectOutput
         ([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] write: StdStream -> string -> unit): BuildStage
@@ -400,6 +381,10 @@ and [<EditorBrowsable(EditorBrowsableState.Advanced)>]
 
     /// <summary>Adds a step that runs <paramref name="exe"/> with <paramref name="args"/>.</summary>
     /// <remarks><paramref name="exe"/> is taken as given; <paramref name="args"/> is split on whitespace, honouring quotes.</remarks>
+    /// <param name="build">The stage to add the step to.</param>
+    /// <param name="exe">The executable to run.</param>
+    /// <param name="args">The arguments to pass to the executable.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the step.</param>
     [<CustomOperation>] member this.
         run
         (build: BuildStage, exe: string, args: string, ?cancellationToken: CancellationToken): BuildStage
@@ -747,21 +732,21 @@ and [<EditorBrowsable(EditorBrowsableState.Advanced)>]
     [<CustomOperation("run")>] member inline this.
         run
         (spec: InputSpec<BuildStage>, step: StageContext -> string, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step)) spec
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
     [<CustomOperation("run")>] member inline this.
         run
         (spec: InputSpec<BuildStage>, step: StageContext -> Async<string>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step)) spec
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
     [<CustomOperation("run")>] member inline this.
         run
         (spec: InputSpec<BuildStage>, buildCmd: StageContext -> Cmd, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.run(build, buildCmd)) spec
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, buildCmd, ?cancellationToken = cancellationToken)) spec
 
     // `runSensitive` deliberately has no mirror. Its argument is a `FormattableString`, and F# only applies the
     // `string` -> `FormattableString` conversion when a single overload is in play: adding a second one turns
@@ -822,4 +807,3 @@ and [<EditorBrowsable(EditorBrowsableState.Advanced)>]
         = InputSpec.map (fun (build: BuildStage) -> this.echo(build, msg)) spec
 
 let inline stage name = StageBuilder(name)
-let inline step x: BuildStep = x

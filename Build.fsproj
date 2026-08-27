@@ -10,7 +10,6 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <Compile Include="Build\Spec.fs"/>
         <Compile Include="Build\Program.fs"/>
     </ItemGroup>
 

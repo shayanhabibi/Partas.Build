@@ -92,6 +92,13 @@ let tests =
             Expect.equal (Cmd.toLogString sensitive) "docker login -u me -p ***" "only the hole should be masked"
         }
 
+        test "a sensitive string passed to a command passes its value through but does not print it" {
+            let password = Cmd.secret "hunter two"
+            let sensitive = Cmd.ofString $"docker login -u me -p {password}"
+            Expect.equal (parts sensitive) ("docker", [ "login"; "-u"; "me"; "-p"; "hunter two" ]) "the value should reach the process untouched"
+            Expect.equal (Cmd.toLogString sensitive) "docker login -u me -p ***" "only the hole should be masked"
+        }
+
         test "the log quotes what a shell would need quoted" {
             let project = "My Project.fsproj"
 

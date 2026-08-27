@@ -131,6 +131,16 @@ let push =
     }
 
 (**
+*New in >0.2.2*: Wrap sensitive strings with `Cmd.secret | Cmd.sensitive`. Picked up by any of the command runners;
+but will wrap strings with spaces in quotes.
+*)
+
+let pushSecret =
+    stage "push" {
+        run $"dotnet nuget push bin/x.nupkg --api-key {Cmd.secret password}"
+    }
+
+(**
 ## Conditions
 
 `when'` and friends set whether a stage runs. They **conjoin** — a second condition narrows the first rather

@@ -163,7 +163,7 @@ module ProjectManagement =
         |> publish
     }
     let bumpArgument =
-        Baked.Pipelines.bumpArgument (Project.allProjects |> List.map snd) Project.target
+        Baked.Pipelines.bumpArgument (Project.allProjects |> List.map snd) (InputSpec.ofInput Project.target)
 
 module Tests =
     let buildAll = input {

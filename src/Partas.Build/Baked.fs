@@ -370,7 +370,7 @@ module Pipelines =
     /// Every source is therefore bound in one <c>let!</c>/<c>and!</c> group here, and the callers below vary
     /// only which spec they hand in.
     /// </remarks>
-    let private bumpImpl (bumpSource: Internal.InputSpec<Versioning.Bump>) (allProjects: string list) (projects: ActionInput<string list>) = input {
+    let private bumpImpl (bumpSource: Internal.InputSpec<Versioning.Bump>) (allProjects: string list) (projects: Internal.InputSpec<string list>) = input {
         let! ci = Input.CI.isCI
         and! bump = bumpSource
         and! projects = projects
@@ -396,13 +396,37 @@ module Pipelines =
         }
     }
 
-    /// The bump kind as a positional argument - `bump minor -p src/Foo`.
-    let bumpArgument (allProjects: string list) (projects: ActionInput<string list>): Internal.InputSpec<Internal.StageContext> =
+    /// <summary>
+    /// The bump kind as an argument - `&lt;command> minor -p src/Foo` - defaulting to a patch when omitted.
+    /// </summary>
+    /// <param name="allProjects">
+    /// List of paths to projects you want to bump if the project input includes "all" or is empty.
+    /// Can be kept empty otherwise
+    /// </param>
+    /// <param name="projects">
+    /// The input spec for the project path(s) to bump.
+    /// </param>
+    let bumpArgument (allProjects: string list) (projects: Internal.InputSpec<string list>): Internal.InputSpec<Internal.StageContext> =
         bumpImpl (InputSpec.ofInput Argument.Versioning.bump) allProjects projects
 
-    /// The bump kind as an option - `release --bump minor -p src/Foo` - defaulting to a patch when omitted.
-    let bumpOption (allProjects: string list) (projects: ActionInput<string list>): Internal.InputSpec<Internal.StageContext> =
-        let source =
-            InputSpec.ofInput Input.Versioning.bump
-            |> InputSpec.map (Option.defaultValue Versioning.Bump.Patch)
-        bumpImpl source allProjects projects
+    /// <summary>
+    /// The bump kind as an option - `&lt;command> --bump minor -p src/Foo`.
+    /// No action if option is not present. Defaults to patch.
+    /// </summary>
+    /// <param name="allProjects">
+    /// List of paths to projects you want to bump if the project input includes "all" or is empty.
+    /// Can be kept empty otherwise
+    /// </param>
+    /// <param name="projects">
+    /// The input spec for the project path(s) to bump.
+    /// </param>
+    let bumpOption (allProjects: string list) (projects: Internal.InputSpec<string list>): Internal.InputSpec<Internal.StageContext> =
+        input {
+            let! bump = Input.Versioning.bump
+            and! bumpImpl =
+                let source =
+                    InputSpec.ofInput Input.Versioning.bump
+                    |> InputSpec.map (Option.defaultValue Versioning.Bump.Patch)
+                bumpImpl source allProjects projects
+            return StageContext.addPredicate (fun _ -> bump.IsSome) bumpImpl
+        }

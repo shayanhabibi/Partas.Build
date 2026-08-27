@@ -141,6 +141,7 @@ module ProjectManagement =
     }
     let publish (project: InputSpec<string>) = input {
         let! key = Baked.Input.NuGet.apiKeyOrEnv
+        and! project = project
         return stage $"publish {project}" {
             stage "local publish" {
                 when' key.IsNone

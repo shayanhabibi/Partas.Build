@@ -3,3 +3,9 @@ obj/
 /packages/
 riderModule.iml
 /_ReSharper.Caches/
+output/
+.fsdocs/
+tmp/
+.serena/
+.idea/
+.claude/

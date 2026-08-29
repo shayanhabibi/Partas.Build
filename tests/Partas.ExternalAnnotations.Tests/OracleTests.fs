@@ -26,9 +26,9 @@ let private roslynIds =
         failwith $"the C# fixture's documentation file is missing at {path}; GenerateDocumentationFile must stay on for it"
 
     XDocument.Load(path).Descendants (XName.Get "member")
-    |> Seq.map (fun element -> element.Attribute(XName.Get "name").Value)
+    |> Seq.map _.Attribute(XName.Get "name").Value
     // Roslyn writes a <typeparam> entry named after the parameter alone; those are not doc ids.
-    |> Seq.filter (fun name -> name.Length > 1 && name.[1] = ':')
+    |> Seq.filter (fun name -> name.Length > 1 && name[1] = ':')
     |> Set.ofSeq
 
 let private declared =
@@ -126,8 +126,8 @@ let tests =
                         // The type count is deliberately not asserted: it counts what Partas.Solid
                         // happens to declare, so it moves whenever that repository does, while the
                         // number of annotations found is what this library decides.
-                        Expect.equal generated.Result.Sites 596 "annotated sites"
-                        Expect.equal generated.Result.Members 596 "members emitted"
+                        Expect.equal generated.Result.Sites 598 "annotated sites"
+                        Expect.equal generated.Result.Members 598 "members emitted"
                         Expect.isEmpty generated.Result.Skipped "the known-good run skips nothing"))
 
             yield

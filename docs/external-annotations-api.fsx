@@ -1,8 +1,8 @@
 ﻿(**
 ---
-title: External Annotations — F# surface
-category: Documentation
-index: 3
+title: F# surface
+category: ExternalAnnotations
+index: 2
 ---
 *)
 (*** hide ***)

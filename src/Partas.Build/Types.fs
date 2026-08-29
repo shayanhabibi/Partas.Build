@@ -6,7 +6,7 @@ type Verbosity =
     | Quiet
     | Normal
     | Verbose
-    static member Default = Verbose
+    static member Default = Normal
 
 type PipelineCancelledException(msg: string)  = inherit Exception(msg)
 
@@ -175,6 +175,7 @@ open System.CommandLine
 type CommandSpec = {
     Name: string
     Description: string voption
+    PipelineDefaults: BuildPipeline
     Aliases: string list
     Hidden: bool
     ExtraInputs: ActionInput list
@@ -339,6 +340,13 @@ module StageContext =
 module PipelineContext =
     open Spectre.Console
 
+    /// The `RunBeforeEachStage`/`RunAfterEachStage` a freshly created pipeline carries. Named rather than
+    /// inlined as `ignore` so that `applyDefaults` can tell "no hook" from "a hook that happens to do nothing"
+    /// by reference.
+    let internal noStageHook: StageContext -> unit = ignore
+    /// The `Verify` a freshly created pipeline carries. Named for the same reason as `noStageHook`.
+    let internal alwaysVerify: PipelineContext -> bool = fun _ -> true
+
     let create (name: string): PipelineContext =
         let envVars =
             seq {
@@ -352,7 +360,7 @@ module PipelineContext =
             Name = name
             Description = ValueNone
             Verbosity = ValueNone
-            Verify = fun _ -> true
+            Verify = alwaysVerify
             EnvVars = envVars
             AcceptableExitCodes = set [ 0 ]
             Timeout = ValueNone
@@ -364,8 +372,55 @@ module PipelineContext =
             Output = ValueNone
             Stages = []
             PostStages = []
-            RunBeforeEachStage = ignore
-            RunAfterEachStage = ignore
+            RunBeforeEachStage = noStageHook
+            RunAfterEachStage = noStageHook
+        }
+
+    /// <summary>Fills in the settings a pipeline left alone with those a command supplies as defaults.</summary>
+    /// <remarks>
+    /// A command's pipeline-level operations are *defaults*, not overrides: whatever the pipeline set for
+    /// itself wins. "Left alone" is decided against a pristine `PipelineContext.create`, which is the only
+    /// baseline available once a pipeline is a finished value - `ValueNone` for the optional settings, the
+    /// ambient environment for `EnvVars`, `set [0]` for the exit codes, `noStageHook` for the hooks, and the
+    /// record's own literals for the flags. Stages are never touched.
+    /// </remarks>
+    let applyDefaults (defaults: BuildPipeline) (ctx: PipelineContext): PipelineContext =
+        let pristine = create ctx.Name
+        let defaulted = defaults pristine
+        let inline orDefault (pipelineValue: 'T voption) (defaultValue: 'T voption) =
+            if pipelineValue.IsSome then pipelineValue else defaultValue
+        let inline orDefaultIfUntouched (pipelineValue: 'T) (pristineValue: 'T) (defaultValue: 'T) =
+            if pipelineValue = pristineValue then defaultValue else pipelineValue
+        {
+            ctx with
+                Description = orDefault ctx.Description defaulted.Description
+                Verbosity = orDefault ctx.Verbosity defaulted.Verbosity
+                Timeout = orDefault ctx.Timeout defaulted.Timeout
+                TimeoutForStep = orDefault ctx.TimeoutForStep defaulted.TimeoutForStep
+                TimeoutForStage = orDefault ctx.TimeoutForStage defaulted.TimeoutForStage
+                WorkingDir = orDefault ctx.WorkingDir defaulted.WorkingDir
+                Output = orDefault ctx.Output defaulted.Output
+                NoPrefixForStep = orDefaultIfUntouched ctx.NoPrefixForStep pristine.NoPrefixForStep defaulted.NoPrefixForStep
+                NoStdRedirectForStep =
+                    orDefaultIfUntouched ctx.NoStdRedirectForStep pristine.NoStdRedirectForStep defaulted.NoStdRedirectForStep
+                AcceptableExitCodes =
+                    orDefaultIfUntouched ctx.AcceptableExitCodes pristine.AcceptableExitCodes defaulted.AcceptableExitCodes
+                // Per key, since the pipeline's map starts as the whole ambient environment: a key the pipeline
+                // did not touch still reads back whatever the process was started with.
+                EnvVars =
+                    defaulted.EnvVars
+                    |> Map.fold
+                        (fun envVars key value ->
+                            if Map.tryFind key ctx.EnvVars = Map.tryFind key pristine.EnvVars
+                            then Map.add key value envVars
+                            else envVars)
+                        ctx.EnvVars
+                PostStages = if List.isEmpty ctx.PostStages then defaulted.PostStages else ctx.PostStages
+                RunBeforeEachStage =
+                    if obj.ReferenceEquals(ctx.RunBeforeEachStage, noStageHook) then defaulted.RunBeforeEachStage else ctx.RunBeforeEachStage
+                RunAfterEachStage =
+                    if obj.ReferenceEquals(ctx.RunAfterEachStage, noStageHook) then defaulted.RunAfterEachStage else ctx.RunAfterEachStage
+                Verify = if obj.ReferenceEquals(ctx.Verify, alwaysVerify) then defaulted.Verify else ctx.Verify
         }
 
     let findStageByName (ctx: PipelineContext) (name: string) =
@@ -397,71 +452,41 @@ module PipelineContext =
     //     }
 
 module SpectreConsoleExt =
+    open Spectre.Console
+    module Markup =
+        let inline escape (str: string) = Markup.Escape str
+        let inline red (str: string): string = $"[red]{str}[/]"
+        let inline turquoise2 (str: string): string = $"[turquoise2]{str}[/]"
+        let inline turquoise4 (str: string): string = $"[turquoise4]{str}[/]"
+        let inline bold (str: string): string = $"[bold]{str}[/]"
+        let inline grey (str: string): string = $"[grey50]{str}[/]"
+        let inline yellow (str: string): string = $"[yellow]{str}[/]"
+        let inline green (str: string): string = $"[green]{str}[/]"
+        let inline lime (str: string): string = $"[lime]{str}[/]"
+
     type SRTPHelper =
         static member inline getVerbosity (verbosity: Verbosity) = verbosity
         static member inline getVerbosity (stageContext: StageContext) = StageContext.getVerbosity stageContext
         static member inline getVerbosity (pipelineContext: PipelineContext) = defaultValueArg pipelineContext.Verbosity Verbosity.Default
+        static member inline write(str: Rule): unit = AnsiConsole.Write(str)
+        static member inline write(str: FigletText): unit = AnsiConsole.Write(str)
+        static member inline write(str: string): unit = AnsiConsole.Markup(str)
+        static member inline writen(renderable: Rule) = AnsiConsole.Write(renderable); AnsiConsole.WriteLine()
+        static member inline writen(renderable: FigletText) = AnsiConsole.Write(renderable); AnsiConsole.WriteLine()
+        static member inline writen(str: string) = AnsiConsole.MarkupLine(str)
     let inline getVerbosity value = ((^T or SRTPHelper):(static member getVerbosity: ^T -> Verbosity) value)
-    let mutable hasWrittenLine = false
-    let inline setWritten () = hasWrittenLine <- true
-    let inline writeLine() =
-        if hasWrittenLine then
-            Spectre.Console.AnsiConsole.WriteLine()
-            hasWrittenLine <- false
-    type Spectre.Console.AnsiConsole with
-        static member inline vMarkupLineInterpolated(value, format: FormattableString) =
-            if (getVerbosity value).IsVerbose
-            then Spectre.Console.AnsiConsole.MarkupLineInterpolated format |> setWritten
-        static member inline nMarkupLineInterpolated(value, format: FormattableString) =
-            if (getVerbosity value).IsQuiet |> not then Spectre.Console.AnsiConsole.MarkupLineInterpolated format |> setWritten
-        static member inline qMarkupLineInterpolated(_, format: FormattableString) =
-            Spectre.Console.AnsiConsole.MarkupLineInterpolated format |> setWritten
-        static member inline vMarkupLine(value, format: string) =
-            if (getVerbosity value).IsVerbose then Spectre.Console.AnsiConsole.MarkupLine format |> setWritten
-        static member inline nMarkupLine(value, format: string) =
-            if (getVerbosity value).IsQuiet |> not then Spectre.Console.AnsiConsole.MarkupLine format |> setWritten
-        static member inline qMarkupLine(_, format: string) =
-            Spectre.Console.AnsiConsole.MarkupLine format |> setWritten
-        static member inline vWrite(value, format: string) =
-            if (getVerbosity value).IsVerbose then Spectre.Console.AnsiConsole.Write format |> setWritten
-        static member inline vWrite(value, format: Spectre.Console.Rule) =
-            if (getVerbosity value).IsVerbose then Spectre.Console.AnsiConsole.Write format |> setWritten
-        static member inline nWrite(value, format: string) =
-            if (getVerbosity value).IsQuiet |> not then Spectre.Console.AnsiConsole.Write format |> setWritten
-        static member inline nWrite(value, format: Spectre.Console.Rule) =
-            if (getVerbosity value).IsQuiet |> not then Spectre.Console.AnsiConsole.Write format |> setWritten
-        static member inline qWrite(_, format: string) =
-            Spectre.Console.AnsiConsole.Write format |> setWritten
-        static member inline vWriteLine(value, ?format: string) =
-            if (getVerbosity value).IsVerbose then
-                if format.IsNone
-                then writeLine()
-                else Spectre.Console.AnsiConsole.WriteLine format.Value |> setWritten
-        static member inline vWriteLine(value, num: int) =
-            if (getVerbosity value).IsVerbose then
-                if hasWrittenLine && num > 0 then
-                    for _ in 1..num do Spectre.Console.AnsiConsole.WriteLine()
-                    hasWrittenLine <- false
-        static member inline nWriteLine(value, ?format: string) =
-            if (getVerbosity value).IsQuiet |> not
-            then
-                if format.IsNone
-                then writeLine()
-                else Spectre.Console.AnsiConsole.WriteLine format.Value |> setWritten
-        static member inline nWriteLine(value, num: int) =
-            if (getVerbosity value).IsQuiet |> not then
-                if hasWrittenLine && num > 0 then
-                    for _ in 1..num do Spectre.Console.AnsiConsole.WriteLine()
-                    hasWrittenLine <- false
-        static member inline qWriteLine(_, ?format: string) =
-            if format.IsNone
-            then writeLine()
-            else Spectre.Console.AnsiConsole.WriteLine format.Value |> setWritten
-
-        static member inline qWriteLine(_, num: int) =
-            if hasWrittenLine && num > 0 then
-                for _ in 1..num do Spectre.Console.AnsiConsole.WriteLine()
-                hasWrittenLine <- false
+    type private Printable<^T when (^T or SRTPHelper):(static member write: ^T -> unit) and (^T or SRTPHelper):(static member writen: ^T -> unit)> = ^T
+    let inline print (message: ^T when Printable<^T>) = ((^T or SRTPHelper):(static member write: ^T -> unit) message)
+    let inline printn (message: ^T when Printable<^T>) = ((^T or SRTPHelper):(static member writen: ^T -> unit) message)
+    let inline nprint value (message: ^T when Printable<^T>) = if (getVerbosity value).IsQuiet |> not then print message
+    let inline nprintn value (message: ^T when Printable<^T>) = if (getVerbosity value).IsQuiet |> not then printn message
+    let inline vprint value (message: ^T when Printable<^T>) = if (getVerbosity value).IsVerbose then print message
+    let inline vprintn value (message: ^T when Printable<^T>) = if (getVerbosity value).IsVerbose then printn message
+    let inline line () = AnsiConsole.WriteLine()
+    let inline vline value = if (getVerbosity value).IsVerbose then AnsiConsole.WriteLine()
+    let inline nline value = if (getVerbosity value).IsQuiet |> not then AnsiConsole.WriteLine()
+    let inline withVerbose fn value = if (getVerbosity value).IsVerbose then fn()
+    let inline withNormal fn value = if (getVerbosity value).IsQuiet |> not then fn()
 
 namespace Partas.Build
 
@@ -493,6 +518,7 @@ module CommandSpec =
     let create name = {
         Name = name
         Description = ValueNone
+        PipelineDefaults = id
         Aliases = []
         Hidden = false
         ExtraInputs = []
@@ -578,19 +604,30 @@ module StageContext =
         let mutable shouldContinue = true
         while shouldContinue && not cancellationToken.IsCancellationRequested do
             try
-                AnsiConsole.vMarkupLineInterpolated(ctx, $"[yellow]Check {url} ...[/]")
+                Markup.escape url
+                |> sprintf "Check %s ..."
+                |> Markup.yellow
+                |> vprintn ctx
+
                 use message = new HttpRequestMessage(HttpMethod.Get, url)
                 configRequest message
                 let! result = client.SendAsync(message, cancellationToken = cancellationToken) |> AsyncResult.ofTask |> AsyncResult.mapError _.Message
                 shouldContinue <- not result.IsSuccessStatusCode
             with
             | :? TaskCanceledException when cancellationToken.IsCancellationRequested -> shouldContinue <- false
-            | ex -> AnsiConsole.qMarkupLineInterpolated(ctx, $"[red]Health check failed: {ex.Message}[/]")
+            | ex ->
+                Markup.escape ex.Message
+                |> sprintf "Health check failed: %s"
+                |> Markup.red
+                |> printn
 
             do! Async.Sleep 1000 |> Async.map Ok
         if cancellationToken.IsCancellationRequested
         then do! AsyncResult.error "Health check is cancelled."
-        else AnsiConsole.nMarkupLineInterpolated(ctx, $"[green]{url} is healthy![/]")
+        else
+            Markup.escape $"{url} is healthy!"
+            |> Markup.green
+            |> nprintn ctx
     }
 
     let inline runHttpHealthCheckCancelable ctx cancellationToken url =
@@ -616,11 +653,37 @@ module StageContext =
     let addStepFn = addBuildStep
     let inline addPredicate ([<InlineIfLambda>] condition: BuildStageIsActive) stage =
         { stage with IsActive = fun ctx -> stage.IsActive ctx && condition ctx }
+    let inline addEnvVars (kvs: seq<string * string>) (stage: StageContext) = { stage with EnvVars = kvs |> Seq.fold (fun state (k, v) -> Map.add k v state) stage.EnvVars }
+    let inline setAcceptableExitCodes (codes: int seq) (stage: StageContext) = { stage with AcceptableExitCodes = codes |> Set.ofSeq }
+    let inline setFailIfIgnored (failIfIgnored: bool) (stage: StageContext) = { stage with FailIfIgnored = failIfIgnored }
+    let inline setFailIfNoActiveSubStage (failIfNoActiveSubStage: bool) (stage: StageContext) = { stage with FailIfNoActiveSubStage = failIfNoActiveSubStage }
+    let inline setContinueStepsOnFailure (continueStepsOnFailure: bool) (stage: StageContext) = { stage with ContinueStepsOnFailure = continueStepsOnFailure }
+    let inline setContinueStageOnFailure (continueStageOnFailure: bool) (stage: StageContext) = { stage with ContinueStageOnFailure = continueStageOnFailure }
+    let inline setContinueOnStepFailure (continueOnStepFailure: bool) (stage: StageContext) = { stage with ContinueStepsOnFailure = continueOnStepFailure; ContinueStageOnFailure = continueOnStepFailure }
+    let inline setTimeoutTimeSpan (timeout: System.TimeSpan voption) (stage: StageContext) = { stage with Timeout = timeout }
+    let inline setTimeoutSeconds (timeout: int voption) (stage: StageContext) = { stage with Timeout = timeout |> ValueOption.map (fun ms -> System.TimeSpan.FromSeconds(float ms)) }
+    let inline setTimeoutMilliseconds (timeout: int voption) (stage: StageContext) = { stage with Timeout = timeout |> ValueOption.map (fun ms -> System.TimeSpan.FromMilliseconds(float ms)) }
+    let inline setTimeoutForStepTimeSpan (timeout: System.TimeSpan voption) (stage: StageContext) = { stage with TimeoutForStep = timeout }
+    let inline setTimeoutForStepSeconds (timeout: int voption) (stage: StageContext) = { stage with TimeoutForStep = timeout |> ValueOption.map (fun ms -> System.TimeSpan.FromSeconds(float ms)) }
+    let inline setTimeoutForStepMilliseconds (timeout: int voption) (stage: StageContext) = { stage with TimeoutForStep = timeout |> ValueOption.map (fun ms -> System.TimeSpan.FromMilliseconds(float ms)) }
+    let inline toggleParallel (toggle: bool) (stage: StageContext) = { stage with IsParallel = fun _ -> if toggle then ValueSome -1 else ValueNone }
+    let inline setParallelism (parallelism: int) (stage: StageContext) = { stage with IsParallel = fun _ -> ValueSome parallelism }
+    let inline setWorkingDir (workingDir: string voption) (stage: StageContext) = { stage with WorkingDir = workingDir }
+    let inline setNoPrefixForStep (noPrefixForStep: bool) (stage: StageContext) = { stage with NoPrefixForStep = noPrefixForStep }
+    let inline setNoStdRedirectForStep (noStdRedirectForStep: bool) (stage: StageContext) = { stage with NoStdRedirectForStep = noStdRedirectForStep }
+    let inline setOutput (output: StageOutput voption) (stage: StageContext) = { stage with Output = output }
+    let inline setShuffleExecuteSequence (shuffleExecuteSequence: bool) (stage: StageContext) = { stage with ShuffleExecuteSequence = shuffleExecuteSequence }
+    let inline setSteps (steps: Step list) (stage: StageContext) = { stage with Steps = steps }
 
 module BuildStage =
     let inline merge ([<InlineIfLambda>] firstStage: BuildStage) ([<InlineIfLambda>] secondStage: BuildStage) = firstStage >> secondStage
     let inline mergeMany (stages: BuildStage seq) = Seq.reduce merge stages
-    let inline mergeManyWith (mergeFn: BuildStage -> BuildStage -> BuildStage) (stages: BuildStage seq) = Seq.reduce mergeFn stages
+    let inline mergeManyWith ([<InlineIfLambda>] mergeFn: BuildStage -> BuildStage -> BuildStage) (stages: BuildStage seq) = Seq.reduce mergeFn stages
+    let inline addEnvVars (kvs: seq<string * string>) ([<InlineIfLambda>] build): BuildStage = build >> StageContext.addEnvVars kvs
+    let inline setAcceptableExitCodes (codes: int seq) ([<InlineIfLambda>] build): BuildStage = build >> StageContext.setAcceptableExitCodes codes
+    let inline setFailIfIgnored (failIfIgnored: bool) ([<InlineIfLambda>] build): BuildStage = build >> StageContext.setFailIfIgnored failIfIgnored
+    let inline setFailIfNoActiveSubStage (failIfNoActiveSubStage: bool) ([<InlineIfLambda>] build): BuildStage = build >> StageContext.setFailIfNoActiveSubStage failIfNoActiveSubStage
+    let inline setContinueStepsOnFailure (continueStepsOnFailure: bool) ([<InlineIfLambda>] build): BuildStage = build >> StageContext.setContinueStepsOnFailure continueStepsOnFailure
 
 namespace Partas.Build.Internal
 
@@ -635,6 +698,12 @@ module Runners =
     open StageContext
     open FSharp.Control
     module StageContext =
+        module PipelineFailedException =
+            let raise message =
+                Markup.escape message
+                |> Markup.red
+                |> printn
+                raise (PipelineFailedException message)
         let rec run (stage: StageContext) (index: StageIndex) (ct: System.Threading.CancellationToken) =
             let mutable isSuccess = true
             let inline succeed() = isSuccess <- true
@@ -643,14 +712,11 @@ module Runners =
             let stepExns = ResizeArray<exn>()
             let isActive = stage.IsActive stage
             let pipeline = getParentPipeline stage
-            let raisePipelineFailedException str =
-                AnsiConsole.qMarkupLineInterpolated(stage, $"[red]{str}[/]")
-                raise (PipelineFailedException str)
 
             pipeline |> Option.iter _.RunBeforeEachStage(stage)
             try
                 if not isActive && stage.FailIfIgnored then
-                    raisePipelineFailedException $"Stage ({getNamePath stage}) cannot be ignored (inactive)"
+                    PipelineFailedException.raise $"Stage ({getNamePath stage}) cannot be ignored (inactive)"
                 elif isActive then
                     if stage.FailIfNoActiveSubStage then
                         let parentContext = ValueSome(StageParent.Stage stage)
@@ -662,7 +728,7 @@ module Runners =
                                 )
                         if not hasActiveStep then
                             $"Pipeline failed because there were no active sub-stages; stage ({getNamePath stage}) required at least one"
-                            |> raisePipelineFailedException
+                            |> PipelineFailedException.raise
                     let stageSw = Stopwatch.StartNew()
                     // Only a capture this stage declared itself: one it inherited belongs to an ancestor that is
                     // still running, and clearing that would throw away what its earlier stages wrote.
@@ -683,31 +749,25 @@ module Runners =
                     use stepCts = new System.Threading.CancellationTokenSource(timeoutForStep)
                     use linkedStepCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(stepCts.Token, linkedCts.Token)
 
-                    AnsiConsole.qWriteLine(stage)
-
                     let extraInfo = $"timeout: {timeoutForStage}ms. step timeout: {timeoutForStep}ms."
-                    let markupBoldTurquoise = sprintf "[turquoise2 bold]%s[/]"
-                    let markupGrey = sprintf "[grey50]%s[/]"
-                    let makeStageConditionMsg msg =
-                        AnsiConsole.nWrite(
-                            stage,
-                            getNamePath stage
-                            |> markupBoldTurquoise
-                            |> sprintf "%s %s started." msg
-                            |> fun msg -> msg + " " + extraInfo
-                            |> markupGrey
-                            |> Rule
-                            |> _.LeftJustified()
-                            )
+                    let inline makeStageConditionMsg msg =
+                        getNamePath stage
+                        |> Markup.escape
+                        |> Markup.turquoise2
+                        |> Markup.bold
+                        |> sprintf "%s %s started." (Markup.escape msg)
+                        |> fun msg -> msg + " " + extraInfo
+                        |> Markup.grey
+                        |> Rule
+                        |> _.LeftJustified()
+                        |> vprint stage
                     match index with
                     | StageIndex.Condition -> makeStageConditionMsg "CONDITION STAGE"
                     | StageIndex.Stage i -> makeStageConditionMsg $"STAGE #{i}"
                     | StageIndex.Step _ ->
-                        AnsiConsole.nMarkupLine(
-                            stage,
-                            $"%s{buildCurrentStepPrefix stage}> sub-stage started %s{extraInfo}"
-                            |> markupGrey
-                        )
+                        $"%s{buildCurrentStepPrefix stage |> Markup.escape}> sub-stage started %s{extraInfo}"
+                        |> Markup.grey
+                        |> vprintn stage
 
                     let steps =
                         stage.Steps
@@ -715,19 +775,21 @@ module Runners =
                         // shuffle
                         |> if stage.ShuffleExecuteSequence then Seq.randomShuffle else id
                         |> Seq.map (fun (i, step) -> async {
-                            let prefix =
+                            let escapedPrefix =
                                 match step with
                                 | Step.StepFn _ -> buildStepPrefix stage (LanguagePrimitives.Int32WithMeasure i)
                                 | Step.StepOfStage subStage ->
                                     { subStage with ParentContext = ValueSome(StageParent.Stage stage) }
                                     |> buildCurrentStepPrefix
                                     |> sprintf "%s>"
+                                    |> Markup.escape
 
                             let exns = ResizeArray<Exception>()
                             try
                                 let sw = Stopwatch.StartNew()
-                                AnsiConsole.qWriteLine(stage)
-                                AnsiConsole.vMarkupLineInterpolated(stage, $"""[grey50]{prefix} started{if parallelism.IsSome then " in parallel -->" else ""}[/]""")
+                                escapedPrefix + " started" + (if parallelism.IsSome then " in parallel -->" else "")
+                                |> Markup.grey
+                                |> vprintn stage
                                 let! isSuccess =
                                     match step with
                                     | Step.StepFn fn -> async {
@@ -735,7 +797,7 @@ module Runners =
                                         | Error e when not (String.IsNullOrEmpty e) ->
                                             if parallelism.IsNone && getNoPrefixForStep stage
                                             then e
-                                            else $"{prefix} {e}"
+                                            else $"{escapedPrefix} {e}"
                                             |> printError stage
                                             return false
                                         | Ok _ -> return true
@@ -747,14 +809,21 @@ module Runners =
                                         exns.AddRange es
                                         return isSuccess
                                     }
-                                let color = if isSuccess then "grey50" else "red"
+                                let color = if isSuccess then Markup.grey else Markup.red
                                 let shouldCancelStage = not isSuccess && not stage.ContinueStepsOnFailure && not stepErrorCts.IsCancellationRequested
-                                AnsiConsole.nMarkupLineInterpolated(
-                                    stage,
-                                    $"""[{color}]{prefix} finished{if parallelism.IsSome then " in parallel." else "."} {sw.ElapsedMilliseconds}ms. {if shouldCancelStage then "will trigger cancellation." else ""}[/]"""
-                                )
+                                [
+                                    escapedPrefix
+                                    if parallelism.IsSome then "finished in parallel."
+                                    else "finished."
+                                    $"{sw.ElapsedMilliseconds}ms."
+                                    if shouldCancelStage then
+                                        "Stage policy triggered cancellation."
+                                ]
+                                |> String.concat " "
+                                |> color
+                                |> (if shouldCancelStage then nprintn else vprintn) stage
                                 if shouldCancelStage then stepErrorCts.Cancel()
-                                if i = stage.Steps.Length - 1 then AnsiConsole.qWriteLine(())
+                                // if i = stage.Steps.Length - 1 then line()
                                 return isSuccess, exns
                             with
                             | :? PipelineCancelledException as ex ->
@@ -764,17 +833,23 @@ module Runners =
                                 raise ex
                                 return false, exns
                             | :? StepSoftCancelledException as ex ->
-                                AnsiConsole.nMarkupLineInterpolated(stage,$"[yellow]{prefix} {ex.Message}.[/]")
+                                $"{escapedPrefix} {Markup.escape ex.Message}"
+                                |> Markup.yellow
+                                |> nprintn stage
                                 return true, exns
                             | :? StageSoftCancelledException as ex ->
-                                AnsiConsole.nMarkupLineInterpolated(stage, $"[yellow]{prefix} {ex.Message}.[/]")
+                                $"{escapedPrefix} {Markup.escape ex.Message}"
+                                |> Markup.yellow
+                                |> nprintn stage
                                 isStageSoftCancelled <- true
                                 return true, exns
                             | ex ->
-                                AnsiConsole.qMarkupLineInterpolated(stage, $"[red]{prefix} exception happened.[/]")
+                                $"{escapedPrefix} raised an exception."
+                                |> Markup.red
+                                |> printn
                                 AnsiConsole.WriteException ex
                                 if not stage.ContinueStageOnFailure then
-                                    exns.Add(Exception($"{prefix} {ex.Message}", ex.InnerException))
+                                    exns.Add(Exception($"{escapedPrefix} {ex.Message}", ex.InnerException))
                                 return false, exns
                         })
                     try
@@ -814,43 +889,61 @@ module Runners =
                     | ex ->
                         fail()
                         if linkedCts.Token.IsCancellationRequested && not stepErrorCts.IsCancellationRequested then
-                            AnsiConsole.nMarkupLineInterpolated(stage, $"[yellow]{buildCurrentStepPrefix stage}> stage is cancelled or timed-out.[/]")
-                            AnsiConsole.nWriteLine(stage)
+                            $"{buildCurrentStepPrefix stage |> Markup.escape}> stage is cancelled or timed-out."
+                            |> Markup.yellow
+                            |> nprintn stage
                         else if not stepErrorCts.IsCancellationRequested then
-                            AnsiConsole.qMarkupLineInterpolated((), $"[red]{buildCurrentStepPrefix stage}> stage's step failed[/]")
+                            $"{buildCurrentStepPrefix stage |> Markup.escape}> stage's step failed."
+                            |> Markup.red
+                            |> printn
                             AnsiConsole.WriteException ex
-                            AnsiConsole.qWriteLine(())
 
-                    let color = if isSuccess then "turquoise4" else "red"
+                    let color = if isSuccess then Markup.turquoise2 else Markup.red
+                    let inline escapedNamePath() = getNamePath stage |> Markup.escape
                     match index with
                     | StageIndex.Condition ->
-                        AnsiConsole.nWrite(
-                            stage,
-                            Rule($"""[grey50]CONDITION STAGE [bold {color}]{getNamePath stage}[/] finished. {stageSw.ElapsedMilliseconds}ms.[/]""")
-                                .LeftJustified()
-                        )
+                        let namePath =
+                            escapedNamePath()
+                            |> color
+                            |> Markup.bold
+                        $"CONDITION STAGE %s{namePath} finished. {stageSw.ElapsedMilliseconds}ms."
+                        |> Markup.grey
+                        |> Rule
+                        |> _.LeftJustified()
+                        |> nprintn stage
                     | StageIndex.Stage i ->
-                        AnsiConsole.nWrite(
-                            stage,
-                            Rule($"""[grey50]STAGE #{i} [bold {color}]{getNamePath stage}[/] finished. {stageSw.ElapsedMilliseconds}ms.[/]""")
-                                .LeftJustified()
-                        )
+                        let namePath =
+                            escapedNamePath()
+                            |> color
+                            |> Markup.bold
+                        $"STAGE #{i} %s{namePath} finished. {stageSw.ElapsedMilliseconds}ms."
+                        |> Markup.grey
+                        |> Rule
+                        |> _.LeftJustified()
+                        |> nprintn stage
                     | StageIndex.Step _ ->
-                        AnsiConsole.nMarkupLineInterpolated(
-                            stage,
-                            $"""[grey50]{buildCurrentStepPrefix stage}> sub-stage finished. {stageSw.ElapsedMilliseconds}ms.[/]"""
-                        )
-                    AnsiConsole.nWriteLine(stage)
+                        $"%s{escapedNamePath()}> sub-stage finished. {stageSw.ElapsedMilliseconds}ms."
+                        |> Markup.grey
+                        |> vprintn stage
                 else
-                    AnsiConsole.nWriteLine(stage)
+                    let inline escapedNamePath() = getNamePath stage |> Markup.escape
                     match index with
-                    | StageIndex.Condition -> AnsiConsole.vWrite(stage, Rule($"[grey50]CONDITION STAGE {getNamePath stage} is [yellow]inactive[/][/]").LeftJustified())
-                    | StageIndex.Stage i -> AnsiConsole.vWrite(stage, Rule($"[grey50]STAGE #{i} {getNamePath stage} is [yellow]inactive[/][/]").LeftJustified())
+                    | StageIndex.Condition ->
+                        $"CONDITION STAGE %s{escapedNamePath()} is " + Markup.yellow "inactive"
+                        |> Markup.grey
+                        |> Rule
+                        |> _.LeftJustified()
+                        |> vprintn stage
+                    | StageIndex.Stage i ->
+                        $"STAGE #{i} %s{escapedNamePath()} is " + Markup.yellow "inactive"
+                        |> Markup.grey
+                        |> Rule
+                        |> _.LeftJustified()
+                        |> vprintn stage
                     | StageIndex.Step _ ->
-                        AnsiConsole.vMarkupLineInterpolated(stage, $"[grey50]{buildCurrentStepPrefix stage}> sub-stage is [yellow]inactive[/][/]")
-
-                    AnsiConsole.vWriteLine(stage)
-
+                        $"{buildCurrentStepPrefix stage |> Markup.escape}> sub-stage is " + Markup.yellow "inactive"
+                        |> Markup.grey
+                        |> vprintn stage
             finally pipeline |> Option.iter _.RunAfterEachStage(stage)
             stage.ContinueStageOnFailure || isSuccess, stepExns
 
@@ -879,15 +972,15 @@ module Runners =
             Console.InputEncoding <- Encoding.UTF8
             Console.OutputEncoding <- Encoding.UTF8
 
-            if not(String.IsNullOrEmpty this.Name) && (getVerbosity this).IsVerbose then
+            if not(String.IsNullOrEmpty this.Name) then
                 let title = FigletText this.Name
                 title.LeftJustified().Color <- Color.Lime
-                AnsiConsole.Write title
+                nprint this title
 
             let timeoutForPipeline = this.Timeout |> ValueOption.map _.TotalMilliseconds |> ValueOption.defaultValue -1. |> int
-
-            AnsiConsole.nMarkupLineInterpolated(this, $"Run PIPELINE [bold lime]{this.Name}[/]. Total timeout: {timeoutForPipeline}ms.")
-            AnsiConsole.nWriteLine(this)
+            let markedUpName = this.Name |> Markup.escape |> Markup.bold |> Markup.lime
+            $"Run PIPELINE %s{markedUpName}. Total timeout: %i{timeoutForPipeline}ms."
+            |> nprintn this
 
             let sw = Stopwatch.StartNew()
             let pipelineExns = ResizeArray<exn>()
@@ -895,23 +988,25 @@ module Runners =
             let mutable hasErrors = false
             try
                 if this.Stages.Length > 1 then
-                    AnsiConsole.vMarkupLine(this, "[turquoise4]Run stages[/]")
+                    Markup.turquoise4 "Run stages"
+                    |> vprintn this
                 let hasFailedStage, stageExns = runStagesWithFailFast this true cts.Token this.Stages
                 pipelineExns.AddRange stageExns
                 if this.Stages.Length > 1 then
-                    AnsiConsole.vMarkupLine(this, "[turquoise4]Run stages finished[/]")
-                    AnsiConsole.vWriteLine(this)
-                    AnsiConsole.vWriteLine(this)
+                    Markup.turquoise4 "Run stages finished"
+                    |> vprintn this
+                    vline this
 
                 let mutable hasFailedPostStage = false
                 if not cts.IsCancellationRequested && not (List.isEmpty this.PostStages) then
-                    AnsiConsole.vMarkupLine(this, "[turquoise4]Run post stages[/]")
+                    Markup.turquoise4 "Run post-stages"
+                    |> vprintn this
                     let result, postStageExns = runStages this cts.Token this.PostStages
                     hasFailedPostStage <- result
                     pipelineExns.AddRange postStageExns
-                    AnsiConsole.vMarkupLine(this, "[turquoise4]Run post stages finished[/]")
-                    AnsiConsole.vWriteLine(this)
-                    AnsiConsole.vWriteLine(this)
+                    Markup.turquoise4 "Run post-stages finished"
+                    |> vprintn this
+                    vline this
 
                 hasErrors <- hasFailedStage || hasFailedPostStage
 
@@ -921,15 +1016,19 @@ module Runners =
 
 
             let color =
-                if hasErrors then "red"
-                else if cts.IsCancellationRequested then "yellow"
-                else "lime"
+                if hasErrors then Markup.red
+                else if cts.IsCancellationRequested then Markup.yellow
+                else Markup.lime
 
             let exitText = if cts.IsCancellationRequested then "cancelled" else "finished"
 
-            AnsiConsole.qMarkupLineInterpolated(this, $"""PIPELINE [bold {color}]{this.Name}[/] is {exitText} in {sw.ElapsedMilliseconds} ms""")
-            AnsiConsole.qWriteLine(())
-
+            let markupName =
+                this.Name
+                |> Markup.escape
+                |> Markup.bold
+                |> color
+            $"PIPELINE %s{markupName} is %s{exitText} in %i{sw.ElapsedMilliseconds}ms."
+            |> printn
 
             if cts.IsCancellationRequested then
                 raise (PipelineCancelledException "Cancelled by console")
@@ -938,7 +1037,6 @@ module Runners =
                 for exn in pipelineExns do
                     let innerMessage = if exn.InnerException <> null then exn.InnerException.Message else ""
                     PipelineContext.printError this (exn.Message + " " + innerMessage)
-                AnsiConsole.qWriteLine(())
                 raise (PipelineFailedException("Pipeline is failed because of exception", pipelineExns[0]))
             else if hasErrors then
                 "Pipeline is failed because result is not indicating as successful"

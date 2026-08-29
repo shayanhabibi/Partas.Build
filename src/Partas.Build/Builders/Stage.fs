@@ -22,10 +22,13 @@ let private never = EditorBrowsableState.Never
 [<Literal>]
 let private advanced = EditorBrowsableState.Advanced
 
-
+/// <summary>
+/// SRTP management for accepted <c>run</c> signatures which are transformed into
+/// StepFnSignatures.
+/// </summary>
 [<EB(never)>]
 type SRTPStageBuilderRunner =
-    static member inline unifyResult(step: Async<unit>): StepFnSignature = fun _ _ -> Async.map Ok step
+    static member inline unifyResult(step: Async<unit>): StepFnSignature = fun _ _ -> step |> Async.map Ok
     static member inline unifyResult(step: Async<int>): StepFnSignature = fun ctx _ -> step |> Async.map (StageContext.mapExitCodeToResult ctx)
     static member inline unifyResult(step: StageContext -> unit): StepFnSignature = fun ctx _ -> step ctx |> Ok |> Async.singleton
     static member inline unifyResult(step: StageContext -> int): StepFnSignature = fun ctx _ -> step ctx |> StageContext.mapExitCodeToResult ctx |> Async.singleton
@@ -425,6 +428,16 @@ and [<EB(advanced)>]
         let buildCmd ctx = step ctx |> Async.map Cmd.ofString
         { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.step buildCmd cancellationToken) ] }
 
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (build: BuildStage, step: StageContext -> Task<string>, ?cancellationToken: CancellationToken): BuildStage
+        = build >> fun ctx ->
+        let cancellationToken = defaultArg cancellationToken CancellationToken.None
+        let buildCmd ctx = step ctx |> Task.map Cmd.ofString |> Async.AwaitTask
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.step buildCmd cancellationToken) ] }
+
     /// <summary>Adds a step that runs a prepared command derived from the stage context.</summary>
     /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
     [<CustomOperation>] member _.
@@ -433,6 +446,98 @@ and [<EB(advanced)>]
         = build >> fun ctx ->
         let cancellationToken = defaultArg cancellationToken CancellationToken.None
         { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.step (buildCmd >> Async.singleton) cancellationToken) ] }
+
+    /// <summary>Adds a step that runs a command line derived from the stage context.</summary>
+    /// <remarks>The command line string is split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (build: BuildStage, step: StageContext -> string option, ?cancellationToken: CancellationToken): BuildStage
+        = this.run (build, (fun ctx -> step ctx |> Option.map Cmd.ofString), ?cancellationToken = cancellationToken)
+
+
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (build: BuildStage, step: StageContext -> Async<string option>, ?cancellationToken: CancellationToken): BuildStage
+        = build >> fun ctx ->
+        let cancellationToken = defaultArg cancellationToken CancellationToken.None
+        let buildCmd ctx = step ctx |> Async.map (Option.map Cmd.ofString)
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.stepOption buildCmd cancellationToken) ] }
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (build: BuildStage, step: StageContext -> Task<string option>, ?cancellationToken: CancellationToken): BuildStage
+        = build >> fun ctx ->
+        let cancellationToken = defaultArg cancellationToken CancellationToken.None
+        let buildCmd ctx = step ctx |> Task.map (Option.map Cmd.ofString) |> Async.AwaitTask
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.stepOption buildCmd cancellationToken) ] }
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (build: BuildStage, step: StageContext -> Async<Cmd>, ?cancellationToken: CancellationToken): BuildStage
+        = build >> fun ctx ->
+        let cancellationToken = defaultArg cancellationToken CancellationToken.None
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.step step cancellationToken) ] }
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (build: BuildStage, step: StageContext -> Async<Cmd option>, ?cancellationToken: CancellationToken): BuildStage
+        = build >> fun ctx ->
+        let cancellationToken = defaultArg cancellationToken CancellationToken.None
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.stepOption step cancellationToken) ] }
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (build: BuildStage, step: StageContext -> Async<Result<Cmd, string>>, ?cancellationToken: CancellationToken): BuildStage
+        = build >> fun ctx ->
+        let cancellationToken = defaultArg cancellationToken CancellationToken.None
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.stepResult step cancellationToken) ] }
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (build: BuildStage, step: StageContext -> Async<Result<Cmd option, string>>, ?cancellationToken: CancellationToken): BuildStage
+        = build >> fun ctx ->
+        let cancellationToken = defaultArg cancellationToken CancellationToken.None
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.stepResultOption step cancellationToken) ] }
+
+    /// <summary>Adds a step that runs a prepared command derived from the stage context.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member _.
+        run
+        (build: BuildStage, buildCmd: StageContext -> Cmd option, ?cancellationToken: CancellationToken): BuildStage
+        = build >> fun ctx ->
+        let cancellationToken = defaultArg cancellationToken CancellationToken.None
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.stepOption (buildCmd >> Async.singleton) cancellationToken) ] }
+
+    /// <summary>Adds a step that runs a prepared command derived from the stage context.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member _.
+        run
+        (build: BuildStage, buildCmd: StageContext -> Result<Cmd, string>, ?cancellationToken: CancellationToken): BuildStage
+        = build >> fun ctx ->
+        let cancellationToken = defaultArg cancellationToken CancellationToken.None
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.stepResult (buildCmd >> Async.singleton) cancellationToken) ] }
+
+    /// <summary>Adds a step that runs a prepared command derived from the stage context.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member _.
+        run
+        (build: BuildStage, buildCmd: StageContext -> Result<Cmd option, string>, ?cancellationToken: CancellationToken): BuildStage
+        = build >> fun ctx ->
+        let cancellationToken = defaultArg cancellationToken CancellationToken.None
+        { ctx with Steps = ctx.Steps @ [ Step.StepFn(CmdRunner.stepResultOption (buildCmd >> Async.singleton) cancellationToken) ] }
 
     /// <summary>Adds a step that runs an interpolated command line without printing what the holes contained.</summary>
     /// <remarks>
@@ -701,52 +806,131 @@ and [<EB(advanced)>]
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("run")>] member inline this.
+    [<CustomOperation>] member inline this.
         run
         (spec: InputSpec<BuildStage>, buildStep: StageContext -> BuildStep): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.run(build, buildStep)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("run")>] member inline this.
+    [<CustomOperation>] member inline this.
         run
         (spec: InputSpec<BuildStage>, exe: string, args: string, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.run(build, exe, args, ?cancellationToken = cancellationToken)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("run")>] member inline this.
+    [<CustomOperation>] member inline this.
         run
         (spec: InputSpec<BuildStage>, command: string, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.run(build, command, ?cancellationToken = cancellationToken)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("run")>] member inline this.
+    [<CustomOperation>] member inline this.
         run
         (spec: InputSpec<BuildStage>, command: Cmd, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.run(build, command, ?cancellationToken = cancellationToken)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("run")>] member inline this.
+    [<CustomOperation>] member inline this.
         run
         (spec: InputSpec<BuildStage>, step: StageContext -> string, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("run")>] member inline this.
+    [<CustomOperation>] member inline this.
         run
         (spec: InputSpec<BuildStage>, step: StageContext -> Async<string>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("run")>] member inline this.
+    [<CustomOperation>] member inline this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> Task<string>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation>] member inline this.
         run
         (spec: InputSpec<BuildStage>, buildCmd: StageContext -> Cmd, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.run(build, buildCmd, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>Adds a step that runs a command line derived from the stage context.</summary>
+    /// <remarks>The command line string is split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> string option, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run (build, (fun ctx -> step ctx |> Option.map Cmd.ofString), ?cancellationToken = cancellationToken)) spec
+
+
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> Async<string option>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> Task<string option>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> Async<Cmd>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> Async<Cmd option>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> Async<Result<Cmd, string>>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> Async<Result<Cmd option, string>>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>Adds a step that runs a prepared command derived from the stage context.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> Cmd option, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>Adds a step that runs a prepared command derived from the stage context.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> Result<Cmd, string>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
+
+    /// <summary>Adds a step that runs a prepared command derived from the stage context.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>] member this.
+        run
+        (spec: InputSpec<BuildStage>, step: StageContext -> Result<Cmd option, string>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
 
     // `runSensitive` deliberately has no mirror. Its argument is a `FormattableString`, and F# only applies the
     // `string` -> `FormattableString` conversion when a single overload is in play: adding a second one turns
@@ -755,7 +939,7 @@ and [<EB(advanced)>]
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("run")>] member inline _.
+    [<CustomOperation>] member inline _.
         run
         (spec: InputSpec<BuildStage>, step): InputSpec<BuildStage>
         // Inlines the flexible-signature step itself rather than delegating: forwarding to the `BuildStage`

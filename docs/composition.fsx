@@ -1,7 +1,7 @@
 ﻿(**
 ---
 title: Composing reusable blocks
-category: Documentation
+category: Build
 index: 2
 ---
 *)
@@ -346,6 +346,11 @@ Consecutive stages share that one pipeline — its settings, its run and its `wh
 command can also mix them with explicit pipelines, and declaration order is preserved.
 
 `addInput` covers the remainder: a flag the command should expose that no stage happens to bind.
+
+A command also takes the pipeline settings themselves - `workingDir`, `envVars`, the timeouts, the output
+operations, the hooks, `post`, `verbosity` - and hands them to every pipeline it runs, including the implicit
+one above. They are defaults: a pipeline that sets the same thing for itself keeps its own value. See
+[command-level defaults](index.html#Command-level-defaults).
 
 ## Conditional assembly
 

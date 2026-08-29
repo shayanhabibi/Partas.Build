@@ -5,11 +5,19 @@ open System
 open System.CommandLine
 open Partas.Build
 open Partas.Build.Internal
-let inline private injectCommandInfo (spec: InputSpec<PipelineContext>): CommandSpec -> InputSpec<PipelineContext> =
-    fun cmd -> { spec with Read = spec.Read >> (function { Name = null | "" } as spec -> { spec with Name = cmd.Name; Description = cmd.Description } | spec -> spec) }
+/// Names an unnamed pipeline after the command that runs it, and fills its unset settings from the command's
+/// defaults. Applied once the whole command is built, not as each pipeline is yielded, so that a setting written
+/// below a pipeline reaches it just as one written above it does.
+let private injectCommandInfo (cmd: CommandSpec) (spec: InputSpec<PipelineContext>): InputSpec<PipelineContext> =
+    { spec with
+        Read =
+            spec.Read
+            >> (function { Name = null | "" } as pipeline -> { pipeline with Name = cmd.Name; Description = cmd.Description } | pipeline -> pipeline)
+            >> PipelineContext.applyDefaults cmd.PipelineDefaults }
+
 /// Appends a pipeline to the command being built.
-let inline private addPipeline (spec: InputSpec<PipelineContext>): BuildCommand = fun cmd -> { cmd with Pipelines = cmd.Pipelines @ [ injectCommandInfo
-                                                                                                                                          spec cmd ]  }
+let inline private addPipeline (spec: InputSpec<PipelineContext>): BuildCommand =
+    fun cmd -> { cmd with Pipelines = cmd.Pipelines @ [ spec ] }
 
 /// <summary>The stages a command yields directly, before they are folded into its implicit pipeline.</summary>
 /// <remarks>
@@ -46,6 +54,8 @@ let private invoke (spec: CommandSpec) (parseResult: ParseResult) =
 
 /// Applies a finished spec to a command, registering the options its pipelines declared.
 let private applyTo (command: Command) (spec: CommandSpec) =
+    let spec = { spec with Pipelines = spec.Pipelines |> List.map (injectCommandInfo spec) }
+
     spec.Description |> ValueOption.iter (fun description -> command.Description <- description)
 
     for alias in spec.Aliases do
@@ -76,6 +86,14 @@ let private applyTo (command: Command) (spec: CommandSpec) =
 /// pipeline asks for, which a root command may still want to expose.
 /// </remarks>
 type CommandBuilderBase() =
+    /// <summary>Adds one more setting to the defaults the command hands every pipeline it runs.</summary>
+    /// <remarks>
+    /// The plumbing behind the pipeline-level custom operations below. <paramref name="fn"/> is applied to a
+    /// pristine <c>PipelineContext</c>, never to a finished pipeline: <c>PipelineContext.applyDefaults</c> then
+    /// copies across only those settings the pipeline itself left alone.
+    /// </remarks>
+    member inline _.MapPipelineDefault([<InlineIfLambda>] build: BuildCommand, [<InlineIfLambda>] fn: BuildPipeline): BuildCommand =
+        build >> fun cmd -> { cmd with PipelineDefaults = cmd.PipelineDefaults >> fn }
     member inline _.Zero(): BuildCommand = id
     member inline _.Yield(_: unit): BuildCommand = id
     member inline _.Yield(pipeline: PipelineContext): BuildCommand = addPipeline (InputSpec.ret pipeline)
@@ -193,6 +211,161 @@ type CommandBuilderBase() =
         addCommands
         ([<InlineIfLambda>] build: BuildCommand, subCommands: Command seq): BuildCommand
         = build >> fun cmd -> { cmd with SubCommands = cmd.SubCommands @ List.ofSeq subCommands }
+    /// <summary>Sets the total timeout every pipeline the command runs falls back to.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        timeout
+        ([<InlineIfLambda>] build: BuildCommand, timeout: TimeSpan): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with Timeout = ValueSome timeout })
+
+    /// <summary>Sets the total timeout, in seconds, every pipeline the command runs falls back to.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        timeout
+        ([<InlineIfLambda>] build: BuildCommand, seconds: int): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with Timeout = ValueSome(TimeSpan.FromSeconds(float seconds)) })
+
+    /// <summary>Sets the per-stage timeout every pipeline the command runs falls back to.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        timeoutForStage
+        ([<InlineIfLambda>] build: BuildCommand, timeout: TimeSpan): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with TimeoutForStage = ValueSome timeout })
+
+    /// <summary>Sets the per-stage timeout, in seconds, every pipeline the command runs falls back to.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        timeoutForStage
+        ([<InlineIfLambda>] build: BuildCommand, seconds: int): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with TimeoutForStage = ValueSome(TimeSpan.FromSeconds(float seconds)) })
+
+    /// <summary>Sets the per-step timeout every pipeline the command runs falls back to.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        timeoutForStep
+        ([<InlineIfLambda>] build: BuildCommand, timeout: TimeSpan): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with TimeoutForStep = ValueSome timeout })
+
+    /// <summary>Sets the per-step timeout, in seconds, every pipeline the command runs falls back to.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        timeoutForStep
+        ([<InlineIfLambda>] build: BuildCommand, seconds: int): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with TimeoutForStep = ValueSome(TimeSpan.FromSeconds(float seconds)) })
+
+    /// <summary>Adds environment variables to every pipeline the command runs.</summary>
+    /// <remarks>Per variable: a pipeline that sets one of these keys itself keeps its own value, the rest still apply.</remarks>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        envVars
+        ([<InlineIfLambda>] build: BuildCommand, kvs: (string * string) seq): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with EnvVars = kvs |> Seq.fold (fun state (k, v) -> Map.add k v state) ctx.EnvVars })
+
+    /// <summary>Sets which process exit codes count as success, for every pipeline the command runs.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        acceptExitCodes
+        ([<InlineIfLambda>] build: BuildCommand, codes: int seq): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with AcceptableExitCodes = set codes })
+
+    /// <summary>Sets the directory commands run in, for every pipeline the command runs.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        workingDir
+        ([<InlineIfLambda>] build: BuildCommand, dir: string): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with WorkingDir = ValueSome dir })
+
+    /// <summary>Sets the directory commands run in, for every pipeline the command runs.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        workingDir
+        ([<InlineIfLambda>] build: BuildCommand, dir: IO.DirectoryInfo): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with WorkingDir = ValueSome dir.FullName })
+
+    /// <summary>Sends the output of every pipeline the command runs somewhere other than the console.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        outputTo
+        ([<InlineIfLambda>] build: BuildCommand, output: StageOutput): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with Output = ValueSome output })
+
+    /// <summary>Drops the output of every pipeline the command runs.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        silentOutput
+        ([<InlineIfLambda>] build: BuildCommand): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with Output = ValueSome StageOutput.Silent })
+
+    /// <summary>Holds step output back, lifting it into the error message when a step fails.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        captureOutput
+        ([<InlineIfLambda>] build: BuildCommand, ?capture: OutputCapture): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture()))) })
+
+    /// <summary>Hands each line of step output to <paramref name="writer"/> as it arrives.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        redirectOutput
+        ([<InlineIfLambda>] build: BuildCommand, [<InlineIfLambda>] writer: StdStream -> string -> unit): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with Output = ValueSome(StageOutput.Redirect writer) })
+
+    /// <summary>Stops each step prefixing its console output with the stage and step index.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        noPrefixForStep
+        ([<InlineIfLambda>] build: BuildCommand, ?flag: bool): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with NoPrefixForStep = defaultArg flag true })
+
+    /// <summary>Stops redirecting child process stdout/stderr, letting them write to the console directly.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        noStdRedirectForStep
+        ([<InlineIfLambda>] build: BuildCommand, ?flag: bool): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with NoStdRedirectForStep = defaultArg flag true })
+
+    /// <summary>Runs a function immediately before each stage of every pipeline the command runs.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        runBeforeEachStage
+        ([<InlineIfLambda>] build: BuildCommand, [<InlineIfLambda>] fn: StageContext -> unit): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with RunBeforeEachStage = fn })
+
+    /// <summary>Runs a function immediately after each stage of every pipeline the command runs.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        runAfterEachStage
+        ([<InlineIfLambda>] build: BuildCommand, [<InlineIfLambda>] fn: StageContext -> unit): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with RunAfterEachStage = fn })
+
+    /// <summary>Sets the stages that run after the main stages, whether or not the pipeline succeeded.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        post
+        ([<InlineIfLambda>] build: BuildCommand, stages: StageContext list): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with PostStages = stages })
+
+    /// <summary>Sets how much every pipeline the command runs prints.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        verbosity
+        ([<InlineIfLambda>] build: BuildCommand, verbosity: Verbosity): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with Verbosity = ValueSome verbosity })
+
+    /// <summary>Prints the full trace of every pipeline the command runs.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        verbose
+        ([<InlineIfLambda>] build: BuildCommand): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with Verbosity = ValueSome Verbosity.Verbose })
+
+    /// <summary>Prints as little as possible from every pipeline the command runs.</summary>
+    /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>
+    [<CustomOperation>] member inline this.
+        quiet
+        ([<InlineIfLambda>] build: BuildCommand): BuildCommand
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with Verbosity = ValueSome Verbosity.Quiet })
+
 
 /// <summary>Builds a named subcommand from the pipelines it runs.</summary>
 type CommandBuilder(name: string) =

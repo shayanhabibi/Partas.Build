@@ -12,4 +12,9 @@ so each child here is a complete <remarks> element.
     <c>InputSpec</c> of each pipeline it runs, so a stage that binds <c>--configuration</c> is what puts
     <c>--configuration</c> in <c>--help</c>; registering the same option here as well would duplicate it.</remarks>
   </addInputRemark>
+  <pipelineDefault>
+    <remarks>A <em>default</em>, not an override: it applies to every pipeline the command runs, but only where
+    that pipeline left the setting alone. A pipeline that sets the same thing for itself keeps its own value,
+    whichever order the two were written in.</remarks>
+  </pipelineDefault>
 </command>

@@ -190,6 +190,7 @@ namespace Partas.Build.Internal
 open System
 open System.Diagnostics
 open System.IO
+open System.Net.Http
 open System.Runtime.InteropServices
 open System.Text
 open System.Threading
@@ -259,10 +260,11 @@ module CmdRunner =
     /// <remarks>A cancelled command succeeds: the runner that cancelled it is the one reporting why.</remarks>
     let run (ctx: StageContext) (index: StepIndex) (cancellationToken: CancellationToken) (cmd: Cmd) = async {
         let noPrefix = StageContext.getNoPrefixForStep ctx
-        let prefix = if noPrefix then "" else StageContext.buildStepPrefix ctx index
+        let escapedPrefix = if noPrefix then "" else StageContext.buildStepPrefix ctx index |> Markup.escape
 
-        if not noPrefix then AnsiConsole.Markup $"[green]{prefix}[/] "
-        AnsiConsole.nWriteLine(ctx, Cmd.toLogString cmd)
+        if not noPrefix then escapedPrefix |> Markup.green |> print
+        Cmd.toLogString cmd
+        |> vprintn ctx
 
         let output = StageContext.getOutput ctx
 
@@ -290,7 +292,7 @@ module CmdRunner =
             // full pipe once it has written a few kilobytes there, and waits for a reader that never comes.
             let onData (stream: StdStream) (ev: DataReceivedEventArgs) =
                 if not (String.IsNullOrEmpty ev.Data) then
-                    StageContext.writeLine ctx stream (if noPrefix then ev.Data else prefix + " " + ev.Data)
+                    StageContext.writeLine ctx stream (if noPrefix then ev.Data else escapedPrefix + " " + ev.Data)
             proc.OutputDataReceived.Add (onData StdStream.Out)
             proc.ErrorDataReceived.Add (onData StdStream.Err)
             proc.BeginOutputReadLine()
@@ -306,7 +308,9 @@ module CmdRunner =
 
         let killOnce () =
             if Interlocked.Exchange(&killed.contents, 1) = 0 then
-                AnsiConsole.qMarkupLineInterpolated((), $"[yellow]{prefix} is cancelled or timed out; the process will be killed.[/]")
+                $"{escapedPrefix} is cancelled or timed out; the process will be killed."
+                |> Markup.yellow
+                |> printn
                 kill proc
 
         let! ambientToken = Async.CancellationToken
@@ -338,3 +342,48 @@ module CmdRunner =
             let! cmd = buildCmd ctx
             return! run ctx index cancellationToken cmd
         }
+
+    let stepOption (buildCmd: StageContext -> Async<Cmd option>) (cancellationToken: CancellationToken): StageContext -> StepIndex -> Async<Result<unit, string>> =
+        fun ctx index -> async {
+            match! buildCmd ctx with
+            | Some cmd -> return! run ctx index cancellationToken cmd
+            | None -> return Ok()
+        }
+
+    let stepResult (buildCmd: StageContext -> Async<Result<Cmd, string>>) (cancellationToken: CancellationToken): StageContext -> StepIndex -> Async<Result<unit, string>> =
+        fun ctx index -> async {
+            match! buildCmd ctx with
+            | Ok cmd -> return! run ctx index cancellationToken cmd
+            | Error message -> return Error message
+        }
+
+    let stepResultOption (buildCmd: StageContext -> Async<Result<Cmd option, string>>) (cancellationToken: CancellationToken): StageContext -> StepIndex -> Async<Result<unit, string>> =
+        fun ctx index -> async {
+            match! buildCmd ctx with
+            | Ok (Some cmd) -> return! run ctx index cancellationToken cmd
+            | Ok None -> return Ok()
+            | Error message -> return Error message
+        }
+
+[<AutoOpen>]
+module StageContextRunExts =
+    module StageContext =
+        open FsToolkit.ErrorHandling
+        module Steps =
+            let inline addCmd (ct: CancellationToken voption) (cmd: Cmd) (ctx: StageContext) =
+                let ct = defaultValueArg ct CancellationToken.None
+                StageContext.addStepFn (CmdRunner.step (fun _ -> Async.singleton cmd) ct) ctx
+            let inline addCmdString (ct: CancellationToken voption) (command: string) (ctx: StageContext) = addCmd ct (Cmd.ofString command) ctx
+            let inline addCmdFormattable (ct: CancellationToken voption) (command: FormattableString) (ctx: StageContext) = addCmd ct (Cmd.ofFormattable false command) ctx
+            let inline addCmdList (ct: CancellationToken voption) (executable: string) (args: string list) (ctx: StageContext) = addCmd ct (Cmd.ofList executable args) ctx
+            let inline addHttpHealthCheck (ct: CancellationToken voption) ([<InlineIfLambda>] configRequest: HttpRequestMessage -> unit) (url: string) (ctx: StageContext) =
+                let ct = defaultValueArg ct CancellationToken.None
+                StageContext.addStepFn (fun ctx _ -> StageContext.runHttpHealthCheckCancelableWithConfigRequest ctx ct configRequest url) ctx
+    module BuildStage =
+        module Steps =
+            let inline addCmd (ct: CancellationToken voption) (cmd: Cmd) ([<InlineIfLambda>] build: BuildStage) =
+                build >> StageContext.Steps.addCmd ct cmd
+            let inline addCmdString ct command ([<InlineIfLambda>] build: BuildStage) = build >> StageContext.Steps.addCmdString ct command
+            let inline addCmdFormattable ct command ([<InlineIfLambda>] build: BuildStage) = build >> StageContext.Steps.addCmdFormattable ct command
+            let inline addCmdList ct executable args ([<InlineIfLambda>] build: BuildStage) = build >> StageContext.Steps.addCmdList ct executable args
+            let inline addHttpHealthCheck ct configRequest url ([<InlineIfLambda>] build: BuildStage) = build >> StageContext.Steps.addHttpHealthCheck ct configRequest url

@@ -1,7 +1,7 @@
 ---
-title: External Annotations — Recipes
-category: Documentation
-index: 4
+title: Recipes
+category: ExternalAnnotations
+index: 3
 ---
 
 # External Annotations — Recipes

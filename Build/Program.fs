@@ -119,7 +119,6 @@ module ProjectManagement =
         }
     }
     let buildAll = stage "build" {
-        quiet
         parallel'
         for _, project in Project.allProjects do
         build (InputSpec.ret project)
@@ -128,12 +127,10 @@ module ProjectManagement =
     let pack (project: InputSpec<string>) = input {
         let! project = project
         return stage $"pack {project}" {
-            quiet
             run (cmd $"dotnet pack {project} --no-restore -o {Repo.VirtualFileSystem.bin.ToString()}")
         }
     }
     let packAll = stage "pack" {
-        quiet
         parallel'
         for _, project in Project.allProjects do
         InputSpec.ret project
@@ -157,7 +154,6 @@ module ProjectManagement =
         }
     }
     let publishAll = stage "publish" {
-        quiet
         Path.Combine(Repo.VirtualFileSystem.bin.ToString(), "*.nupkg")
         |> InputSpec.ret
         |> publish
@@ -187,7 +183,6 @@ module Tests =
         and! ci = Baked.Input.CI.isCI
         return stage "test" {
             when' (not skipTests)
-            quiet
             outputTo (if ci then StageOutput.Captured(OutputCapture()) else StageOutput.Console)
             for project in [
                 Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Path

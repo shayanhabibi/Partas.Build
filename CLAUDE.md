@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -49,6 +49,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 - Phases 0-7 of `PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (220 Expecto tests across three suites — 80 in `tests/Partas.Build.Tests`, one file per layer, plus `tests/Partas.Build.ExternalAnnotations.Tests` and `tests/Partas.ExternalAnnotations.Tests`). The `Build/` CLI is itself written against the library, so it is the first thing a breaking change breaks.
 - The DSL exists end to end: `inputs` (`Builders/Inputs.fs`), `stage` (`Builders/Stage.fs`), `pipeline` (`Builders/Pipeline.fs`), `command`/`rootCommand` (`Builders/Command.fs`). A stage that declares an input turns its pipeline into an `InputSpec<PipelineContext>`, and the command registers whatever those specs declare. Conditions are in `Builders/Conditions.fs` — `whenAll`/`whenAny`/`whenNot`/`whenEnv`/`whenStage` plus the `when'`/`whenEnvVar`/`whenBranch`/`when{Windows,Linux,OSX}` operations on `StageBuilder`. `Builders.fs` is still an empty stub.
+- A command carries `PipelineDefaults: BuildPipeline` and takes the pipeline-level operations itself (`workingDir`, `envVars`, the three timeouts, `acceptExitCodes`, the output operations, `noPrefixForStep`/`noStdRedirectForStep`, `runBeforeEachStage`/`runAfterEachStage`, `post`, `verbosity`/`verbose`/`quiet`), each one built through `CommandBuilderBase.MapPipelineDefault`. They are **defaults, not overrides**: `PipelineContext.applyDefaults` copies a setting across only where the pipeline left it at the value `PipelineContext.create` gave it, so a pipeline that sets the same thing wins. See *Command defaults* below.
 - `run`/`runSensitive` start real processes through `Process.fs`: a `Cmd` keeps the executable and its arguments apart all the way to `ProcessStartInfo.ArgumentList`, so the platform does the escaping. Interpolate through the `cmd` helper — `run (cmd $"dotnet build {project}")` — because `run $"..."` binds to the `string` overload and flattens the holes; `runSensitive $"..."` takes the `FormattableString` directly and masks every hole as `***`. There is no `Fake.Core.Process` dependency; `PLAN.md`'s *The command runner* records why.
 - Fun.Build's `Mode` (`Execution | CommandHelp | Verification`) has **not** been ported. `PipelineContext.Verify` is a placeholder and `buildPipelineVerification` is commented out. `CommandHelp` is redundant now that System.CommandLine generates help; whether `Verification` survives is an open question in `PLAN.md`.
 - `PipelineContext.run` is complete enough to execute stages, post stages, timeouts, parallelism and cancellation.
@@ -77,6 +78,24 @@ Anything that kills a process on cancellation must do it from a `CancellationTok
 Settings resolve by walking `ParentContext` upward (stage → parent stage → pipeline). `StageContext.mapParentContext` and its `mapStageParentContext`/`mapPipelineParentContext` specialisations are the standard way to do this; write new lookups with them rather than matching on `ParentContext` by hand.
 
 The CEs follow Fun.Build's shape: `inline` members with `[<InlineIfLambda>]` on delegate parameters, and matched `Yield`/`Delay`/`Combine`/`For` overload sets — adding a new kind of yieldable value means adding all four. Note that F# translates `let! x = e in rest` to `Bind(e, fun x -> «rest»)` with **no `Delay` wrapper**, so the continuation's type is whatever the body's `Yield` returned; with heterogeneous `Yield` overloads that is a common source of `FS0193`.
+
+### Command defaults
+
+`CommandSpec.PipelineDefaults` is a `BuildPipeline` the command accumulates from its pipeline-level custom
+operations, and `PipelineContext.applyDefaults` is what merges it into each pipeline the command runs. It applies
+the defaults to a *pristine* `PipelineContext.create`, never to the finished pipeline, then copies field by
+field: a `voption` setting transfers only when the pipeline left it `ValueNone`, `PostStages` only when the
+pipeline declared none, `AcceptableExitCodes` only while the pipeline is still on `set [0]`, the hooks and
+`Verify` only while they are still the `noStageHook`/`alwaysVerify` values `create` installed (which is why those
+are named module-level bindings rather than inline `ignore` — reference equality is the test), and `EnvVars` per
+key, since a pipeline's map starts as the whole ambient environment. `NoPrefixForStep`/`NoStdRedirectForStep` are
+plain bools with no unset state, so a pipeline setting one to the value it already had is indistinguishable from
+not setting it at all; that is the single known gap.
+
+The merge happens in `applyTo`, once the whole `CommandSpec` is built — not in `addPipeline` as each pipeline is
+yielded — so a default written below a pipeline reaches it just as one written above does. The same pass names an
+unnamed pipeline after the command. Changing where either runs breaks that ordering guarantee, which
+`tests/Partas.Build.Tests/CommandTests.fs`'s "command pipeline defaults" list asserts through real invocations.
 
 ### Verify CE changes against the compiler
 

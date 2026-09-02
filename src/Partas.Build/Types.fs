@@ -100,11 +100,11 @@ type [<Struct; RequireQualifiedAccess>]
     Step =
     /// <summary>A step, and the command line it prints as when there is one.</summary>
     /// <remarks>
-    /// The label is what <c>--explain</c> renders. It is populated for the <c>run</c> overloads whose
-    /// command is known at construction — a literal string, or a <c>Cmd</c> — and left empty for the ones
-    /// taking a function, whose command is a closure nothing can read. An empty label renders as the step's
-    /// index rather than as a guess.
-    /// <para>Labels come from <c>Cmd.toLogString</c>, which masks secrets, so a label is safe to print.</para>
+    /// <c>--explain</c> renders the label. It is populated for the <c>run</c> overloads whose command is
+    /// available at construction — a literal command line, a <c>Cmd</c>, or <c>runSensitive</c>'s interpolated
+    /// string — and empty for the overloads taking a function. <c>--explain</c> renders an empty label as the
+    /// step's index.
+    /// <para>Labels come from <c>Cmd.toLogString</c>: secrets are masked.</para>
     /// </remarks>
     | StepFn of label: string voption * fn: (StageContext -> StepIndex -> Async<Result<unit, string>>)
     | StepOfStage of stage: StageContext

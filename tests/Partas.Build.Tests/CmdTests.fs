@@ -165,4 +165,43 @@ let tests =
             Thread.Sleep 1500
             Expect.equal (sleepsAlive ()) before "the whole process tree should be gone, not just the process the runner started"
         }
+
+        test "argIf appends only when the condition holds" {
+            let baseline = Cmd.ofList "dotnet" [ "test"; "Foo.slnx"; "--no-build" ]
+
+            let withFilter = baseline |> Cmd.argIf true [ "--filter"; "Category=Fast" ]
+            let without = baseline |> Cmd.argIf false [ "--filter"; "Category=Fast" ]
+
+            Expect.equal withFilter.Arguments [ "test"; "Foo.slnx"; "--no-build"; "--filter"; "Category=Fast" ] "flag value two arguments, not one"
+            Expect.equal without.Arguments baseline.Arguments "false condition leaves command alone"
+        }
+
+        test "argWhenSome renders given" {
+            let baseline = Cmd.ofList "dotnet" [ "test"; "Foo.slnx" ]
+            let applied = baseline |> Cmd.argWhenSome (Some "Category=Fast") (fun filter -> [ "--filter"; filter ])
+            let skipped = baseline |> Cmd.argWhenSome None (fun filter -> [ "--filter"; filter ])
+
+            Expect.equal applied.Arguments [ "test"; "Foo.slnx"; "--filter"; "Category=Fast" ] "Some should append rendered"
+            Expect.equal skipped.Arguments baseline.Arguments "None should leave unchanged"
+        }
+
+        test "a secret argument masked in log string but intact in arguments" {
+            let pushed =
+                Cmd.ofList "dotnet" [ "nuget"; "push"; "pkg.nupkg" ]
+                |> Cmd.secretOption "-k" "super-secret-key"
+
+            Expect.equal pushed.Arguments [ "nuget"; "push"; "pkg.nupkg"; "-k"; "super-secret-key" ] "the process still receives real key"
+            Expect.stringContains (Cmd.toLogString pushed) "-k ***" "the log masks key but keeps flag"
+            Expect.isFalse ((Cmd.toLogString pushed).Contains "super-secret-key") "the key never reaches log"
+        }
+
+        test "secretOptionWhenSome omits flag entirely when there is no value" {
+            let baseline = Cmd.ofList "dotnet" [ "nuget"; "push"; "pkg.nupkg" ]
+            let applied = baseline |> Cmd.secretOptionWhenSome "-k" (Some "key")
+            let skipped = baseline |> Cmd.secretOptionWhenSome "-k" None
+
+            Expect.equal applied.Arguments [ "nuget"; "push"; "pkg.nupkg"; "-k"; "key" ] "Some appends flag value"
+            Expect.equal skipped.Arguments baseline.Arguments "None appends neither"
+            Expect.isEmpty skipped.Secrets "and marks nothing secret"
+        }
     ]

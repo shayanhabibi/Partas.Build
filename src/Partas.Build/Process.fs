@@ -120,6 +120,50 @@ module Cmd =
     /// An executable and arguments that are both taken exactly as given.
     let ofList (executable: string) (args: string list) = { Executable = executable; Arguments = args; Secrets = Set.empty }
 
+    /// <summary>Appends one argument, taken exactly as given.</summary>
+    let arg (value: string) (cmd: Cmd) = { cmd with Arguments = cmd.Arguments @ [ value ] }
+
+    /// <summary>Appends arguments, taken exactly as given.</summary>
+    let args (values: string list) (cmd: Cmd) = { cmd with Arguments = cmd.Arguments @ values }
+
+    /// <summary>Appends arguments only when the condition holds.</summary>
+    /// <remarks>
+    /// Adding a flag conditionally is the most common edit anyone makes to a command line, and today is
+    /// only expressible by duplicating the whole line — which is why anyone building a command abandons
+    /// <c>cmd</c> and unquoted strings, losing the exact quoting <c>cmd</c> exists to provide. Three
+    /// optional flags become eight branches. This fixes that.
+    /// </remarks>
+    let argIf (condition: bool) (values: string list) (cmd: Cmd) = if condition then args values cmd else cmd
+
+    /// <summary>Appends arguments rendered from the given value, only when it is <c>Some</c>.</summary>
+    /// <remarks>
+    /// Parallels <c>Option</c> patterns like <c>iter</c> and <c>map</c>, avoiding the need to lift
+    /// <c>Option.iter</c> around the whole command line.
+    /// </remarks>
+    let argWhenSome (value: 'a option) (render: 'a -> string list) (cmd: Cmd) =
+        match value with
+        | Some value -> args (render value) cmd
+        | None -> cmd
+
+    /// <summary>Appends one argument whose value must never be printed.</summary>
+    let secretArg (value: string) (cmd: Cmd) =
+        { cmd with
+            Arguments = cmd.Arguments @ [ value ]
+            Secrets = cmd.Secrets |> Set.add cmd.Arguments.Length }
+
+    /// <summary>Appends a flag and value, masking the value everywhere the command is printed.</summary>
+    /// <remarks>The flag stays visible: <c>-k ***</c> says more in a log than <c>***</c> does.</remarks>
+    let secretOption (flag: string) (value: string) (cmd: Cmd) = cmd |> arg flag |> secretArg value
+
+    /// <summary>Appends a masked flag and value only when a value exists, appending nothing otherwise.</summary>
+    /// <remarks>
+    /// The shape a publish step wants: no <c>.Value</c> under a <c>when'</c> that happens to guard it.
+    /// </remarks>
+    let secretOptionWhenSome (flag: string) (value: string option) (cmd: Cmd) =
+        match value with
+        | Some value -> secretOption flag value cmd
+        | None -> cmd
+
     /// <summary>Reads an interpolated string, taking each hole as part of exactly one argument.</summary>
     /// <param name="secret">Marks every hole as unprintable, which is what <c>runSensitive</c> wants.</param>
     let ofFormattable (secret: bool) (command: FormattableString) =

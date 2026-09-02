@@ -1,4 +1,4 @@
-﻿module Partas.Build.Tests.StageTests
+module Partas.Build.Tests.StageTests
 
 open Expecto
 open Partas.Build
@@ -195,6 +195,45 @@ let tests =
             let built = spec.Read (parse spec.Inputs "")
             Expect.equal built.Retry 2 "the InputSpec mirror should record the count"
             Expect.equal (stageNames built) [ "stage:inner"; "fn" ] "and leave the steps alone"
+        }
+
+        test "a retrying sub-stage discards only its own lines from an inherited capture" {
+            let capture = OutputCapture ()
+            let attempts = ref 0
+
+            let built =
+                stage "outer" {
+                    captureOutput capture
+                    echo "from the parent"
+
+                    stage "flaky" {
+                        retry 1
+                        run (fun (ctx: StageContext) ->
+                            incr attempts
+                            StageContext.writeLine ctx StdStream.Out "from the attempt"
+                            Error "again")
+                    }
+                }
+
+            runStage built |> ignore
+            Expect.equal attempts.Value 2 "one attempt plus one retry"
+            Expect.equal capture.Lines [ "from the parent"; "from the attempt" ] "a retry keeps what ran before the stage and one attempt's own"
+        }
+
+        test "a sub-stage runs once inside each attempt of a retrying parent" {
+            let outerAttempts = ref 0
+            let innerRuns = ref 0
+
+            let built =
+                stage "outer" {
+                    retry 1
+                    stage "inner" { run (fun (_: StageContext) -> incr innerRuns) }
+                    run (fun (_: StageContext) -> incr outerAttempts; Error "after the sub-stage")
+                }
+
+            runStage built |> ignore
+            Expect.equal outerAttempts.Value 2 "the parent attempts twice"
+            Expect.equal innerRuns.Value 2 "the sub-stage runs once per parent attempt, retrying only under its own count"
         }
 
         test "a stage without retry attempts its steps once" {

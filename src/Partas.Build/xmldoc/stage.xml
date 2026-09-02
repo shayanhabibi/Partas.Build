@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <stage>
   <timeout>
     <remarks>Accepts <c>int&lt;second></c>, <c>float</c> seconds, or a <c>TimeSpan</c>. All are converted internally to a <c>TimeSpan</c>. If the stage exceeds this timeout, it is cancelled.</remarks>
@@ -6,8 +6,10 @@
   <retry>
     <remarks>
     <para>A stage whose steps fail runs them again, up to <c>count</c> further attempts; <c>0</c>, the default,
-    gives a single attempt, and a negative count is read as <c>0</c>. Each attempt starts from an empty
-    <c>OutputCapture</c>: a failure lifts what the last attempt alone wrote.</para>
+    gives a single attempt, and a negative count is read as <c>0</c>.</para>
+    <para>Every attempt starts from the <c>OutputCapture</c> as the stage found it, whether the stage declared
+    that capture or inherited it: a failure lifts the last attempt's output, and the lines an ancestor's earlier
+    stages wrote into an inherited capture are retained.</para>
     <para>Only the stage's own steps are repeated. A sub-stage retries under its own <c>retry</c> setting, and
     otherwise runs once inside each attempt of its parent.</para>
     <para><c>timeout</c> is the budget for the whole stage, retries included, rather than for each attempt. A

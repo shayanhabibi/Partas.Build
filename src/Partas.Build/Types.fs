@@ -50,6 +50,15 @@ type OutputCapture() =
     member _.Clear() = lock lines lines.Clear
     member _.IsEmpty = lock lines (fun () -> lines.Count = 0)
 
+    member _.Count = lock lines (fun () -> lines.Count)
+
+    /// <summary>Discards every line after the first <paramref name="count"/>.</summary>
+    /// <remarks>A <paramref name="count"/> at or above <see cref="P:Count"/> leaves the capture as it is.</remarks>
+    member _.TrimTo(count: int) =
+        lock lines (fun () ->
+            let count = max 0 count
+            if lines.Count > count then lines.RemoveRange (count, lines.Count - count))
+
     /// Everything written, both streams, interleaved in the order it arrived.
     member _.Lines = lock lines (fun () -> [ for struct (_, line) in lines -> line ])
 
@@ -885,6 +894,19 @@ module Runners =
                             fail()
                             $"Pipeline failed because there were no active sub-stages; stage ({getNamePath stage}) required at least one"
                             |> PipelineFailedException.raise
+                    // Only a capture this stage declared itself: one it inherited belongs to an ancestor that is
+                    // still running, and clearing that would throw away what its earlier stages wrote.
+                    match stage.Output with
+                    | ValueSome(StageOutput.Captured capture) -> capture.Clear()
+                    | _ -> ()
+
+                    // The length of the capture this stage writes into, as the stage found it. Each attempt trims
+                    // back to this length, discarding the lines of earlier attempts and retaining those contributed
+                    // by an ancestor's earlier stages.
+                    let capturedBefore =
+                        tryGetCapture stage
+                        |> ValueOption.map (fun capture -> capture, capture.Count)
+
                     let parallelism = stage.IsParallel stage
                     let timeoutForStep: int = getTimeoutForStep stage
                     let timeoutForStage: int = getTimeoutForStage stage
@@ -921,12 +943,10 @@ module Runners =
                         succeed()
                         stepExns.Clear()
 
-                        // Only a capture this stage declared itself: one it inherited belongs to an ancestor that is
-                        // still running, and clearing that would throw away what its earlier stages wrote. An attempt
-                        // starts from an empty one, so a failure reports what the last attempt alone produced.
-                        match stage.Output with
-                        | ValueSome(StageOutput.Captured capture) -> capture.Clear()
-                        | _ -> ()
+                        // Every attempt starts from the capture as the stage found it.
+                        match capturedBefore with
+                        | ValueSome(capture, count) -> capture.TrimTo count
+                        | ValueNone -> ()
 
                         let mutable isStageSoftCancelled = false
 

@@ -59,6 +59,7 @@ Available inside `stage`, and inside `whenStage`, which accepts everything `stag
 | `envVars` | Environment variables for this stage's child processes. Applied to `ProcessStartInfo`, so the host process's own environment is untouched |
 | `timeout` | Cancels the stage after the given duration |
 | `timeoutForStep` | Cancels any one step of the stage after the given duration |
+| `retry` | Runs the stage's steps again after a failing attempt, up to the given count. `timeout` remains the budget for the whole stage, retries included |
 | `parallel'` | Runs the stage's steps concurrently. `true`/`0`/`-1` unbounded, `1`/`false` sequential, `n` throttled to exactly `n` in flight; also takes a `StageContext -> _` condition |
 | `acceptExitCodes` | The exit codes that count as success. Replaces the default `[0]` |
 | `failIfIgnored` | Fails the pipeline when this stage is inactive, instead of skipping it |

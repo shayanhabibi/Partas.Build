@@ -53,6 +53,22 @@ let private explain (command: Command) (spec: CommandSpec) (parseResult: ParseRe
 
     0
 
+/// <summary>Runs <paramref name="pipeline"/> and prints what each of its stages took.</summary>
+/// <remarks>
+/// A run that failed prints the table too, with the stage that failed in it. A quiet pipeline prints none, and
+/// so does a run of a single stage, whose wall time is the pipeline's own.
+/// </remarks>
+let private runReportingTimings (pipeline: PipelineContext) =
+    try
+        PipelineContext.run pipeline
+    finally
+        let verbosity = defaultValueArg pipeline.Verbosity Verbosity.Default
+
+        match pipeline.Timings.Ordered with
+        | [] | [ _ ] -> ()
+        | _ when verbosity.IsQuiet -> ()
+        | timings -> Summary.render timings |> Console.Out.WriteLine
+
 /// Reads each pipeline out of the parse result and runs it, in declaration order.
 /// The runner has already reported the failure by the time it raises, so this only maps it to an exit code.
 let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseResult) =
@@ -61,7 +77,7 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
 
     try
         for pipeline in spec.Pipelines do
-            pipeline.Read parseResult |> PipelineContext.run
+            pipeline.Read parseResult |> runReportingTimings
 
         0
     with

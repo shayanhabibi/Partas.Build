@@ -57,7 +57,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Architecture notes
 
-Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Inputs.fs` → `Types.fs` → `Process.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Builders/Command.fs` → `Baked.fs` → `Builders.fs`.
+Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Inputs.fs` → `Types.fs` → `Process.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `Builders/Command.fs` → `Baked.fs` → `Builders.fs`.
 
 `Explain.fs` renders the resolved stage tree `--explain` prints, as text and nothing else: it writes to no
 console and to no stage sink, so a stage that silences or captures its execution output is still described in
@@ -71,6 +71,15 @@ Rendering evaluates every stage's `IsActive`, so a `whenBranch` starts `git` and
 stage. `StageContext.Conditions` is what lets a skip name the condition that caused it: `addPredicateBecause`
 writes it alongside `IsActive`, the structured conditions in `Builders/Conditions.fs` supply a reason and `when'`
 supplies none, because a `bool` argument leaves nothing to report.
+
+`Summary.fs` renders the per-stage timing table printed at the end of a run, as text and nothing else, the
+way `Explain.fs` renders the tree. The timings themselves are collected in `Types.fs`: `PipelineContext.Timings`
+is a `StageTimings` the stages append a `StageTiming` to as each finishes, reached by walking `ParentContext` up
+to the pipeline, ordered by an ordinal taken at stage start because the underlying bag is unordered and
+`parallel'` stages finish out of order. A condition stage records nothing. The print site is
+`Builders/Command.fs`'s `runReportingTimings`, which prints in a `finally` so a failed run still reports, and
+prints nothing for a quiet pipeline or for a run of a single stage, whose wall time the pipeline's own line
+already carries.
 
 `Baked.fs` is the batteries-included layer over everything before it: ready-made `Input.*`/`Argument.*` definitions
 for the options every build CLI ends up wanting (`--configuration`, `--nuget-key`, `--project`, `--ci`, a version

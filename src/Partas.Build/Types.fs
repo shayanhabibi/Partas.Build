@@ -82,6 +82,52 @@ type StageOutput =
     /// Handed to a function, line by line, as it arrives.
     | Redirect of write: (StdStream -> string -> unit)
 
+/// <summary>How a stage ended.</summary>
+[<Struct; RequireQualifiedAccess>]
+type StageOutcome =
+    | Succeeded
+    /// Inactive: a condition on the stage was false.
+    | Skipped
+    /// <summary><c>error</c> is the message of the first exception a step raised, and empty where a step
+    /// reported its failure through its exit code alone.</summary>
+    | Failed of error: string
+
+/// <summary>The wall time of one stage of a run, with how the stage ended.</summary>
+/// <remarks><c>Elapsed</c> covers the stage's own steps and every stage nested under them.</remarks>
+type StageTiming = {
+    Name: string
+    /// The number of stages enclosing this one; 0 for a stage of the pipeline itself.
+    Depth: int
+    Elapsed: TimeSpan
+    Outcome: StageOutcome
+}
+
+/// <summary>The stages a pipeline run has finished.</summary>
+/// <remarks>
+/// Stages append concurrently under <c>parallel'</c>. <c>Start</c> supplies the ordinal <c>Ordered</c> sorts by.
+/// </remarks>
+type StageTimings() =
+    let entries = System.Collections.Concurrent.ConcurrentBag<struct (int64 * StageTiming)>()
+    let mutable started = 0L
+
+    /// The ordinal of the stage starting now.
+    member _.Start() = System.Threading.Interlocked.Increment &started
+
+    member _.Add(order: int64, timing: StageTiming) = entries.Add (struct (order, timing))
+
+    /// Discards every recorded stage. A second run of the same pipeline value reports itself alone.
+    member _.Clear() =
+        // netstandard2.0's ConcurrentBag has no Clear.
+        let mutable entry = Unchecked.defaultof<struct (int64 * StageTiming)>
+        while entries.TryTake &entry do ()
+
+    /// Every recorded stage, in the order the stages started.
+    member _.Ordered =
+        entries
+        |> Seq.sortBy (fun struct (order, _) -> order)
+        |> Seq.map (fun struct (_, timing) -> timing)
+        |> List.ofSeq
+
 [<Struct>]
 type InputSpec<'T> = { Inputs: ActionInput list; Read: CommandLine.ParseResult -> 'T }
 
@@ -176,6 +222,12 @@ and PipelineContext = {
     PostStages: StageContext list
     RunBeforeEachStage: StageContext -> unit
     RunAfterEachStage: StageContext -> unit
+    /// <summary>What each stage of the run took, filled in as the stages finish.</summary>
+    /// <remarks>
+    /// A nested stage records itself here too, reaching the pipeline through <c>ParentContext</c>. A condition
+    /// stage belongs to the condition that runs it, and the summary covers the stages of the run itself.
+    /// </remarks>
+    Timings: StageTimings
 }
 
 type BuildPipeline = PipelineContext -> PipelineContext
@@ -251,6 +303,9 @@ module StageContext =
     let rec getNamePath ctx =
         mapStageParentContext "" (getNamePath >> sprintf "%s/") ctx
         + ctx.Name
+
+    /// The number of stages enclosing <paramref name="ctx"/>; 0 for a stage of a pipeline.
+    let rec getDepth ctx = mapStageParentContext 0 (getDepth >> (+) 1) ctx
 
     let tryGetEnvVar (stage: StageContext) (name: string) =
         stage.EnvVars
@@ -402,6 +457,7 @@ module PipelineContext =
             PostStages = []
             RunBeforeEachStage = noStageHook
             RunAfterEachStage = noStageHook
+            Timings = StageTimings()
         }
 
     /// <summary>Fills in the settings a pipeline left alone with those a command supplies as defaults.</summary>
@@ -758,9 +814,18 @@ module Runners =
             let isActive = stage.IsActive stage
             let pipeline = getParentPipeline stage
 
+            // A condition stage belongs to the condition that runs it, not to the run.
+            let timings =
+                match index with
+                | StageIndex.Condition -> None
+                | _ -> pipeline |> Option.map (fun pipeline -> pipeline.Timings, pipeline.Timings.Start())
+
+            let stageSw = Stopwatch.StartNew()
+
             pipeline |> Option.iter _.RunBeforeEachStage(stage)
             try
                 if not isActive && stage.FailIfIgnored then
+                    fail()
                     PipelineFailedException.raise $"Stage ({getNamePath stage}) cannot be ignored (inactive)"
                 elif isActive then
                     if stage.FailIfNoActiveSubStage then
@@ -772,9 +837,9 @@ module Runners =
                                 | _ -> false
                                 )
                         if not hasActiveStep then
+                            fail()
                             $"Pipeline failed because there were no active sub-stages; stage ({getNamePath stage}) required at least one"
                             |> PipelineFailedException.raise
-                    let stageSw = Stopwatch.StartNew()
                     // Only a capture this stage declared itself: one it inherited belongs to an ancestor that is
                     // still running, and clearing that would throw away what its earlier stages wrote.
                     match stage.Output with
@@ -928,8 +993,8 @@ module Runners =
                                 |> AsyncSeq.iterAsync asyncHandler
                         Async.RunSynchronously(ts, cancellationToken = linkedCts.Token)
                     with
-                    | :? PipelineCancelledException as ex -> raise ex
-                    | :? PipelineFailedException as ex -> raise ex
+                    | :? PipelineCancelledException as ex -> fail(); raise ex
+                    | :? PipelineFailedException as ex -> fail(); raise ex
                     | _ when isStageSoftCancelled -> succeed()
                     | ex ->
                         fail()
@@ -989,7 +1054,23 @@ module Runners =
                         $"{buildCurrentStepPrefix stage |> Markup.escape}> sub-stage is " + Markup.yellow "inactive"
                         |> Markup.grey
                         |> vprintn stage
-            finally pipeline |> Option.iter _.RunAfterEachStage(stage)
+            finally
+                pipeline |> Option.iter _.RunAfterEachStage(stage)
+
+                timings
+                |> Option.iter (fun (timings, order) ->
+                    let outcome =
+                        if not isSuccess then
+                            stepExns
+                            |> Seq.tryHead
+                            |> Option.map _.Message
+                            |> Option.defaultValue ""
+                            |> StageOutcome.Failed
+                        elif not isActive then StageOutcome.Skipped
+                        else StageOutcome.Succeeded
+
+                    timings.Add (order, { Name = stage.Name; Depth = getDepth stage; Elapsed = stageSw.Elapsed; Outcome = outcome }))
+
             stage.ContinueStageOnFailure || isSuccess, stepExns
 
     module PipelineContext =
@@ -1016,6 +1097,7 @@ module Runners =
         let rec run (this: PipelineContext) =
             Console.InputEncoding <- Encoding.UTF8
             Console.OutputEncoding <- Encoding.UTF8
+            this.Timings.Clear()
 
             if not(String.IsNullOrEmpty this.Name) then
                 let title = FigletText this.Name

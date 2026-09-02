@@ -20,6 +20,7 @@
         <Compile Include="CommandTests.fs"/>
         <Compile Include="CompositionTests.fs"/>
         <Compile Include="ExplainTests.fs"/>
+        <Compile Include="SummaryTests.fs"/>
         <Compile Include="Main.fs"/>
     </ItemGroup>
 

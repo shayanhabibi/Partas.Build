@@ -156,8 +156,7 @@ pipelines run under one command, or when one needs a name of its own.
 
 `whenSome value build` and `whenOk value build` are functions rather than operations. Each returns a
 `StageContext list`: the stage built from the bound value, or `[]`. The absent case is an empty list, not an
-inactive stage requiring a name. `build` receives the value already unwrapped, so extracting it happens inside
-the condition guarding it.
+inactive stage requiring a name. `build` receives the value already unwrapped, inside the condition that guards it.
 
 ## `Input` combinators
 

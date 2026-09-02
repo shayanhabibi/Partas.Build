@@ -30,25 +30,25 @@
 
 | File | Responsibility | Wave |
 |---|---|---|
-| `src/Partas.Build/Types.fs` | Move `InputSpec<'T>` out of `Internal` (T1); add the `Step` label (T10) | 1, 2 |
+| `src/Partas.Build/Types.fs` | Move `InputSpec<'T>` out of `Internal` (T1); add the `Step` label (T9) | 1, 2 |
 | `src/Partas.Build/Process.fs` | `Cmd` argument combinators (T2) | 1 |
 | `src/Partas.Build/System.CommandLine/Inputs.fs` | `Input.choices` family (T3) | 1 |
 | `src/Partas.Build/Builders/Conditions.fs` | `whenSome` / `whenOk` (T4) | 1 |
-| `src/Partas.Build/Builders/Command.fs` | Root command `name` (T5), args default (T6), auto-registered `--explain` / `--version` (T11, T12) | 1, 2 |
-| `src/Partas.Build/Builders/Stage.fs` | Step labels at construction (T10), `retry` (T14) | 2 |
-| `src/Partas.Build/Explain.fs` **(new)** | Renders a resolved stage tree without running it (T11) | 2 |
-| `src/Partas.Build/Summary.fs` **(new)** | End-of-run timing table (T13) | 2 |
-| `README.md` | Leads with the option model; the "did you look for this?" table (T7) | 1 |
-| `docs/CAPABILITIES.md` **(new)** | Every custom operation and `Input` combinator, one line each (T8) | 1, 3 |
-| `docs/composition.fsx` | Cross-script composition — the real W1 answer (T9) | 1 |
-| `docs/llms.txt`, `docs/llms-full.txt` **(new)** | Machine-readable entry point (T9) | 1 |
+| `src/Partas.Build/Builders/Command.fs` | Root command `name` and args default (T5), auto-registered `--explain` / `--version` (T10, T11) | 1, 2 |
+| `src/Partas.Build/Builders/Stage.fs` | Step labels at construction (T9), `retry` (T13) | 2 |
+| `src/Partas.Build/Explain.fs` **(new)** | Renders a resolved stage tree without running it (T10) | 2 |
+| `src/Partas.Build/Summary.fs` **(new)** | End-of-run timing table (T12) | 2 |
+| `README.md` | Leads with the option model; the "did you look for this?" table (T6) | 1 |
+| `docs/CAPABILITIES.md` **(new)** | Every custom operation and `Input` combinator, one line each (T7) | 1, 3 |
+| `docs/composition.fsx` | Cross-script composition — the real W1 answer (T8) | 1 |
+| `docs/llms.txt`, `docs/llms-full.txt` **(new)** | Machine-readable entry point (T8) | 1 |
 | `tests/Partas.Build.Tests/CmdTests.fs` | T2 coverage | 1 |
 | `tests/Partas.Build.Tests/InputsTests.fs` | T1, T3 coverage | 1 |
 | `tests/Partas.Build.Tests/ConditionsTests.fs` | T4 coverage | 1 |
-| `tests/Partas.Build.Tests/CommandTests.fs` | T5, T6, T12 coverage | 1, 2 |
-| `tests/Partas.Build.Tests/ExplainTests.fs` **(new)** | T11, T13 coverage | 2 |
-| `tests/Partas.Build.Tests/StageTests.fs` | T14 coverage | 2 |
-| `tests/Partas.Build.Tests/ParallelismTests.fs` | T15 coverage | 2 |
+| `tests/Partas.Build.Tests/CommandTests.fs` | T5, T11 coverage | 1, 2 |
+| `tests/Partas.Build.Tests/ExplainTests.fs` **(new)** | T10, T12 coverage | 2 |
+| `tests/Partas.Build.Tests/StageTests.fs` | T13 coverage | 2 |
+| `tests/Partas.Build.Tests/ParallelismTests.fs` | T14 coverage | 2 |
 
 New `.fs` files must be added to `Partas.Build.fsproj` in compile order, and new test files to `tests/Partas.Build.Tests/Partas.Build.Tests.fsproj` before `Main.fs`.
 
@@ -56,7 +56,7 @@ New `.fs` files must be added to `Partas.Build.fsproj` in compile order, and new
 
 # Wave 1a — Inputs and command-line ergonomics
 
-Tasks 1-6. Touches `Types.fs` (one type move), `Process.fs`, `Inputs.fs`, `Conditions.fs`, `Command.fs`. Disjoint from the execution engine, so it runs in parallel with Wave 1b.
+Tasks 1-5. Touches `Types.fs` (one type move), `Process.fs`, `Inputs.fs`, `Conditions.fs`, `Command.fs`. Disjoint from the execution engine, so it runs in parallel with Wave 1b.
 
 ### Task 1: `InputSpec<'T>` leaves `Internal`
 

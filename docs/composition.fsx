@@ -35,7 +35,8 @@ open Partas.Build.Internal
 [The guide](index.html) introduces one stage at a time. This page is the other half: building a library of
 reusable *blocks* — stages that carry their own CLI inputs — and assembling them into pipelines and commands.
 
-Every snippet here is compiled when the docs are built.
+Every snippet here is compiled when the docs are built, except the two file listings under
+*Composition across files*, which are two separate scripts.
 
 ## The shape of a block
 
@@ -426,6 +427,95 @@ let mainCommand argv =
 (**
 Each command lists only the flags its own stages read: `build` gets `--configuration` and `--verbose`, `test`
 adds `--skip-tests` and `--quick`, `release` gets what its blocks declare.
+
+## Composition across files
+
+A `Command` is an ordinary value, and `Yield` takes one. So a script that owns a slice of the build exposes
+its commands as a binding, and any other script `#load`s the file and yields the binding.
+
+Two rules make it work:
+
+1. **The command tree is a value.** Bind it with `let`; do not `exit` it at the point of definition.
+2. **The `rootCommand` invocation is gated.** `#load` executes the loaded script top to bottom, so an
+   ungated `exit (rootCommand … )` takes over the loading script's process. `Args.scriptName ()` answers the
+   filename the process was launched with, which is the loaded script's own name only when it is the one
+   being run.
+
+```fsharp
+// tools/generate-wire.fsx
+#load "../prelude.fsx"
+open Partas.Build
+
+module Options =
+    let target =
+        Input.choices<string> "--target" [ "node", "node"; "browser", "browser" ]
+        |> Input.def "node"
+        |> Input.desc "Runtime the wire layer is generated for"
+
+module Stages =
+    let generate layer = input {
+        let! target = Options.target
+        return stage $"generate {layer}" { echo $"{layer} -> {target}" }
+    }
+
+let generateCommands =
+    command "generate" {
+        description "Regenerate a wire layer"
+        command "ast" { Stages.generate "ast" }
+        command "proto" { Stages.generate "proto" }
+    }
+
+if Args.scriptName () = ValueSome "generate-wire.fsx" then
+    exit (rootCommandOfScript { generateCommands })
+```
+
+```fsharp
+// build.fsx
+#load "tools/generate-wire.fsx"
+open Partas.Build
+
+exit (
+    rootCommandOfScript {
+        description "The repository build"
+
+        ``Generate-wire``.generateCommands
+
+        command "test" { stage "test" { echo "testing" } }
+    })
+```
+
+`dotnet fsi build.fsx -- generate ast --help` lists `--target` with its two legal values, and
+`dotnet fsi tools/generate-wire.fsx -- generate ast --help` prints the same thing, from the same declaration.
+
+### The module name `#load` gives a file
+
+F# derives it from the filename: the first letter is capitalised, everything else is kept, and any character
+illegal in an identifier forces double backticks. `tools/generate-wire.fsx` therefore becomes
+`` `Generate-wire` ``, not `GenerateWire` and not `Generate_wire`. Check it once per file — an `open` of the
+wrong guess is a compile error, so nothing silently misbehaves, but the error names the module you wrote
+rather than the one that exists.
+
+### Names must be unique among siblings
+
+`System.CommandLine` builds a lookup keyed by command name, so yielding the loaded `generate` command into
+another command also called `generate` throws
+`ArgumentException: An item with the same key has already been added. Key: generate`. Yield it at a level
+where its name is free, or wrap it in a differently-named parent:
+
+```fsharp
+command "wire" {
+    description "Everything wire-related"
+    ``Generate-wire``.generateCommands
+}
+```
+
+### What this replaces
+
+Without it, a build split across four scripts is one script with a `--only <string>` flag whose legal values
+live in its description string, the four layer names spelled once in the flag and once in the `match` that
+dispatches on it with nothing checking that the two agree, and four `fsi` startups with four NuGet resolutions
+for a run that touches all four. Here the four names are the four `command` bindings, `--help` lists them
+because they exist, and one process resolves packages once.
 
 ## Reference
 

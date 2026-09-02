@@ -61,6 +61,16 @@ jobs:
         run: dotnet build -c Release Partas.Build.slnx
       - name: Generate documentation
         run: dotnet fsdocs build --properties Configuration=Release
+      # fsdocs writes its own llms.txt and llms-full.txt over anything copied from docs/, so the curated
+      # header replaces the generated `# Partas.Build` line and the inventory stays beneath it. The `docs`
+      # command of Build.fsproj does the same thing for a local build.
+      - name: Merge the curated llms.txt header
+        run: |
+          for f in output/llms.txt output/llms-full.txt; do
+            tail -n +2 "$f" > "$f.body"
+            cat docs/llms.txt "$f.body" > "$f"
+            rm "$f.body"
+          done
       - name: Upload documentation
         uses: actions/upload-pages-artifact@v4
         with:

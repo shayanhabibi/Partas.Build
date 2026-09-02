@@ -2,7 +2,7 @@
 /// The build CLI, written against Partas.Build itself.
 ///
 /// A step is a stage of a pipeline, and a stage that needs a flag binds it in an
-/// <c>inputs { }</c> block — which is what puts the flag in <c>--help</c>. Nothing here
+/// <c>input { }</c> block — which is what puts the flag in <c>--help</c>. Nothing here
 /// registers an option: a command harvests them from the pipelines it runs.
 ///
 ///     dotnet run --project Build.fsproj -- --help
@@ -204,6 +204,27 @@ module Documentation =
         }
     }
 
+    /// <summary>Puts the curated <c>docs/llms.txt</c> header on top of the two files fsdocs generates.</summary>
+    /// <remarks>
+    /// fsdocs 22 writes its own <c>llms.txt</c> and <c>llms-full.txt</c> at the site root after copying
+    /// <c>docs/</c>, so a hand-written one is overwritten by an alphabetical link inventory with no summary.
+    /// The header replaces the generated <c>#</c> heading and the inventory stays beneath it.
+    /// </remarks>
+    let llms = input {
+        let! watch = Options.watch
+        return stage "llms" {
+            when' (not watch)
+            run (fun ctx ->
+                let header = File.ReadAllText(Path.Combine(root, "docs", "llms.txt")).TrimEnd()
+                for name in [ "llms.txt"; "llms-full.txt" ] do
+                    let path = Path.Combine(root, "output", name)
+                    if File.Exists path then
+                        let body = File.ReadAllLines path |> Array.skipWhile (fun line -> line.Trim() = "" || line.StartsWith "# ")
+                        File.WriteAllLines(path, Array.append [| header; "" |] body)
+                        StageContext.writeLine ctx StdStream.Out $"merged docs/llms.txt into output/{name}")
+        }
+    }
+
 module Commands =
     let build =
         command "build" {
@@ -261,6 +282,7 @@ module Commands =
                 workingDir root
                 Prelude.restore
                 Documentation.generate
+                Documentation.llms
             }
         }
 

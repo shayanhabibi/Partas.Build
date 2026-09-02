@@ -1,0 +1,23 @@
+# Partas.Build
+
+> An F# build-pipeline DSL whose stages declare the CLI options they read. Commands derive their
+> System.CommandLine option set from the pipelines they activate, so options, validation and help text
+> are generated from the pipeline definition rather than registered by hand. Runs from a `.fsx` script
+> with no build project.
+
+## Start here
+
+- [Capabilities](https://shayanhabibi.github.io/Partas.Build/CAPABILITIES.html): every operation and Input combinator, one line each
+- [Index](https://shayanhabibi.github.io/Partas.Build/index.html): the layers, and a first pipeline
+- [Composition](https://shayanhabibi.github.io/Partas.Build/composition.html): nesting stages, and reusing commands across files
+
+## Ask the script rather than reading it
+
+Every command generates its own `--help` from the stages it runs, and the flags listed there are exactly the
+flags those stages bind. `<script> <command> --help` is the authority on what a command accepts.
+
+## Optional
+
+- [Build overview](https://shayanhabibi.github.io/Partas.Build/build-overview.html)
+- [CE operations](https://shayanhabibi.github.io/Partas.Build/computation-expression-operations.html)
+- [API reference](https://shayanhabibi.github.io/Partas.Build/reference/index.html)

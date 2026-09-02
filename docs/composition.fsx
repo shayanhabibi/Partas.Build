@@ -2,7 +2,7 @@
 ---
 title: Composing reusable blocks
 category: Build
-index: 2
+index: 3
 ---
 *)
 (*** hide ***)

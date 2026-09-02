@@ -370,7 +370,7 @@ module Pipelines =
     /// Every source is therefore bound in one <c>let!</c>/<c>and!</c> group here, and the callers below vary
     /// only which spec they hand in.
     /// </remarks>
-    let private bumpImpl (bumpSource: Internal.InputSpec<Versioning.Bump>) (allProjects: string list) (projects: Internal.InputSpec<string list>) = input {
+    let private bumpImpl (bumpSource: InputSpec<Versioning.Bump>) (allProjects: string list) (projects: InputSpec<string list>) = input {
         let! ci = Input.CI.isCI
         and! bump = bumpSource
         and! projects = projects
@@ -406,7 +406,7 @@ module Pipelines =
     /// <param name="projects">
     /// The input spec for the project path(s) to bump.
     /// </param>
-    let bumpArgument (allProjects: string list) (projects: Internal.InputSpec<string list>): Internal.InputSpec<Internal.StageContext> =
+    let bumpArgument (allProjects: string list) (projects: InputSpec<string list>): InputSpec<Internal.StageContext> =
         bumpImpl (InputSpec.ofInput Argument.Versioning.bump) allProjects projects
 
     /// <summary>
@@ -420,7 +420,7 @@ module Pipelines =
     /// <param name="projects">
     /// The input spec for the project path(s) to bump.
     /// </param>
-    let bumpOption (allProjects: string list) (projects: Internal.InputSpec<string list>): Internal.InputSpec<Internal.StageContext> =
+    let bumpOption (allProjects: string list) (projects: InputSpec<string list>): InputSpec<Internal.StageContext> =
         input {
             let! bump = Input.Versioning.bump
             and! bumpImpl =

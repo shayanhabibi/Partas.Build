@@ -116,4 +116,17 @@ let tests =
             Expect.isEmpty spec.Inputs "ret declares nothing"
             Expect.equal (spec.Read (parse [] "")) "constant" "ret ignores the ParseResult"
         }
+
+        test "InputSpec is nameable without the Internal namespace" {
+            // The type annotation is the assertion: this file must not need `open Partas.Build.Internal`
+            // to write a stage factory parameterised by an option. See FEEDBACK-Xantham.md §2.1.
+            let factory (projects: Partas.Build.InputSpec<string list>) =
+                input {
+                    let! ps = projects
+                    return stage "build" { run (fun _ -> ignore ps) }
+                }
+
+            let spec = factory (InputSpec.ret [ "a"; "b" ])
+            Expect.equal spec.Inputs [] "a pure spec declares no inputs"
+        }
     ]

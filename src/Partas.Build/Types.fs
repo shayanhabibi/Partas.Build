@@ -82,6 +82,9 @@ type StageOutput =
     /// Handed to a function, line by line, as it arrives.
     | Redirect of write: (StdStream -> string -> unit)
 
+[<Struct>]
+type InputSpec<'T> = { Inputs: ActionInput list; Read: CommandLine.ParseResult -> 'T }
+
 namespace Partas.Build.Internal
 
 open System
@@ -89,9 +92,6 @@ open Partas.Build
 
 type StepSoftCancelledException(msg: string) = inherit Exception(msg)
 type StageSoftCancelledException(msg: string) = inherit Exception(msg)
-
-[<Struct>]
-type InputSpec<'T> = { Inputs: ActionInput list; Read: CommandLine.ParseResult -> 'T }
 
 [<Measure>] type stepIndex
 type StepIndex = int<stepIndex>

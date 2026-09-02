@@ -163,4 +163,45 @@ let tests =
 
             Expect.sequenceEqual ran [ "active" ] "only the active stage should run"
         }
+
+        test "whenSome yields a stage that closes over the value" {
+            let observed = ResizeArray<string>()
+
+            let built =
+                pipeline "publish" {
+                    whenSome (Some "the-key") (fun key ->
+                        stage "push" { run (fun (_: StageContext) -> observed.Add key) })
+                }
+
+            built |> PipelineContext.run
+            Expect.equal (List.ofSeq observed) [ "the-key" ] "the stage ran with the bound value"
+        }
+
+        test "whenSome yields nothing at all when there is no value" {
+            let observed = ResizeArray<string>()
+
+            let built =
+                pipeline "publish" {
+                    whenSome None (fun key -> stage "push" { run (fun (_: StageContext) -> observed.Add key) })
+                    stage "always" { run (fun (_: StageContext) -> observed.Add "always") }
+                }
+
+            built |> PipelineContext.run
+            Expect.equal (List.ofSeq observed) [ "always" ] "the guarded stage did not run"
+            Expect.equal (built.Stages |> List.map (fun s -> s.Name)) [ "always" ]
+                "and left no phantom stage behind for the log to name"
+        }
+
+        test "whenOk yields the stage only for Ok" {
+            let observed = ResizeArray<string>()
+
+            let built =
+                pipeline "publish" {
+                    whenOk (Ok "yes") (fun v -> stage "ok" { run (fun (_: StageContext) -> observed.Add v) })
+                    whenOk (Error "no") (fun v -> stage "err" { run (fun (_: StageContext) -> observed.Add v) })
+                }
+
+            built |> PipelineContext.run
+            Expect.equal (List.ofSeq observed) [ "yes" ] "only the Ok branch contributed a stage"
+        }
     ]

@@ -436,3 +436,27 @@ let whenNot = WhenNotBuilder()
 let whenEnv = WhenEnvBuilder()
 /// The stage is active when the stage described in the body finishes successfully.
 let inline whenStage name = WhenStageBuilder name
+
+/// <summary>Stage-producing conditions that bind the value they tested.</summary>
+[<AutoOpen>]
+module ValueConditions =
+    /// <summary>Yields the stage <paramref name="build"/> makes of the value, and nothing when there is none.</summary>
+    /// <remarks>
+    /// The alternative is <c>when' value.IsSome</c> above a <c>run</c> that reaches for <c>value.Value</c>,
+    /// which is correct only because of evaluation order — nothing the compiler checks, and a refactor that
+    /// moves the condition below the step compiles cleanly and throws at run time.
+    /// <para>
+    /// It returns a list so that the absent case contributes no stage at all, rather than an inactive one
+    /// that would need a name it was never given.
+    /// </para>
+    /// </remarks>
+    let whenSome (value: 'a option) (build: 'a -> StageContext): StageContext list =
+        match value with
+        | Some value -> [ build value ]
+        | None -> []
+
+    /// <summary>Yields the stage <paramref name="build"/> makes of an <c>Ok</c> value, and nothing for <c>Error</c>.</summary>
+    let whenOk (value: Result<'a, 'b>) (build: 'a -> StageContext): StageContext list =
+        match value with
+        | Ok value -> [ build value ]
+        | Error _ -> []

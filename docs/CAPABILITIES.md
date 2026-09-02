@@ -78,8 +78,8 @@ a value that a `stage`, a `pipeline` or a `command` can yield.
 
 ## Pipeline operations
 
-Available inside `pipeline "name" { }`. A pipeline built with an empty name takes the name and description of
-the command that runs it.
+Available inside `pipeline "name" { }` and inside `Command.pipeline { }`, which takes the name and description
+of the command that runs it.
 
 | Operation | What it does |
 |---|---|
@@ -130,8 +130,9 @@ three marked as root-only.
 | `invocationConfiguration` | **Root only.** A `System.CommandLine` `InvocationConfiguration` |
 
 A command yields stages directly — `command "test" { Stages.restore; Stages.test }` — and consecutive stages
-become one implicit pipeline carrying the command's name and description. An explicit `pipeline` is for when
-several pipelines run under one command, or when one needs a name of its own.
+become one implicit pipeline carrying the command's name and description. `Command.pipeline { }` is the same
+pipeline written out, for when it needs the pipeline-level settings; `pipeline "name" { }` is for when several
+pipelines run under one command, or when one needs a name of its own.
 
 ## Condition builders
 

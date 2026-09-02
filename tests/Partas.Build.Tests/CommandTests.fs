@@ -139,6 +139,28 @@ let tests =
 
             Expect.equal (built.Parse("").Invoke()) 1 "a failed pipeline should exit one"
         }
+
+        test "the root command takes the name it was given" {
+            let rootCommandBuilder = RootCommandBuilder [||]
+            let build = rootCommandBuilder.name (id, "build.fsx")
+            let spec = CommandSpec.create "" |> build
+            Expect.equal spec.Name (ValueSome "build.fsx") "the name custom operation reaches the spec"
+        }
+
+        test "Args.script takes everything after the first separator" {
+            let taken = Args.take [| "fsi.dll"; "build.fsx"; "--"; "test"; "--quick" |]
+            Expect.equal taken [| "test"; "--quick" |] "the script's own arguments and nothing else"
+        }
+
+        test "Args.script is empty when there is no separator" {
+            let taken = Args.take [| "fsi.dll"; "build.fsx" |]
+            Expect.isEmpty taken "no separator means no arguments were passed to the script"
+        }
+
+        test "Args.scriptName finds the script file among the host's arguments" {
+            let named = Args.nameOf [| "fsi.dll"; "tools/generate-wire.fsx"; "--"; "generate" |]
+            Expect.equal named (ValueSome "generate-wire.fsx") "the filename, without its directory"
+        }
     ]
 
 /// The pipeline-level operations a command carries are defaults for every pipeline it runs, and a default

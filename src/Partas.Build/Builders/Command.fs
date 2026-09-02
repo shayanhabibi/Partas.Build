@@ -12,7 +12,10 @@ let private injectCommandInfo (cmd: CommandSpec) (spec: InputSpec<PipelineContex
     { spec with
         Read =
             spec.Read
-            >> (function { Name = null | "" } as pipeline -> { pipeline with Name = cmd.Name; Description = cmd.Description } | pipeline -> pipeline)
+            >> (function
+                | { Name = null | "" } as pipeline ->
+                    { pipeline with Name = cmd.Name |> ValueOption.defaultValue ""; Description = cmd.Description }
+                | pipeline -> pipeline)
             >> PipelineContext.applyDefaults cmd.PipelineDefaults }
 
 /// Appends a pipeline to the command being built.
@@ -375,7 +378,7 @@ type CommandBuilder(name: string) =
     // application of a plain function type defeats the optimiser (`FS1118`) in Release builds only.
     member _.Run(build: BuildCommand): Command =
         let spec = CommandSpec.create name |> build
-        applyTo (Command spec.Name) spec
+        applyTo (Command(spec.Name |> ValueOption.defaultValue name)) spec
 
     member this.Run(stages: CommandStages): Command = this.Run(addPipeline (pipelineOfCommandStages stages))
 
@@ -396,6 +399,21 @@ type RootCommandBuilder(args: string array) =
         invocationConfiguration
         ([<InlineIfLambda>] build: BuildCommand, config: InvocationConfiguration): BuildCommand
         = build >> fun cmd -> { cmd with InvocationConfiguration = ValueSome config }
+
+    /// <summary>Sets the name the root command calls itself in help and usage text.</summary>
+    /// <remarks>
+    /// Available only on <c>rootCommand</c>. Without it the name is the host executable's, so a script run
+    /// as <c>dotnet fsi build.fsx</c> ships help telling a new contributor to run <c>fsi build</c>.
+    /// Defaults to the script's filename when the process was launched with one.
+    ///
+    /// System.CommandLine 2.0.11's <c>Command.Name</c> has no setter (it is declared get-only on the base
+    /// <c>Symbol</c> type), so this cannot yet rewrite the usage line System.CommandLine itself prints. The
+    /// name still reaches <see cref="T:Partas.Build.Internal.CommandSpec"/> for a caller to read.
+    /// </remarks>
+    [<CustomOperation>] member inline _.
+        name
+        ([<InlineIfLambda>] build: BuildCommand, name: string): BuildCommand
+        = build >> fun cmd -> { cmd with Name = ValueSome name }
 
     member this.Run(stages: CommandStages): int = this.Run(addPipeline (pipelineOfCommandStages stages))
 
@@ -418,5 +436,37 @@ module Command =
     /// </summary>
     let pipeline = PipelineBuilder(null)
 
+/// <summary>The arguments a script was given, as distinct from the ones its host was given.</summary>
+[<AutoOpen>]
+module Args =
+    /// <summary>Everything after the first <c>--</c>.</summary>
+    /// <remarks>
+    /// <c>dotnet fsi build.fsx -- test --quick</c> reaches the process as the whole command line; the
+    /// script's own arguments are what follows the separator. This is what <c>fsi.CommandLineArgs[1..]</c>
+    /// was standing in for, and it does not require the script to reach for <c>fsi</c> at all.
+    /// </remarks>
+    let take (argv: string array) =
+        match argv |> Array.tryFindIndex (fun arg -> arg = "--") with
+        | Some index -> argv[index + 1 ..]
+        | None -> [||]
+
+    /// <summary>The filename of the first <c>.fsx</c> among <paramref name="argv"/>.</summary>
+    let nameOf (argv: string array) =
+        argv
+        |> Array.tryFind (fun arg -> arg.EndsWith(".fsx", StringComparison.OrdinalIgnoreCase))
+        |> function
+            | Some path -> ValueSome (IO.Path.GetFileName path)
+            | None -> ValueNone
+
+    /// <summary>The running script's own arguments.</summary>
+    let script () = take (Environment.GetCommandLineArgs())
+
+    /// <summary>The running script's filename, when it was launched as one.</summary>
+    let scriptName () = nameOf (Environment.GetCommandLineArgs())
+
 let inline command name = CommandBuilder name
 let inline rootCommand args = RootCommandBuilder args
+
+/// <summary>The root command over the running script's own arguments.</summary>
+/// <remarks><c>rootCommandOfScript { … }</c> is <c>rootCommand (Args.script ()) { … }</c>.</remarks>
+let rootCommandOfScript = RootCommandBuilder(Args.script ())

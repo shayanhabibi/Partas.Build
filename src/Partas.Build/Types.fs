@@ -173,7 +173,13 @@ open System.CommandLine
 /// declared on the command directly — inputs no pipeline asks for, such as a root's global flags.
 /// </remarks>
 type CommandSpec = {
-    Name: string
+    /// <summary>The command's token, and — on a root command only — the name it calls itself in help text.</summary>
+    /// <remarks>
+    /// A subcommand's token comes from <c>CommandSpec.create</c>'s positional argument and is never
+    /// <c>ValueNone</c>. On a root command it starts <c>ValueNone</c> and is set by the <c>name</c> custom
+    /// operation, which is available there alone.
+    /// </remarks>
+    Name: string voption
     Description: string voption
     PipelineDefaults: BuildPipeline
     Aliases: string list
@@ -515,8 +521,8 @@ module InputSpec =
     let traverse (fn: 'T -> InputSpec<'U>) (items: 'T seq) = items |> Seq.map fn |> sequence
 
 module CommandSpec =
-    let create name = {
-        Name = name
+    let create (name: string) = {
+        Name = if System.String.IsNullOrEmpty name then ValueNone else ValueSome name
         Description = ValueNone
         PipelineDefaults = id
         Aliases = []

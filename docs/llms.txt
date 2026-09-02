@@ -21,3 +21,4 @@ flags those stages bind. `<script> <command> --help` is the authority on what a 
 - [Build overview](https://shayanhabibi.github.io/Partas.Build/build-overview.html)
 - [CE operations](https://shayanhabibi.github.io/Partas.Build/computation-expression-operations.html)
 - [API reference](https://shayanhabibi.github.io/Partas.Build/reference/index.html)
+- [Full bundle](https://shayanhabibi.github.io/Partas.Build/llms-full.txt): every page above, inlined as plain text

@@ -491,9 +491,8 @@ exit (
 
 F# derives it from the filename: the first letter is capitalised, everything else is kept, and any character
 illegal in an identifier forces double backticks. `tools/generate-wire.fsx` therefore becomes
-`` `Generate-wire` ``, not `GenerateWire` and not `Generate_wire`. Check it once per file — an `open` of the
-wrong guess is a compile error, so nothing silently misbehaves, but the error names the module you wrote
-rather than the one that exists.
+`` `Generate-wire` ``, not `GenerateWire` and not `Generate_wire`. Check it once per file: an `open` of the
+wrong guess fails to compile, naming the module you wrote rather than the one that exists.
 
 ### Names must be unique among siblings
 

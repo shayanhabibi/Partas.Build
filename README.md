@@ -16,8 +16,8 @@ the pipeline definition instead of registered by hand. It runs from a `.fsx` scr
 
 A flag that a stage reads but the CLI does not accept is not expressible. Neither is a flag registered on a
 command whose stages ignore it. Both are routine failures in hand-wired `System.CommandLine` setups; here the
-option set of a command *is* the union of what its stages bind, so the two cannot disagree, and two stages
-binding the same option register it once.
+option set of a command *is* the union of what its stages bind — the two agree by construction — and two
+stages binding the same option register it once.
 
 ```fsharp
 module Options =
@@ -112,7 +112,8 @@ Options:
 | A block of stages parameterised by an option someone else declares | Take an `InputSpec<'T>` parameter and `let!` it |
 | The root command to call itself something other than the script's filename | `name` on `rootCommand` |
 
-The right-hand column in full is [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md).
+The right-hand column in full is [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md)
+([rendered](https://shayanhabibi.github.io/Partas.Build/CAPABILITIES.html)).
 
 ## Composition
 

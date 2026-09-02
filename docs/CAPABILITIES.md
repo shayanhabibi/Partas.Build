@@ -23,6 +23,9 @@ second condition on the same stage narrows it to the logical AND of both. Use `w
 
 A command's copies of the pipeline settings are **defaults**, not overrides: they reach every pipeline the
 command runs, but only where that pipeline left the setting alone, whichever order the two were written in.
+`noPrefixForStep` and `noStdRedirectForStep` are plain bools with no unset state: a pipeline setting either one
+to the same value `PipelineContext.create` already gives it reads back identically to a pipeline that never
+touched it, so the command default overwrites it in that case too.
 
 ## Timeouts
 
@@ -68,12 +71,12 @@ Available inside `stage`, and inside `whenStage`, which accepts everything `stag
 | `captureOutput` | Holds this stage's step output back and lifts it into the error message when a step fails. Takes an optional `OutputCapture` to keep the lines either way |
 | `redirectOutput` | Hands each line to `StdStream -> string -> unit` as it arrives, from both streams' reader threads |
 | `noPrefixForStep` | Stops each step's output being prefixed with its stage and step index |
-| `noStdRedirectForStep` | Stops redirecting the child's stdout/stderr. Overrides every output operation above, since redirection is what makes routing possible |
+| `noStdRedirectForStep` | Stops redirecting the child's stdout/stderr — the mechanism every output operation above depends on — and overrides all of them |
 | `shuffleExecuteSequence` | Randomises step order at each run |
 | `verbosity` | How much of the pipeline's own log this stage prints. Takes `Verbosity.Quiet`, `Normal` or `Verbose` |
 | `verbose` / `quiet` | `verbosity Verbose` and `verbosity Quiet` |
 
-A stage nested inside another stage is one step of its parent, so stages nest to any depth and a block is just
+A stage nested inside another stage is one step of its parent. Stages nest to any depth, and a block is just
 a value that a `stage`, a `pipeline` or a `command` can yield.
 
 ## Pipeline operations
@@ -83,7 +86,7 @@ of the command that runs it.
 
 | Operation | What it does |
 |---|---|
-| `description` | The pipeline's description |
+| `description` | The pipeline's description. Discarded in `Command.pipeline { }`, which always takes the command's own name and description instead |
 | `timeout` | Cancels the whole pipeline after the given duration |
 | `timeoutForStage` | The default `timeout` of each stage |
 | `timeoutForStep` | The default `timeoutForStep` of each stage |
@@ -152,9 +155,9 @@ pipelines run under one command, or when one needs a name of its own.
 `stage` accepts is accepted there, and the stage runs for real, side effects included.
 
 `whenSome value build` and `whenOk value build` are functions rather than operations. Each returns a
-`StageContext list`: the stage built from the bound value, or `[]`. The absent case contributes no stage, so
-nothing needs a name it was never given, and `.Value` never appears under a condition that happens to guard
-it.
+`StageContext list`: the stage built from the bound value, or `[]`. The absent case is an empty list, not an
+inactive stage requiring a name. `build` receives the value already unwrapped, so extracting it happens inside
+the condition guarding it.
 
 ## `Input` combinators
 
@@ -199,7 +202,7 @@ Shaping combinators, all `ActionInput<'T> -> ActionInput<'T>` and all pipeable:
 
 ## `InputSpec<'T>`
 
-`InputSpec<'T>` is public at `Partas.Build`, so a stage factory parameterised by an option needs no
+`InputSpec<'T>` is public at `Partas.Build`. A stage factory parameterised by an option needs no
 `open Partas.Build.Internal`:
 
 ```fsharp
@@ -258,9 +261,9 @@ The arguments a script was given, as distinct from the ones its host was given.
 | `Args.take argv` | Everything after the first `--` |
 | `Args.nameOf argv` | The filename of the first `.fsx` in `argv` |
 
-`dotnet fsi build.fsx -- test --quick` does not reach the process with its `--` intact — the `dotnet` driver
-consumes one before `fsi` sees the command line — which is why `Args.script` locates the script's own filename
-rather than splitting on a separator.
+`dotnet fsi build.fsx -- test --quick` does not reach the process with its `--` intact: the `dotnet` driver
+consumes one before `fsi` sees the command line. `Args.script` locates the script's own filename instead of
+splitting on a separator.
 
 ## `Baked`
 

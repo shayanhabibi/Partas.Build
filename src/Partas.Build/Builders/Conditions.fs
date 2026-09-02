@@ -446,8 +446,7 @@ module ValueConditions =
     /// which is correct only because of evaluation order — nothing the compiler checks, and a refactor that
     /// moves the condition below the step compiles cleanly and throws at run time.
     /// <para>
-    /// It returns a list so that the absent case contributes no stage at all, rather than an inactive one
-    /// that would need a name it was never given.
+    /// The absent case is an empty list, not an inactive stage requiring a name.
     /// </para>
     /// </remarks>
     let whenSome (value: 'a option) (build: 'a -> StageContext): StageContext list =

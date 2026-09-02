@@ -124,6 +124,24 @@ let private nameHelpOutput (command: Command) (displayName: string) =
         | _ -> ()
     | None -> ()
 
+/// Replaces the root command's built-in <c>--version</c> action, which reports the entry assembly's own
+/// version — the F# interactive host's when the script runs under <c>dotnet fsi</c>, not Partas.Build's — with
+/// one naming the Partas.Build version the script is pinned to, alongside <paramref name="displayName"/> where
+/// one resolved.
+let private nameVersionOutput (command: Command) (displayName: string voption) =
+    match command.Options |> Seq.tryFind (fun option -> option.Name = "--version") with
+    | Some versionOption ->
+        versionOption.Action <-
+            { new SynchronousCommandLineAction() with
+                member _.Invoke(parseResult: ParseResult) =
+                    let text =
+                        match displayName with
+                        | ValueSome name -> $"%s{name} (Partas.Build %s{Explain.libraryVersion})"
+                        | ValueNone -> $"Partas.Build %s{Explain.libraryVersion}"
+                    parseResult.InvocationConfiguration.Output.WriteLine text
+                    0 }
+    | None -> ()
+
 /// <summary>The arguments a script was given, as distinct from the ones its host was given.</summary>
 /// <remarks>
 /// Not <c>[&lt;AutoOpen&gt;]</c>: <c>take</c>, <c>nameOf</c>, <c>afterScript</c> and <c>script</c> are common
@@ -512,10 +530,10 @@ type RootCommandBuilder(args: string array) =
     member _.Run(build: BuildCommand): int =
         let spec = CommandSpec.create "" |> build
         let root = applyTo (RootCommand()) spec
+        let displayName = spec.DisplayName |> ValueOption.orElse (Args.scriptName ())
 
-        spec.DisplayName
-        |> ValueOption.orElse (Args.scriptName ())
-        |> ValueOption.iter (nameHelpOutput root)
+        displayName |> ValueOption.iter (nameHelpOutput root)
+        nameVersionOutput root displayName
 
         let parseResult =
             match spec.ParserConfiguration with

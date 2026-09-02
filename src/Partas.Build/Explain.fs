@@ -17,6 +17,15 @@ open Partas.Build.Internal
 /// </para>
 /// </remarks>
 module Explain =
+    /// <summary>The Partas.Build version this script is pinned to.</summary>
+    let libraryVersion =
+        let assembly = Reflection.Assembly.GetExecutingAssembly()
+        assembly.GetCustomAttributes(typeof<Reflection.AssemblyInformationalVersionAttribute>, false)
+        |> Array.tryHead
+        |> function
+            | Some attr -> (attr :?> Reflection.AssemblyInformationalVersionAttribute).InformationalVersion
+            | None -> assembly.GetName().Version |> string
+
     let [<Literal>] private branch = "├─ "
     let [<Literal>] private lastBranch = "└─ "
     let [<Literal>] private trunk = "│  "

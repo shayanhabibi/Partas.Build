@@ -169,6 +169,29 @@ let tests =
             Expect.equal exitCode 0 "help exits zero without a name to fall back to"
         }
 
+        test "the library reports its own version" {
+            let version = Explain.libraryVersion
+            Expect.isNotEmpty version "a version is available for a bug report to quote"
+            Expect.isTrue (version |> Seq.exists Char.IsDigit) "and it looks like a version"
+
+            // AssemblyVersion is pinned at 0.0.0.0, whose string form also contains digits, so the two
+            // assertions above pass on the fallback path too; this one fails unless the informational
+            // version - the one actually carrying real information - is what got read.
+            let expected =
+                typeof<PipelineContext>.Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion
+            Expect.equal version expected "the informational version, not the AssemblyVersion fallback"
+        }
+
+        test "the root command reports the library's version, not the entry assembly's" {
+            use output = new StringWriter()
+            let config = InvocationConfiguration(Output = output)
+            let exitCode = rootCommand [| "--version" |] { invocationConfiguration config }
+
+            Expect.equal exitCode 0 "--version exits zero"
+            let text = output.ToString()
+            Expect.stringContains text Explain.libraryVersion "the printed version is Partas.Build's own"
+        }
+
         test "rootCommandOfScript is rootCommand over Args.script ()" {
             // RootCommandBuilder keeps args in a private field with no public accessor; comparing that field
             // is the only way to assert the delegation without running against the test host's own argv,

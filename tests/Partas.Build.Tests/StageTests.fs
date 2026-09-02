@@ -1,8 +1,9 @@
-module Partas.Build.Tests.StageTests
+﻿module Partas.Build.Tests.StageTests
 
 open Expecto
 open Partas.Build
 open Partas.Build.Internal
+open Partas.Build.Tests.Helpers
 
 let private yes: BuildStageIsActive = fun _ -> true
 let private no: BuildStageIsActive = fun _ -> false
@@ -144,4 +145,64 @@ let tests =
             let labels = [ for step in built.Steps do match step with Step.StepFn(label, _) -> label | _ -> () ]
             Expect.equal labels [ ValueNone ] "an opaque closure claims nothing"
         }
+
+        test "retry runs a failing step again up to the given count" {
+            let attempts = ref 0
+
+            let built =
+                stage "flaky" {
+                    retry 2
+                    run (fun (_: StageContext) ->
+                        incr attempts
+                        if attempts.Value < 3 then Error "not yet" else Ok())
+                }
+
+            let result = runStage built
+            Expect.isOk result "the third attempt succeeded"
+            Expect.equal attempts.Value 3 "one attempt plus two retries"
+        }
+
+        test "retry gives up after the given count" {
+            let attempts = ref 0
+
+            let built =
+                stage "doomed" {
+                    retry 1
+                    run (fun (_: StageContext) -> incr attempts; Error "always")
+                }
+
+            let result = runStage built
+            Expect.isError result "it still fails"
+            Expect.equal attempts.Value 2 "one attempt plus one retry, and no more"
+        }
+
+        test "retry composes with a stage that declares an input" {
+            let flaky = Input.option<bool> "--flaky" |> Input.def false
+
+            let inner =
+                input {
+                    let! _ = flaky
+                    return stage "inner" { run noop }
+                }
+
+            let spec: InputSpec<StageContext> =
+                stage "outer" {
+                    inner
+                    retry 2
+                    run noop
+                }
+
+            let built = spec.Read (parse spec.Inputs "")
+            Expect.equal built.Retry 2 "the InputSpec mirror should record the count"
+            Expect.equal (stageNames built) [ "stage:inner"; "fn" ] "and leave the steps alone"
+        }
+
+        test "a stage without retry attempts its steps once" {
+            let attempts = ref 0
+            let built = stage "once" { run (fun (_: StageContext) -> incr attempts; Error "no") }
+
+            runStage built |> ignore
+            Expect.equal attempts.Value 1 "the default is unchanged"
+        }
     ]
+

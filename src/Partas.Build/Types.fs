@@ -208,6 +208,12 @@ and StageContext = {
     ContinueStageOnFailure: bool
     Timeout: TimeSpan voption
     TimeoutForStep: TimeSpan voption
+    /// <summary>How many further attempts the stage's steps get after a failing one; <c>0</c> gives a single attempt.</summary>
+    /// <remarks>
+    /// <c>Timeout</c> is the budget for the whole stage, retries included. A stage that exhausts it stops with
+    /// attempts remaining.
+    /// </remarks>
+    Retry: int
     WorkingDir: string voption
     EnvVars: Map<string, string>
     AcceptableExitCodes: Set<int>
@@ -300,6 +306,7 @@ module StageContext =
             ContinueStageOnFailure = false
             Timeout = ValueNone
             TimeoutForStep = ValueNone
+            Retry = 0
             WorkingDir = ValueNone
             Verbosity = ValueNone
             EnvVars = Map.empty
@@ -878,26 +885,16 @@ module Runners =
                             fail()
                             $"Pipeline failed because there were no active sub-stages; stage ({getNamePath stage}) required at least one"
                             |> PipelineFailedException.raise
-                    // Only a capture this stage declared itself: one it inherited belongs to an ancestor that is
-                    // still running, and clearing that would throw away what its earlier stages wrote.
-                    match stage.Output with
-                    | ValueSome(StageOutput.Captured capture) -> capture.Clear()
-                    | _ -> ()
                     let parallelism = stage.IsParallel stage
                     let timeoutForStep: int = getTimeoutForStep stage
                     let timeoutForStage: int = getTimeoutForStage stage
 
-                    let mutable isStageSoftCancelled = false
-
+                    // The stage timeout bounds every attempt together.
                     use cts = new System.Threading.CancellationTokenSource(timeoutForStage)
-                    use stepErrorCts = new System.Threading.CancellationTokenSource()
-                    use linkedStepErrorCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cts.Token, stepErrorCts.Token)
-                    use linkedCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(linkedStepErrorCts.Token, ct)
 
-                    use stepCts = new System.Threading.CancellationTokenSource(timeoutForStep)
-                    use linkedStepCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(stepCts.Token, linkedCts.Token)
-
-                    let extraInfo = $"timeout: {timeoutForStage}ms. step timeout: {timeoutForStep}ms."
+                    let extraInfo =
+                        $"timeout: {timeoutForStage}ms. step timeout: {timeoutForStep}ms."
+                        + if stage.Retry > 0 then $" retries: {stage.Retry}." else ""
                     let inline makeStageConditionMsg msg =
                         getNamePath stage
                         |> Markup.escape
@@ -917,134 +914,164 @@ module Runners =
                         |> Markup.grey
                         |> vprintn stage
 
-                    let steps =
-                        stage.Steps
-                        |> Seq.indexed
-                        // shuffle
-                        |> if stage.ShuffleExecuteSequence then Seq.randomShuffle else id
-                        |> Seq.map (fun (i, step) -> async {
-                            let escapedPrefix =
-                                match step with
-                                | Step.StepFn _ -> buildStepPrefix stage (LanguagePrimitives.Int32WithMeasure i)
-                                | Step.StepOfStage subStage ->
-                                    { subStage with ParentContext = ValueSome(StageParent.Stage stage) }
-                                    |> buildCurrentStepPrefix
-                                    |> sprintf "%s>"
-                                    |> Markup.escape
+                    let mutable retriesLeft = max 0 stage.Retry
+                    let mutable attempting = true
+                    while attempting do
+                        attempting <- false
+                        succeed()
+                        stepExns.Clear()
 
-                            let exns = ResizeArray<Exception>()
-                            try
-                                let sw = Stopwatch.StartNew()
-                                escapedPrefix + " started" + (if parallelism.IsSome then " in parallel -->" else "")
-                                |> Markup.grey
-                                |> vprintn stage
-                                let! isSuccess =
+                        // Only a capture this stage declared itself: one it inherited belongs to an ancestor that is
+                        // still running, and clearing that would throw away what its earlier stages wrote. An attempt
+                        // starts from an empty one, so a failure reports what the last attempt alone produced.
+                        match stage.Output with
+                        | ValueSome(StageOutput.Captured capture) -> capture.Clear()
+                        | _ -> ()
+
+                        let mutable isStageSoftCancelled = false
+
+                        use stepErrorCts = new System.Threading.CancellationTokenSource()
+                        use linkedStepErrorCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cts.Token, stepErrorCts.Token)
+                        use linkedCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(linkedStepErrorCts.Token, ct)
+
+                        use stepCts = new System.Threading.CancellationTokenSource(timeoutForStep)
+                        use linkedStepCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(stepCts.Token, linkedCts.Token)
+
+                        let steps =
+                            stage.Steps
+                            |> Seq.indexed
+                            // shuffle
+                            |> if stage.ShuffleExecuteSequence then Seq.randomShuffle else id
+                            |> Seq.map (fun (i, step) -> async {
+                                let escapedPrefix =
                                     match step with
-                                    | Step.StepFn(_, fn) -> async {
-                                        match! fn stage (i |> LanguagePrimitives.Int32WithMeasure) with
-                                        | Error e when not (String.IsNullOrEmpty e) ->
-                                            if parallelism.IsNone && getNoPrefixForStep stage
-                                            then e
-                                            else $"{escapedPrefix} {e}"
-                                            |> printError stage
-                                            return false
-                                        | Ok _ -> return true
-                                        | _ -> return false
+                                    | Step.StepFn _ -> buildStepPrefix stage (LanguagePrimitives.Int32WithMeasure i)
+                                    | Step.StepOfStage subStage ->
+                                        { subStage with ParentContext = ValueSome(StageParent.Stage stage) }
+                                        |> buildCurrentStepPrefix
+                                        |> sprintf "%s>"
+                                        |> Markup.escape
+
+                                let exns = ResizeArray<Exception>()
+                                try
+                                    let sw = Stopwatch.StartNew()
+                                    escapedPrefix + " started" + (if parallelism.IsSome then " in parallel -->" else "")
+                                    |> Markup.grey
+                                    |> vprintn stage
+                                    let! isSuccess =
+                                        match step with
+                                        | Step.StepFn(_, fn) -> async {
+                                            match! fn stage (i |> LanguagePrimitives.Int32WithMeasure) with
+                                            | Error e when not (String.IsNullOrEmpty e) ->
+                                                if parallelism.IsNone && getNoPrefixForStep stage
+                                                then e
+                                                else $"{escapedPrefix} {e}"
+                                                |> printError stage
+                                                return false
+                                            | Ok _ -> return true
+                                            | _ -> return false
+                                            }
+                                        | Step.StepOfStage subStage -> async {
+                                            let subStage = { subStage with ParentContext = ValueSome(StageParent.Stage stage) }
+                                            let isSuccess, es = run subStage (StageIndex.Step i) linkedStepCts.Token
+                                            exns.AddRange es
+                                            return isSuccess
                                         }
-                                    | Step.StepOfStage subStage -> async {
-                                        let subStage = { subStage with ParentContext = ValueSome(StageParent.Stage stage) }
-                                        let isSuccess, es = run subStage (StageIndex.Step i) linkedStepCts.Token
-                                        exns.AddRange es
-                                        return isSuccess
-                                    }
-                                let color = if isSuccess then Markup.grey else Markup.red
-                                let shouldCancelStage = not isSuccess && not stage.ContinueStepsOnFailure && not stepErrorCts.IsCancellationRequested
-                                [
-                                    escapedPrefix
-                                    if parallelism.IsSome then "finished in parallel."
-                                    else "finished."
-                                    $"{sw.ElapsedMilliseconds}ms."
-                                    if shouldCancelStage then
-                                        "Stage policy triggered cancellation."
-                                ]
-                                |> String.concat " "
-                                |> color
-                                |> (if shouldCancelStage then nprintn else vprintn) stage
-                                if shouldCancelStage then stepErrorCts.Cancel()
-                                // if i = stage.Steps.Length - 1 then line()
-                                return isSuccess, exns
-                            with
-                            | :? PipelineCancelledException as ex ->
-                                raise ex
-                                return false, exns
-                            | :? PipelineFailedException as ex ->
-                                raise ex
-                                return false, exns
-                            | :? StepSoftCancelledException as ex ->
-                                $"{escapedPrefix} {Markup.escape ex.Message}"
+                                    let color = if isSuccess then Markup.grey else Markup.red
+                                    let shouldCancelStage = not isSuccess && not stage.ContinueStepsOnFailure && not stepErrorCts.IsCancellationRequested
+                                    [
+                                        escapedPrefix
+                                        if parallelism.IsSome then "finished in parallel."
+                                        else "finished."
+                                        $"{sw.ElapsedMilliseconds}ms."
+                                        if shouldCancelStage then
+                                            "Stage policy triggered cancellation."
+                                    ]
+                                    |> String.concat " "
+                                    |> color
+                                    |> (if shouldCancelStage then nprintn else vprintn) stage
+                                    if shouldCancelStage then stepErrorCts.Cancel()
+                                    // if i = stage.Steps.Length - 1 then line()
+                                    return isSuccess, exns
+                                with
+                                | :? PipelineCancelledException as ex ->
+                                    raise ex
+                                    return false, exns
+                                | :? PipelineFailedException as ex ->
+                                    raise ex
+                                    return false, exns
+                                | :? StepSoftCancelledException as ex ->
+                                    $"{escapedPrefix} {Markup.escape ex.Message}"
+                                    |> Markup.yellow
+                                    |> nprintn stage
+                                    return true, exns
+                                | :? StageSoftCancelledException as ex ->
+                                    $"{escapedPrefix} {Markup.escape ex.Message}"
+                                    |> Markup.yellow
+                                    |> nprintn stage
+                                    isStageSoftCancelled <- true
+                                    return true, exns
+                                | ex ->
+                                    $"{escapedPrefix} raised an exception."
+                                    |> Markup.red
+                                    |> printn
+                                    AnsiConsole.WriteException ex
+                                    if not stage.ContinueStageOnFailure then
+                                        exns.Add(Exception($"{escapedPrefix} {ex.Message}", ex.InnerException))
+                                    return false, exns
+                            })
+                        try
+                            let handleExn (exns: ResizeArray<Exception>) =
+                                if exns.Count > 0 then
+                                    if not stage.ContinueStageOnFailure then stepExns.AddRange exns
+                                    if not stage.ContinueStepsOnFailure then stepErrorCts.Cancel()
+
+                            let ts =
+                                // Async.StartChild is what applies timeoutForStep, and it starts the work there and then, so it
+                                // has to happen inside the handler. Doing it while producing the sequence instead lets the
+                                // throttle pull -- and therefore start -- one more step than it is meant to have in flight.
+                                let inline asyncHandler step = async {
+                                    if stage.ContinueStepsOnFailure || isSuccess then
+                                        let! child = Async.StartChild(step, timeoutForStep)
+                                        let! result, exns = child
+                                        handleExn exns
+                                        if not result && not stage.ContinueStepsOnFailure then stepErrorCts.Cancel()
+                                        succeedAND result
+                                }
+                                let steps = AsyncSeq.ofSeq steps
+                                match parallelism with
+                                | ValueSome p when p > 1 ->
+                                    steps
+                                    |> AsyncSeq.iterAsyncParallelThrottled p asyncHandler
+                                | ValueSome p when p < 1 ->
+                                    steps
+                                    |> AsyncSeq.iterAsyncParallel asyncHandler
+                                | _ ->
+                                    steps
+                                    |> AsyncSeq.iterAsync asyncHandler
+                            Async.RunSynchronously(ts, cancellationToken = linkedCts.Token)
+                        with
+                        | :? PipelineCancelledException as ex -> fail(); raise ex
+                        | :? PipelineFailedException as ex -> fail(); raise ex
+                        | _ when isStageSoftCancelled -> succeed()
+                        | ex ->
+                            fail()
+                            if linkedCts.Token.IsCancellationRequested && not stepErrorCts.IsCancellationRequested then
+                                $"{buildCurrentStepPrefix stage |> Markup.escape}> stage is cancelled or timed-out."
                                 |> Markup.yellow
                                 |> nprintn stage
-                                return true, exns
-                            | :? StageSoftCancelledException as ex ->
-                                $"{escapedPrefix} {Markup.escape ex.Message}"
-                                |> Markup.yellow
-                                |> nprintn stage
-                                isStageSoftCancelled <- true
-                                return true, exns
-                            | ex ->
-                                $"{escapedPrefix} raised an exception."
+                            else if not stepErrorCts.IsCancellationRequested then
+                                $"{buildCurrentStepPrefix stage |> Markup.escape}> stage's step failed."
                                 |> Markup.red
                                 |> printn
                                 AnsiConsole.WriteException ex
-                                if not stage.ContinueStageOnFailure then
-                                    exns.Add(Exception($"{escapedPrefix} {ex.Message}", ex.InnerException))
-                                return false, exns
-                        })
-                    try
-                        let handleExn (exns: ResizeArray<Exception>) =
-                            if exns.Count > 0 then
-                                if not stage.ContinueStageOnFailure then stepExns.AddRange exns
-                                if not stage.ContinueStepsOnFailure then stepErrorCts.Cancel()
 
-                        let ts =
-                            // Async.StartChild is what applies timeoutForStep, and it starts the work there and then, so it
-                            // has to happen inside the handler. Doing it while producing the sequence instead lets the
-                            // throttle pull -- and therefore start -- one more step than it is meant to have in flight.
-                            let inline asyncHandler step = async {
-                                if stage.ContinueStepsOnFailure || isSuccess then
-                                    let! child = Async.StartChild(step, timeoutForStep)
-                                    let! result, exns = child
-                                    handleExn exns
-                                    if not result && not stage.ContinueStepsOnFailure then stepErrorCts.Cancel()
-                                    succeedAND result
-                            }
-                            let steps = AsyncSeq.ofSeq steps
-                            match parallelism with
-                            | ValueSome p when p > 1 ->
-                                steps
-                                |> AsyncSeq.iterAsyncParallelThrottled p asyncHandler
-                            | ValueSome p when p < 1 ->
-                                steps
-                                |> AsyncSeq.iterAsyncParallel asyncHandler
-                            | _ ->
-                                steps
-                                |> AsyncSeq.iterAsync asyncHandler
-                        Async.RunSynchronously(ts, cancellationToken = linkedCts.Token)
-                    with
-                    | :? PipelineCancelledException as ex -> fail(); raise ex
-                    | :? PipelineFailedException as ex -> fail(); raise ex
-                    | _ when isStageSoftCancelled -> succeed()
-                    | ex ->
-                        fail()
-                        if linkedCts.Token.IsCancellationRequested && not stepErrorCts.IsCancellationRequested then
-                            $"{buildCurrentStepPrefix stage |> Markup.escape}> stage is cancelled or timed-out."
+                        if not isSuccess && retriesLeft > 0 && not cts.IsCancellationRequested && not ct.IsCancellationRequested then
+                            $"%s{getNamePath stage |> Markup.escape} failed. Retrying, {retriesLeft} attempt(s) left."
                             |> Markup.yellow
                             |> nprintn stage
-                        else if not stepErrorCts.IsCancellationRequested then
-                            $"{buildCurrentStepPrefix stage |> Markup.escape}> stage's step failed."
-                            |> Markup.red
-                            |> printn
-                            AnsiConsole.WriteException ex
+                            retriesLeft <- retriesLeft - 1
+                            attempting <- true
 
                     let color = if isSuccess then Markup.turquoise2 else Markup.red
                     let inline escapedNamePath() = getNamePath stage |> Markup.escape

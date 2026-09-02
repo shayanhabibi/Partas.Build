@@ -57,6 +57,24 @@ module Conditions =
         let stage = { stage with ParentContext = ValueSome(StageParent.Stage ctx) }
         StageContext.run stage StageIndex.Condition CancellationToken.None |> fst
 
+    /// <summary>The text <c>--explain</c> prints against a stage each of the conditions above turned off.</summary>
+    /// <remarks>
+    /// Public because the custom operations that attach them are <c>inline</c>, which requires everything they
+    /// reference to be reachable from the call site.
+    /// </remarks>
+    module Reason =
+        let platform (platform: OSPlatform) (isTrue: bool) =
+            if isTrue then $"the host is not %s{string platform}" else $"the host is %s{string platform}"
+
+        let envArg (arg: EnvArg) =
+            match arg.Values with
+            | [] -> $"env var %s{arg.Name} is unset"
+            | values -> $"""env var %s{arg.Name} is not one of %s{String.Join(", ", values)}"""
+
+        let branches (branches: string seq) = $"""the git branch is not %s{String.Join(", ", branches)}"""
+
+        let stageSucceeds (stage: StageContext) = $"condition stage %s{stage.Name} failed"
+
 let inline private addCondition ([<IIL>] build: BuildConditions) (condition: BuildStageIsActive): BuildConditions =
     fun conditions -> build conditions @ [ condition ]
 
@@ -256,7 +274,7 @@ type StageBuilder with
     /// </remarks>
     [<CustomOperation("when'")>]
     member inline _.when'([<IIL>] build: BuildStage, stage: StageContext) =
-        StageContext.buildStageIsActive build (Conditions.whenStageSucceeds stage)
+        StageContext.buildStageIsActiveBecause (ValueSome (Conditions.Reason.stageSucceeds stage)) build (Conditions.whenStageSucceeds stage)
 
     /// <summary>Adds an environment variable condition using an <c>EnvArg</c> specification.</summary>
     /// <remarks>
@@ -265,7 +283,8 @@ type StageBuilder with
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     [<CustomOperation("whenEnvVar")>]
-    member inline _.whenEnvVar([<IIL>] build: BuildStage, arg: EnvArg) = StageContext.buildStageIsActive build (Conditions.whenEnvArg arg)
+    member inline _.whenEnvVar([<IIL>] build: BuildStage, arg: EnvArg) =
+        StageContext.buildStageIsActiveBecause (ValueSome (Conditions.Reason.envArg arg)) build (Conditions.whenEnvArg arg)
 
     /// <summary>Adds an environment variable condition by name only.</summary>
     /// <remarks>
@@ -274,7 +293,8 @@ type StageBuilder with
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     [<CustomOperation("whenEnvVar")>]
-    member inline _.whenEnvVar([<IIL>] build: BuildStage, name: string) = StageContext.buildStageIsActive build (Conditions.whenEnvVar name)
+    member inline _.whenEnvVar([<IIL>] build: BuildStage, name: string) =
+        StageContext.buildStageIsActiveBecause (ValueSome (Conditions.Reason.envArg (EnvArg.Create name))) build (Conditions.whenEnvVar name)
 
     /// <summary>Adds an environment variable condition that checks both name and value.</summary>
     /// <remarks>
@@ -284,7 +304,10 @@ type StageBuilder with
     /// </remarks>
     [<CustomOperation("whenEnvVar")>]
     member inline _.whenEnvVar([<IIL>] build: BuildStage, name: string, value: string) =
-        StageContext.buildStageIsActive build (Conditions.whenEnvVarValue name value)
+        StageContext.buildStageIsActiveBecause
+            (ValueSome (Conditions.Reason.envArg (EnvArg.Create(name, values = [ value ]))))
+            build
+            (Conditions.whenEnvVarValue name value)
 
     /// <summary>Adds a Git branch condition for a single branch name.</summary>
     /// <remarks>
@@ -293,7 +316,8 @@ type StageBuilder with
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     [<CustomOperation("whenBranch")>]
-    member inline _.whenBranch([<IIL>] build: BuildStage, branch: string) = StageContext.buildStageIsActive build (Conditions.whenBranch branch)
+    member inline _.whenBranch([<IIL>] build: BuildStage, branch: string) =
+        StageContext.buildStageIsActiveBecause (ValueSome (Conditions.Reason.branches [ branch ])) build (Conditions.whenBranch branch)
 
     /// <summary>Adds a Git branch condition that matches any of the specified branch names.</summary>
     /// <remarks>
@@ -303,7 +327,7 @@ type StageBuilder with
     /// </remarks>
     [<CustomOperation("whenBranches")>]
     member inline _.whenBranches([<IIL>] build: BuildStage, branches: string seq) =
-        StageContext.buildStageIsActive build (Conditions.whenBranches branches)
+        StageContext.buildStageIsActiveBecause (ValueSome (Conditions.Reason.branches branches)) build (Conditions.whenBranches branches)
 
     /// <summary>Adds a condition that is met when running on Windows.</summary>
     /// <remarks>
@@ -318,7 +342,11 @@ type StageBuilder with
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     [<CustomOperation("whenWindows")>]
-    member inline _.whenWindows([<IIL>] build: BuildStage, ?isTrue: bool) = StageContext.buildStageIsActive build (Conditions.whenPlatform OSPlatform.Windows >> if defaultArg isTrue true then id else not)
+    member inline _.whenWindows([<IIL>] build: BuildStage, ?isTrue: bool) =
+        StageContext.buildStageIsActiveBecause
+            (ValueSome (Conditions.Reason.platform OSPlatform.Windows (defaultArg isTrue true)))
+            build
+            (Conditions.whenPlatform OSPlatform.Windows >> if defaultArg isTrue true then id else not)
 
     /// <summary>Adds a condition that is met when running on Linux.</summary>
     /// <remarks>
@@ -327,7 +355,11 @@ type StageBuilder with
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     [<CustomOperation("whenLinux")>]
-    member inline _.whenLinux([<IIL>] build: BuildStage, ?isTrue: bool) = StageContext.buildStageIsActive build (Conditions.whenPlatform OSPlatform.Linux >> (if defaultArg isTrue true then id else not))
+    member inline _.whenLinux([<IIL>] build: BuildStage, ?isTrue: bool) =
+        StageContext.buildStageIsActiveBecause
+            (ValueSome (Conditions.Reason.platform OSPlatform.Linux (defaultArg isTrue true)))
+            build
+            (Conditions.whenPlatform OSPlatform.Linux >> (if defaultArg isTrue true then id else not))
 
     /// <summary>Adds a condition that is met when running on macOS.</summary>
     /// <remarks>
@@ -336,11 +368,15 @@ type StageBuilder with
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     [<CustomOperation("whenOSX")>]
-    member inline _.whenOSX([<IIL>] build: BuildStage, ?isTrue: bool) = StageContext.buildStageIsActive build (Conditions.whenPlatform OSPlatform.OSX >> (if defaultArg isTrue true then id else not))
+    member inline _.whenOSX([<IIL>] build: BuildStage, ?isTrue: bool) =
+        StageContext.buildStageIsActiveBecause
+            (ValueSome (Conditions.Reason.platform OSPlatform.OSX (defaultArg isTrue true)))
+            build
+            (Conditions.whenPlatform OSPlatform.OSX >> (if defaultArg isTrue true then id else not))
     [<CustomOperation>] member inline _.
         whenPlatform
         ([<IIL>] build: BuildStage, platform: OSPlatform): BuildStage
-        = StageContext.buildStageIsActive build (Conditions.whenPlatform platform)
+        = StageContext.buildStageIsActiveBecause (ValueSome (Conditions.Reason.platform platform true)) build (Conditions.whenPlatform platform)
 
 
     // =================================================================

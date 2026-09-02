@@ -22,6 +22,7 @@
         <Compile Include="Builders\Conditions.fs" />
         <Compile Include="Builders\Pipeline.fs" />
         <Compile Include="Builders\Inputs.fs" />
+        <Compile Include="Explain.fs" />
         <Compile Include="Builders\Command.fs" />
         <Compile Include="Baked.fs" />
         <None Include="../../README.md" Pack="true" PackagePath="\" />

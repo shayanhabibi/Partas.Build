@@ -17,7 +17,8 @@ open Expecto
 open Partas.Build.ExternalAnnotations
 open Partas.Build.ExternalAnnotationsTests.Helpers
 
-/// The option names a finished command registered.
+/// The option names a finished command registered. Partas.Build puts <c>--explain</c> on every command
+/// that runs a pipeline, so it appears here beside the ones the stages asked for.
 let private optionsOf (command: Command) =
     [ for option in command.Options -> option.Name ] |> List.sort
 
@@ -45,7 +46,7 @@ let tests =
             test "registers exactly what its stage reads" {
                 Expect.equal
                     (optionsOf generateCommand)
-                    [ "--assembly"; "--attribute"; "--output"; "--strict" ]
+                    [ "--assembly"; "--attribute"; "--explain"; "--output"; "--strict" ]
                     "the options"
             }
 
@@ -61,7 +62,7 @@ let tests =
             }
 
             test "registers exactly what its stage reads" {
-                Expect.equal (optionsOf verifyCommand) [ "--min-members"; "--package" ] "the options"
+                Expect.equal (optionsOf verifyCommand) [ "--explain"; "--min-members"; "--package" ] "the options"
             }
 
             test "rejects an option belonging to another command" {
@@ -76,7 +77,7 @@ let tests =
             }
 
             test "registers exactly what its stage reads" {
-                Expect.equal (optionsOf initCommand) [ "--annotations-tool"; "--directory"; "--force" ] "the options"
+                Expect.equal (optionsOf initCommand) [ "--annotations-tool"; "--directory"; "--explain"; "--force" ] "the options"
             }
         ]
 

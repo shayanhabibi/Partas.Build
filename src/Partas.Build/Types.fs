@@ -123,11 +123,24 @@ and [<Struct; RequireQualifiedAccess>]
     | Stage of stage: int
     | Condition
 
+/// <summary>One condition conjoined into a stage's <c>IsActive</c>, with the text that attributes a skip to it.</summary>
+/// <remarks><c>Reason</c> is <c>ValueNone</c> for <c>when'</c>, whose <c>bool</c> argument leaves nothing to report.</remarks>
+and [<Struct>] StageCondition = {
+    Reason: string voption
+    Predicate: StageContext -> bool
+}
+
 and StageContext = {
     Id: int
     Name: string
     Verbosity: Verbosity voption
     IsActive: StageContext -> bool
+    /// <summary>Every condition conjoined into <c>IsActive</c>, in the order the stage declared them.</summary>
+    /// <remarks>
+    /// <c>--explain</c> reads this to say <em>why</em> a stage is skipped. <c>IsActive</c> remains the authority
+    /// on <em>whether</em> it is: re-evaluating a predicate here repeats whatever IO it performs.
+    /// </remarks>
+    Conditions: StageCondition list
     IsParallel: StageContext -> int voption
     ContinueStepsOnFailure: bool
     ContinueStageOnFailure: bool
@@ -206,6 +219,7 @@ module StageContext =
             Id = Random().Next()
             Name = name
             IsActive = fun _ -> true
+            Conditions = []
             IsParallel = fun _ -> ValueNone
             ContinueStepsOnFailure = false
             ContinueStageOnFailure = false
@@ -652,12 +666,27 @@ module StageContext =
     let inline runHttpHealthCheck (ctx: StageContext) (url: string) =
         runHttpHealthCheckCancelableWithConfigRequest ctx System.Threading.CancellationToken.None ignore url
 
+    /// Conjoins a condition onto a stage and records <paramref name="reason"/> against it.
+    /// The single writer of both <c>IsActive</c> and <c>Conditions</c>, so the two stay in step.
+    let inline addPredicateBecause (reason: string voption) ([<InlineIfLambda>] condition: BuildStageIsActive) (stage: StageContext) =
+        { stage with
+            IsActive = fun ctx -> stage.IsActive ctx && condition ctx
+            Conditions = stage.Conditions @ [ { Reason = reason; Predicate = condition } ] }
+
+    /// Conjoins a condition onto the stage a <c>BuildStage</c> produces, recording <paramref name="reason"/> against it.
+    /// Conditions accumulate rather than replace, so a stage declaring several is active only when all hold.
+    let inline buildStageIsActiveBecause
+        (reason: string voption)
+        ([<InlineIfLambda>] build: BuildStage)
+        ([<InlineIfLambda>] conditionFn: BuildStageIsActive)
+        : BuildStage
+        = fun ctx -> addPredicateBecause reason conditionFn (build ctx)
+
     /// Conjoins a condition onto the stage a <c>BuildStage</c> produces.
     /// Conditions accumulate rather than replace, so a stage declaring several is active only when all hold.
+    /// <c>--explain</c> reports a skip caused by this condition without a reason.
     let inline buildStageIsActive ([<InlineIfLambda>] build: BuildStage) ([<InlineIfLambda>] conditionFn: BuildStageIsActive): BuildStage =
-        fun ctx ->
-            let newCtx = build ctx
-            { newCtx with IsActive = fun ctx -> newCtx.IsActive ctx && conditionFn ctx }
+        buildStageIsActiveBecause ValueNone build conditionFn
 
     let inline addStep (step: Step) (stage: StageContext) = { stage with Steps = stage.Steps @ [ step ] }
     let inline addSteps (steps: Step seq) (stage: StageContext) = { stage with Steps = stage.Steps @ (steps |> Seq.toList) }
@@ -667,8 +696,8 @@ module StageContext =
     let inline addBuildSteps (steps: BuildStep seq) stage = addSteps (steps |> Seq.map (fun step -> Step.StepFn(ValueNone, step))) stage
     let addStepFn = addBuildStep
     let inline addLabelledStepFn (label: string) ([<InlineIfLambda>] step: BuildStep) stage = addStep (Step.StepFn(ValueSome label, step)) stage
-    let inline addPredicate ([<InlineIfLambda>] condition: BuildStageIsActive) stage =
-        { stage with IsActive = fun ctx -> stage.IsActive ctx && condition ctx }
+    /// Conjoins a condition onto a stage. <c>--explain</c> reports a skip caused by it without a reason.
+    let inline addPredicate ([<InlineIfLambda>] condition: BuildStageIsActive) stage = addPredicateBecause ValueNone condition stage
     let inline addEnvVars (kvs: seq<string * string>) (stage: StageContext) = { stage with EnvVars = kvs |> Seq.fold (fun state (k, v) -> Map.add k v state) stage.EnvVars }
     let inline setAcceptableExitCodes (codes: int seq) (stage: StageContext) = { stage with AcceptableExitCodes = codes |> Set.ofSeq }
     let inline setFailIfIgnored (failIfIgnored: bool) (stage: StageContext) = { stage with FailIfIgnored = failIfIgnored }

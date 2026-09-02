@@ -416,7 +416,7 @@ module StageContextRunExts =
         module Steps =
             let inline addCmd (ct: CancellationToken voption) (cmd: Cmd) (ctx: StageContext) =
                 let ct = defaultValueArg ct CancellationToken.None
-                StageContext.addStepFn (CmdRunner.step (fun _ -> Async.singleton cmd) ct) ctx
+                StageContext.addLabelledStepFn (Cmd.toLogString cmd) (CmdRunner.step (fun _ -> Async.singleton cmd) ct) ctx
             let inline addCmdString (ct: CancellationToken voption) (command: string) (ctx: StageContext) = addCmd ct (Cmd.ofString command) ctx
             let inline addCmdFormattable (ct: CancellationToken voption) (command: FormattableString) (ctx: StageContext) = addCmd ct (Cmd.ofFormattable false command) ctx
             let inline addCmdList (ct: CancellationToken voption) (executable: string) (args: string list) (ctx: StageContext) = addCmd ct (Cmd.ofList executable args) ctx

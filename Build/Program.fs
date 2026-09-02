@@ -145,12 +145,12 @@ module ProjectManagement =
                 echo "Publishing to local feed"
                 run $"dotnet nuget push {project} --source local --skip-duplicate"
             }
-            stage "nuget publish" {
-                when' key.IsSome
-                echo "Publishing to nuget.org"
-                runSensitive
-                    $"dotnet nuget push {project} --source https://api.nuget.org/v3/index.json --api-key {key.Value} --skip-duplicate"
-            }
+            whenSome key (fun key ->
+                stage "nuget publish" {
+                    echo "Publishing to nuget.org"
+                    runSensitive
+                        $"dotnet nuget push {project} --source https://api.nuget.org/v3/index.json --api-key {key} --skip-duplicate"
+                })
         }
     }
     let publishAll = stage "publish" {

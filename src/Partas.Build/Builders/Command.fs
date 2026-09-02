@@ -43,9 +43,31 @@ let private register (command: Command) (input: ActionInput) =
     | ParsedArgument argument -> command.Arguments.Add argument
     | Context | Injection _ -> ()
 
+/// Prints the tree the command's pipelines resolve to under <paramref name="parseResult"/>, then the invocation
+/// paths still missing a description. Materialising a pipeline runs its stage builders, never its steps.
+let private explain (command: Command) (spec: CommandSpec) (parseResult: ParseResult) =
+    spec.Pipelines
+    |> List.map (fun pipeline -> pipeline.Read parseResult)
+    |> Explain.render
+    |> ignore<string>
+
+    match Explain.undescribed command with
+    | [] -> ()
+    | paths ->
+        Console.Out.WriteLine()
+        Console.Out.WriteLine "Commands with no description:"
+
+        for path in paths do
+            Console.Out.WriteLine $"  %s{path}"
+
+    0
+
 /// Reads each pipeline out of the parse result and runs it, in declaration order.
 /// The runner has already reported the failure by the time it raises, so this only maps it to an exit code.
-let private invoke (spec: CommandSpec) (parseResult: ParseResult) =
+let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseResult) =
+    if Explain.option.GetValue parseResult then explain command spec parseResult
+    else
+
     try
         for pipeline in spec.Pipelines do
             pipeline.Read parseResult |> PipelineContext.run
@@ -74,8 +96,10 @@ let private applyTo (command: Command) (spec: CommandSpec) =
 
     // A command with no pipelines is a grouping node for its subcommands. Leaving it without an action
     // lets System.CommandLine report the missing subcommand and print help, rather than succeeding silently.
+    // `--explain` goes on the commands that have something to explain, and reserves the name on every one of them.
     if not spec.Pipelines.IsEmpty then
-        command.SetAction (Func<ParseResult, int>(invoke spec))
+        register command Explain.option
+        command.SetAction (Func<ParseResult, int>(invoke command spec))
 
     command
 

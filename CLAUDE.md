@@ -32,6 +32,7 @@ dotnet run --project Build.fsproj -- test --quick     # skip restores/clean
 dotnet run --project Build.fsproj -- publish          # pack + push (--nuget-key, else the `local` feed)
 dotnet run --project Build.fsproj -- bump [BUMP] -p <project>...   # rewrite <Version> in a project file
 dotnet run --project Build.fsproj -- docs [--watch]   # fsdocs build / live serve
+dotnet run --project Build.fsproj -- <command> --explain     # print the resolved stage tree, run nothing
 ```
 
 Flags sit on the commands whose stages read them, not on the root: `--quick` (skip restores and the clean), `--skip-tests`, `--configuration Debug|Release`. `<command> --help` is generated from those stages and is the authority on which command takes what.
@@ -56,7 +57,15 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Architecture notes
 
-Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Inputs.fs` → `Types.fs` → `Process.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Builders/Command.fs` → `Baked.fs` → `Builders.fs`.
+Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Inputs.fs` → `Types.fs` → `Process.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Builders/Command.fs` → `Baked.fs` → `Builders.fs`.
+
+`Explain.fs` renders the resolved stage tree `--explain` prints. It compiles before `Builders/Command.fs`, whose
+`applyTo` registers `Explain.option` on every command that runs a pipeline and whose action branches to
+`Explain.render` before running anything; it depends on nothing beyond `Types.fs` and the `Input.*` combinators.
+Rendering evaluates every stage's `IsActive`, so a `whenBranch` starts `git` and a `whenStage` runs its condition
+stage. `StageContext.Conditions` is what lets a skip name the condition that caused it: `addPredicateBecause`
+writes it alongside `IsActive`, the structured conditions in `Builders/Conditions.fs` supply a reason and `when'`
+supplies none, because a `bool` argument leaves nothing to report.
 
 `Baked.fs` is the batteries-included layer over everything before it: ready-made `Input.*`/`Argument.*` definitions
 for the options every build CLI ends up wanting (`--configuration`, `--nuget-key`, `--project`, `--ci`, a version
@@ -105,7 +114,7 @@ Overload resolution in these builders fails in ways that are invisible by inspec
 
 `Build/Spec.fs` holds the nouns, `Build/Program.fs` the stages and commands. Repository paths come from `Partas.TypeProvider.BuildHelper` (`type Repo = BuildHelperProvider<...>`, with `Root`/`VRoot` for the real and virtual file systems), so a renamed project breaks compilation instead of failing mid-release. A new packable project goes in `Spec.Options.Project.versioned`, which is simultaneously what `bump` can version and what `pack` packs; `Repo.Project.<name>.Path` is a compile-time constant, while `PackageId`/`AssemblyName`/`Version` are MSBuild evaluations that shell out to `dotnet msbuild -getProperty`, so keep those off any path that runs before parsing.
 
-Since Phase 7 the CLI is written against Partas.Build (`Build.fsproj` has a project reference to `src/Partas.Build`), so it doubles as the design's acceptance test. A step is a stage; a stage that needs a flag binds it in `inputs { let! quick = Options.quick ... return stage "..." { when' (not quick); run (cmd $"dotnet ...") } }`, and the command registers it by running the pipeline that contains it. `Spec.fs` therefore has no per-command option lists and no process wrappers. Custom operations cannot sit under an `if`/`match`, so a stage that branches builds a `Cmd` first and runs it unconditionally — `ProjectManagement.publish` picks `Cmd.ofFormattable true` (masking, as `runSensitive` does) when `--nuget-key` is present and `Cmd.ofString` when it is not.
+Since Phase 7 the CLI is written against Partas.Build (`Build.fsproj` has a project reference to `src/Partas.Build`), so it doubles as the design's acceptance test. A step is a stage; a stage that needs a flag binds it in `inputs { let! quick = Options.quick ... return stage "..." { when' (not quick); run (cmd $"dotnet ...") } }`, and the command registers it by running the pipeline that contains it. `Spec.fs` therefore has no per-command option lists and no process wrappers. Custom operations cannot sit under an `if`/`match`, so a stage that branches builds a `Cmd` first and runs it unconditionally, and a stage that exists only when an option was supplied is yielded through `whenSome` — `ProjectManagement.publish` yields its `nuget publish` stage that way, so the stage closes over the key rather than reaching for `key.Value` under a `when'`.
 
 The three Expecto suites run `--sequenced`. Each of them drives real pipelines, and a pipeline writes to one process-wide console and holds a thread in `Async.RunSynchronously` for the length of every stage — run in parallel on a two-core runner that yields a log whose lines belong to no test in particular, and enough blocked workers that the thread pool has to grow its way out one thread at a time. `Tests.execute` also captures the suites' output when `--ci` is set, so a green CI run says nothing and a red one lifts the whole failure into the annotation; locally it stays live.
 

@@ -17,8 +17,10 @@ let private options () =
     Input.option<bool> "--quick" |> Input.def false,
     Input.option<bool> "--verbose" |> Input.def false
 
-/// The command's own options, minus the `--help` System.CommandLine adds to every command.
-let private declared (command: Command) = optionNames command |> List.filter (fun name -> name <> "--help")
+/// The command's own options, minus the `--help` System.CommandLine adds to every command and the
+/// `--explain` the library adds to every command that runs a pipeline.
+let private declared (command: Command) =
+    optionNames command |> List.filter (fun name -> name <> "--help" && name <> "--explain")
 
 [<Tests>]
 let tests =

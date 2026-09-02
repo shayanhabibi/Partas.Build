@@ -26,8 +26,11 @@ let private block name (config: ActionInput<string>) = input {
     return stage name { run (fun (_: StageContext) -> ignore cfg) }
 }
 
-/// The command's own options, minus the `--help` System.CommandLine adds to every command.
-let private declared (command: Command) = [ for option in command.Options -> option.Name ] |> List.filter ((<>) "--help")
+/// The command's own options, minus the `--help` System.CommandLine adds to every command and the
+/// `--explain` the library adds to every command that runs a pipeline.
+let private declared (command: Command) =
+    [ for option in command.Options -> option.Name ]
+    |> List.filter (fun name -> name <> "--help" && name <> "--explain")
 
 [<Tests>]
 let tests =

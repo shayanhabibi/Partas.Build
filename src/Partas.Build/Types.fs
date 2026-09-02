@@ -124,7 +124,7 @@ type StageTimings() =
         while entries.TryTake &entry do ()
 
     /// <summary>Every recorded stage in pre-order, each sub-stage under the stage containing it.</summary>
-    /// <remarks>Siblings read in the order they started, which under <c>parallel'</c> is the order declared.</remarks>
+    /// <remarks>Siblings read in start order, which <c>parallel'</c> makes nondeterministic.</remarks>
     member _.Ordered =
         let children =
             entries

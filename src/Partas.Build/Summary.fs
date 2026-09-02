@@ -7,7 +7,7 @@ open Spectre.Console
 /// <summary>What a finished run spent, stage by stage.</summary>
 /// <remarks>
 /// Every stage of the run in pre-order, each sub-stage under the stage containing it, with its wall time and
-/// how it ended. One row per stage at any console width: text too wide for its column is elided.
+/// how it ended. One row per stage at a usual console width: text too wide for its column is elided.
 /// </remarks>
 module Summary =
     /// The heading printed above the table.

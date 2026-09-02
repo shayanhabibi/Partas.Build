@@ -2,6 +2,7 @@ namespace Partas.Build
 
 open System
 open System.CommandLine
+open System.CommandLine.Invocation
 open Partas.Build.Internal
 
 /// <summary>The resolved stage tree of a set of pipelines, as text.</summary>
@@ -16,13 +17,6 @@ open Partas.Build.Internal
 /// </para>
 /// </remarks>
 module Explain =
-    /// <summary>Prints the resolved stage tree and exits, running nothing.</summary>
-    /// <remarks>Registered on every command the library builds, so the name is reserved for it.</remarks>
-    let option: ActionInput<bool> =
-        Input.option<bool> "--explain"
-        |> Input.desc "Print the resolved stage tree and exit, running nothing"
-        |> Input.def false
-
     let [<Literal>] private branch = "├─ "
     let [<Literal>] private lastBranch = "└─ "
     let [<Literal>] private trunk = "│  "
@@ -45,20 +39,14 @@ module Explain =
 
     /// <summary>The tree of <paramref name="pipelines"/>, one line per stage and per step.</summary>
     /// <remarks>
-    /// Each line is also written through <c>StageContext.writeLine</c> of the stage it describes, so a stage
-    /// that routes its output somewhere other than the console routes its own explain lines there too.
+    /// Text only: rendering writes nothing anywhere. A stage's output sink governs that stage's execution
+    /// output, and a description of what the stage would do is not that.
     /// </remarks>
     let render (pipelines: PipelineContext list) =
         let lines = ResizeArray<string>()
 
-        let emit (stage: StageContext voption) (line: string) =
-            lines.Add line
-            match stage with
-            | ValueSome stage -> StageContext.writeLine stage StdStream.Out line
-            | ValueNone -> Console.Out.WriteLine line
-
         let rec renderStage (prefix: string) (isLast: bool) (stage: StageContext) =
-            emit (ValueSome stage) $"""%s{prefix}%s{if isLast then lastBranch else branch}%s{stage.Name}%s{status stage}"""
+            lines.Add $"""%s{prefix}%s{if isLast then lastBranch else branch}%s{stage.Name}%s{status stage}"""
 
             let childPrefix = prefix + (if isLast then gap else trunk)
             let lastIndex = stage.Steps.Length - 1
@@ -74,7 +62,7 @@ module Explain =
                         match label with
                         | ValueSome label -> $"$ %s{label}"
                         | ValueNone -> $"step %i{index + 1}"
-                    emit (ValueSome stage) $"""%s{childPrefix}%s{if isLast then lastBranch else branch}%s{text}""")
+                    lines.Add $"""%s{childPrefix}%s{if isLast then lastBranch else branch}%s{text}""")
 
         // Stages are re-parented onto the pipeline as they are run, and settings resolve by walking that link,
         // so a condition reads the same working directory and env vars here as it would under `PipelineContext.run`.
@@ -87,13 +75,32 @@ module Explain =
 
         pipelines
         |> List.iteri (fun index pipeline ->
-            if index > 0 then emit ValueNone ""
-            emit ValueNone pipeline.Name
+            if index > 0 then lines.Add ""
+            lines.Add pipeline.Name
             renderStages (adopt pipeline pipeline.Stages)
 
             if not pipeline.PostStages.IsEmpty then
-                emit ValueNone "post"
+                lines.Add "post"
                 renderStages (adopt pipeline pipeline.PostStages))
+
+        String.Join(Environment.NewLine, lines)
+
+    /// <summary>The immediate subcommands of <paramref name="command"/> with their descriptions, as text.</summary>
+    /// <remarks>What a command that runs no pipeline of its own would do: dispatch to one of these.</remarks>
+    let subcommands (command: Command) =
+        let lines = ResizeArray<string>()
+        lines.Add command.Name
+
+        let lastIndex = command.Subcommands.Count - 1
+        let width = command.Subcommands |> Seq.fold (fun width subCommand -> max width subCommand.Name.Length) 0
+
+        command.Subcommands
+        |> Seq.iteri (fun index subCommand ->
+            let name =
+                if String.IsNullOrWhiteSpace subCommand.Description then subCommand.Name
+                else $"""%s{subCommand.Name.PadRight width}  %s{subCommand.Description}"""
+
+            lines.Add $"""%s{if index = lastIndex then lastBranch else branch}%s{name}""")
 
         String.Join(Environment.NewLine, lines)
 
@@ -108,3 +115,47 @@ module Explain =
         ]
 
         walk "" command
+
+    /// <paramref name="body"/> followed by the invocation paths under <paramref name="command"/> that still
+    /// carry no description.
+    let private report (command: Command) (body: string) =
+        let missing = undescribed command
+
+        [
+            body
+            if not missing.IsEmpty then
+                ""
+                "Commands with no description:"
+
+                for path in missing do
+                    $"  %s{path}"
+        ]
+        |> String.concat Environment.NewLine
+
+    /// What <c>--explain</c> prints for a command that runs <paramref name="pipelines"/>.
+    let ofPipelines (command: Command) (pipelines: PipelineContext list) = render pipelines |> report command
+
+    /// What <c>--explain</c> prints for a command that only dispatches to its subcommands.
+    let ofSubcommands (command: Command) = subcommands command |> report command
+
+    let private declare () =
+        Input.option<bool> "--explain"
+        |> Input.desc "Print the resolved stage tree and exit, running nothing"
+        |> Input.def false
+
+    /// <summary>The flag as registered on a command that runs pipelines, whose own action reads it.</summary>
+    let option: ActionInput<bool> = declare ()
+
+    /// <summary>The flag as registered on a command that only dispatches to its subcommands.</summary>
+    /// <remarks>
+    /// Such a command has no action of its own — System.CommandLine reports the missing subcommand instead — so
+    /// the rendering hangs off the option, which leaves that report in place for an invocation without the flag.
+    /// </remarks>
+    let groupingOption: ActionInput<bool> =
+        declare ()
+        |> Input.editOption (fun option ->
+            option.Action <-
+                { new SynchronousCommandLineAction() with
+                    member _.Invoke(parseResult: ParseResult) =
+                        Console.Out.WriteLine (ofSubcommands parseResult.CommandResult.Command)
+                        0 })

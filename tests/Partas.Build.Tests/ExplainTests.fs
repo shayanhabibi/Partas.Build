@@ -1,8 +1,22 @@
-module Partas.Build.Tests.ExplainTests
+﻿module Partas.Build.Tests.ExplainTests
 
+open System
+open System.IO
 open Expecto
 open Partas.Build
 open Partas.Build.Internal
+
+/// Runs <paramref name="fn"/> with the console redirected, and answers its result alongside what it printed.
+let private capturingOut (fn: unit -> 'T) =
+    let original = Console.Out
+    use writer = new StringWriter()
+    Console.SetOut writer
+
+    try
+        let result = fn ()
+        result, writer.ToString()
+    finally
+        Console.SetOut original
 
 [<Tests>]
 let tests =
@@ -83,5 +97,57 @@ let tests =
         test "explain reports commands that have no description" {
             let built = command "orphan" { pipeline "p" { stage "s" { run (fun (_: StageContext) -> ()) } } }
             Expect.contains (Explain.undescribed built) "orphan" "an undescribed command is reported"
+        }
+    
+
+        test "explain renders a stage whose output sink is not the console" {
+            let capture = OutputCapture()
+
+            let built =
+                pipeline "p" {
+                    stage "quiet" { silentOutput; run "dotnet --version" }
+                    stage "held" { outputTo (StageOutput.Captured capture); run "dotnet --info" }
+                }
+
+            let text, printed = capturingOut (fun () -> Explain.render [ built ])
+
+            Expect.stringContains text "quiet" "a silenced stage is still described"
+            Expect.stringContains text "dotnet --version" "and so is its step"
+            Expect.stringContains text "held" "a captured stage is still described"
+            Expect.stringContains text "dotnet --info" "and so is its step"
+            Expect.equal printed "" "render prints nothing of its own"
+            Expect.isTrue capture.IsEmpty "and diverts nothing into a stage's sink"
+        }
+
+        test "a command explains a silenced stage in full" {
+            let built = command "build" { pipeline "p" { stage "quiet" { silentOutput; run "dotnet --version" } } }
+
+            let code, printed = capturingOut (fun () -> built.Parse("--explain").Invoke())
+
+            Expect.equal code 0 "explain exits zero"
+            Expect.stringContains printed "quiet" "the stage reaches the console"
+            Expect.stringContains printed "dotnet --version" "together with its step, not a header on its own"
+        }
+
+        test "a command with no pipelines explains the subcommands it dispatches to" {
+            let child =
+                command "child" {
+                    description "does the thing"
+                    pipeline "p" { stage "s" { run (fun (_: StageContext) -> ()) } }
+                }
+
+            let built =
+                command "group" {
+                    description "groups subcommands"
+                    addCommand child
+                }
+
+            Expect.contains [ for option in built.Options -> option.Name ] "--explain" "every command reserves the name"
+
+            let code, printed = capturingOut (fun () -> built.Parse("--explain").Invoke())
+
+            Expect.equal code 0 "explain exits zero"
+            Expect.stringContains printed "child" "the subcommand is named"
+            Expect.stringContains printed "does the thing" "with its description"
         }
     ]

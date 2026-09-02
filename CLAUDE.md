@@ -59,9 +59,14 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Inputs.fs` → `Types.fs` → `Process.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Builders/Command.fs` → `Baked.fs` → `Builders.fs`.
 
-`Explain.fs` renders the resolved stage tree `--explain` prints. It compiles before `Builders/Command.fs`, whose
-`applyTo` registers `Explain.option` on every command that runs a pipeline and whose action branches to
-`Explain.render` before running anything; it depends on nothing beyond `Types.fs` and the `Input.*` combinators.
+`Explain.fs` renders the resolved stage tree `--explain` prints, as text and nothing else: it writes to no
+console and to no stage sink, so a stage that silences or captures its execution output is still described in
+full. It compiles before `Builders/Command.fs`, whose `applyTo` registers the flag on every command and prints
+what the renderer returns; it depends on nothing beyond `Types.fs` and the `Input.*` combinators. A command that
+runs pipelines gets `Explain.option` and reads it in its own action. A grouping command gets
+`Explain.groupingOption`, which carries the rendering — a list of the subcommands it dispatches to — on the
+option's own `Action`, because such a command deliberately has no action of its own and adding one would displace
+System.CommandLine's "Required command was not provided.".
 Rendering evaluates every stage's `IsActive`, so a `whenBranch` starts `git` and a `whenStage` runs its condition
 stage. `StageContext.Conditions` is what lets a skip name the condition that caused it: `addPredicateBecause`
 writes it alongside `IsActive`, the structured conditions in `Builders/Conditions.fs` supply a reason and `when'`

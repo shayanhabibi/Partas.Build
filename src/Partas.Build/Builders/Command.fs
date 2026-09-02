@@ -48,17 +48,8 @@ let private register (command: Command) (input: ActionInput) =
 let private explain (command: Command) (spec: CommandSpec) (parseResult: ParseResult) =
     spec.Pipelines
     |> List.map (fun pipeline -> pipeline.Read parseResult)
-    |> Explain.render
-    |> ignore<string>
-
-    match Explain.undescribed command with
-    | [] -> ()
-    | paths ->
-        Console.Out.WriteLine()
-        Console.Out.WriteLine "Commands with no description:"
-
-        for path in paths do
-            Console.Out.WriteLine $"  %s{path}"
+    |> Explain.ofPipelines command
+    |> Console.Out.WriteLine
 
     0
 
@@ -95,9 +86,11 @@ let private applyTo (command: Command) (spec: CommandSpec) =
         command.Subcommands.Add subCommand
 
     // A command with no pipelines is a grouping node for its subcommands. Leaving it without an action
-    // lets System.CommandLine report the missing subcommand and print help, rather than succeeding silently.
-    // `--explain` goes on the commands that have something to explain, and reserves the name on every one of them.
-    if not spec.Pipelines.IsEmpty then
+    // lets System.CommandLine report the missing subcommand and print help, rather than succeeding silently,
+    // so its `--explain` carries its own rendering — the subcommands it dispatches to.
+    if spec.Pipelines.IsEmpty then
+        register command Explain.groupingOption
+    else
         register command Explain.option
         command.SetAction (Func<ParseResult, int>(invoke command spec))
 

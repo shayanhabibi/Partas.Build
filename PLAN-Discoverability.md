@@ -165,8 +165,14 @@ and a hung CI job costs a runner-hour and tells you nothing.
 no API adopted at all, which matters for scripts that will never be edited again. Today `RootCommand()`
 takes the executable name, and every script built this way ships help text calling the program `fsi`.
 
-`usage` is an **investigation, not a commitment**: `System.CommandLine` may require a custom help action to
-override the usage line. If it proves to need one, it is deferred and recorded as such.
+`usage` turned out to need the custom help action: `System.CommandLine` 2.0.11's `Command.Name` has no
+setter (get-only on the base `Symbol` type, confirmed by reflecting on the installed assembly), and
+`RootCommand`'s only constructor takes a `description`, not a `name`. The usage line is rewritten instead by
+replacing the root's `--help` option's `Action` with one that runs the built-in `HelpAction` against a buffer,
+substitutes the resolved name for the command's own, and only then writes the result — see
+`nameHelpOutput` in `Command.fs`. `System.CommandLine.Help.HelpBuilder`/`HelpContext` are `internal` in this
+version, which is why the fix works by post-processing rendered text rather than by customizing the help
+layout directly.
 
 ### B6. `InputSpec<'T>` leaves `Internal` (W7)
 

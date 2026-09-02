@@ -2,7 +2,10 @@
 module Partas.Build.CommandBuilder
 
 open System
+open System.IO
 open System.CommandLine
+open System.CommandLine.Help
+open System.CommandLine.Invocation
 open Partas.Build
 open Partas.Build.Internal
 /// Names an unnamed pipeline after the command that runs it, and fills its unset settings from the command's
@@ -12,10 +15,7 @@ let private injectCommandInfo (cmd: CommandSpec) (spec: InputSpec<PipelineContex
     { spec with
         Read =
             spec.Read
-            >> (function
-                | { Name = null | "" } as pipeline ->
-                    { pipeline with Name = cmd.Name |> ValueOption.defaultValue ""; Description = cmd.Description }
-                | pipeline -> pipeline)
+            >> (function { Name = null | "" } as pipeline -> { pipeline with Name = cmd.Name; Description = cmd.Description } | pipeline -> pipeline)
             >> PipelineContext.applyDefaults cmd.PipelineDefaults }
 
 /// Appends a pipeline to the command being built.
@@ -78,6 +78,85 @@ let private applyTo (command: Command) (spec: CommandSpec) =
         command.SetAction (Func<ParseResult, int>(invoke spec))
 
     command
+
+/// Rewrites a root command's <c>--help</c> output to call it <paramref name="displayName"/> instead of
+/// <paramref name="command"/>'s own <c>Name</c> (the host executable's, since <c>Command.Name</c> has no
+/// setter in System.CommandLine 2.0.11). Runs the built-in <see cref="T:System.CommandLine.Help.HelpAction"/>
+/// against a buffer, substitutes the command's own name for <paramref name="displayName"/> in the rendered
+/// text, and only then writes it to the real output — the default action resolves its writer from
+/// <c>ParseResult.InvocationConfiguration.Output</c> at invocation time, not from a fixed console handle, so
+/// this has to intercept there rather than redirect <c>Console.Out</c>.
+let private nameHelpOutput (command: Command) (displayName: string) =
+    match command.Options |> Seq.tryFind (fun option -> option.Name = "--help") with
+    | Some helpOption ->
+        match helpOption.Action with
+        | :? HelpAction as originalAction ->
+            let originalName = command.Name
+            helpOption.Action <-
+                { new SynchronousCommandLineAction() with
+                    member _.Invoke(parseResult: ParseResult) =
+                        let configuration = parseResult.InvocationConfiguration
+                        let realOutput = configuration.Output
+                        use buffer = new StringWriter()
+                        configuration.Output <- buffer
+                        let exitCode =
+                            try originalAction.Invoke parseResult
+                            finally configuration.Output <- realOutput
+                        realOutput.Write(buffer.ToString().Replace(originalName, displayName))
+                        exitCode }
+        | _ -> ()
+    | None -> ()
+
+/// <summary>The arguments a script was given, as distinct from the ones its host was given.</summary>
+/// <remarks>
+/// Not <c>[&lt;AutoOpen&gt;]</c>: <c>take</c>, <c>nameOf</c>, <c>afterScript</c> and <c>script</c> are common
+/// enough one-word names that leaving this module qualified (<c>Args.take</c>, and so on) is worth it.
+/// </remarks>
+module Args =
+    /// <summary>Everything after the first <c>--</c>.</summary>
+    /// <remarks>
+    /// A separator-based slice: correct wherever the whole command line survives to
+    /// <c>Environment.GetCommandLineArgs()</c> with a literal <c>--</c> still in it. <c>dotnet fsi</c>'s own
+    /// driver does not preserve one — see <c>afterScript</c>, which is what <c>Args.script</c> actually uses.
+    /// </remarks>
+    let take (argv: string array) =
+        match argv |> Array.tryFindIndex (fun arg -> arg = "--") with
+        | Some index -> argv[index + 1 ..]
+        | None -> [||]
+
+    /// <summary>The filename of the first <c>.fsx</c> among <paramref name="argv"/>.</summary>
+    let nameOf (argv: string array) =
+        argv
+        |> Array.tryFind (fun arg -> arg.EndsWith(".fsx", StringComparison.OrdinalIgnoreCase))
+        |> function
+            | Some path -> ValueSome (IO.Path.GetFileName path)
+            | None -> ValueNone
+
+    /// <summary>
+    /// The arguments a script was given: everything after its own <c>.fsx</c> file among <paramref name="argv"/>,
+    /// or — when none is present, the shape a compiled host produces (<c>dotnet run --project X -- test</c>) —
+    /// everything after <c>argv[0]</c>. A literal <c>--</c> immediately at the front of the result is dropped.
+    /// </summary>
+    /// <remarks>
+    /// <c>dotnet fsi build.fsx -- test --quick</c> does not reach the process as the whole command line: the
+    /// <c>dotnet</c> driver consumes exactly one <c>--</c> before <c>fsi</c> ever sees
+    /// <c>Environment.GetCommandLineArgs()</c>, so a separator-based slice (<c>take</c>) finds nothing and
+    /// silently returns empty. Locating the script's own filename instead does not depend on a separator
+    /// surviving that driver at all.
+    /// </remarks>
+    let afterScript (argv: string array) =
+        let rest =
+            match argv |> Array.tryFindIndex (fun arg -> arg.EndsWith(".fsx", StringComparison.OrdinalIgnoreCase)) with
+            | Some index -> argv[index + 1 ..]
+            | None -> if argv.Length = 0 then [||] else argv[1 ..]
+
+        if rest.Length > 0 && rest[0] = "--" then rest[1 ..] else rest
+
+    /// <summary>The running script's own arguments.</summary>
+    let script () = afterScript (Environment.GetCommandLineArgs())
+
+    /// <summary>The running script's filename, when it was launched as one.</summary>
+    let scriptName () = nameOf (Environment.GetCommandLineArgs())
 
 /// <summary>
 /// The members shared by <c>command</c> and <c>rootCommand</c>.
@@ -378,7 +457,7 @@ type CommandBuilder(name: string) =
     // application of a plain function type defeats the optimiser (`FS1118`) in Release builds only.
     member _.Run(build: BuildCommand): Command =
         let spec = CommandSpec.create name |> build
-        applyTo (Command(spec.Name |> ValueOption.defaultValue name)) spec
+        applyTo (Command spec.Name) spec
 
     member this.Run(stages: CommandStages): Command = this.Run(addPipeline (pipelineOfCommandStages stages))
 
@@ -405,21 +484,21 @@ type RootCommandBuilder(args: string array) =
     /// Available only on <c>rootCommand</c>. Without it the name is the host executable's, so a script run
     /// as <c>dotnet fsi build.fsx</c> ships help telling a new contributor to run <c>fsi build</c>.
     /// Defaults to the script's filename when the process was launched with one.
-    ///
-    /// System.CommandLine 2.0.11's <c>Command.Name</c> has no setter (it is declared get-only on the base
-    /// <c>Symbol</c> type), so this cannot yet rewrite the usage line System.CommandLine itself prints. The
-    /// name still reaches <see cref="T:Partas.Build.Internal.CommandSpec"/> for a caller to read.
     /// </remarks>
     [<CustomOperation>] member inline _.
         name
         ([<InlineIfLambda>] build: BuildCommand, name: string): BuildCommand
-        = build >> fun cmd -> { cmd with Name = ValueSome name }
+        = build >> fun cmd -> { cmd with DisplayName = ValueSome name }
 
     member this.Run(stages: CommandStages): int = this.Run(addPipeline (pipelineOfCommandStages stages))
 
     member _.Run(build: BuildCommand): int =
         let spec = CommandSpec.create "" |> build
         let root = applyTo (RootCommand()) spec
+
+        spec.DisplayName
+        |> ValueOption.orElse (Args.scriptName ())
+        |> ValueOption.iter (nameHelpOutput root)
 
         let parseResult =
             match spec.ParserConfiguration with
@@ -435,34 +514,6 @@ module Command =
     /// Only use within a <c>command</c> or <c>rootCommand</c>.
     /// </summary>
     let pipeline = PipelineBuilder(null)
-
-/// <summary>The arguments a script was given, as distinct from the ones its host was given.</summary>
-[<AutoOpen>]
-module Args =
-    /// <summary>Everything after the first <c>--</c>.</summary>
-    /// <remarks>
-    /// <c>dotnet fsi build.fsx -- test --quick</c> reaches the process as the whole command line; the
-    /// script's own arguments are what follows the separator. This is what <c>fsi.CommandLineArgs[1..]</c>
-    /// was standing in for, and it does not require the script to reach for <c>fsi</c> at all.
-    /// </remarks>
-    let take (argv: string array) =
-        match argv |> Array.tryFindIndex (fun arg -> arg = "--") with
-        | Some index -> argv[index + 1 ..]
-        | None -> [||]
-
-    /// <summary>The filename of the first <c>.fsx</c> among <paramref name="argv"/>.</summary>
-    let nameOf (argv: string array) =
-        argv
-        |> Array.tryFind (fun arg -> arg.EndsWith(".fsx", StringComparison.OrdinalIgnoreCase))
-        |> function
-            | Some path -> ValueSome (IO.Path.GetFileName path)
-            | None -> ValueNone
-
-    /// <summary>The running script's own arguments.</summary>
-    let script () = take (Environment.GetCommandLineArgs())
-
-    /// <summary>The running script's filename, when it was launched as one.</summary>
-    let scriptName () = nameOf (Environment.GetCommandLineArgs())
 
 let inline command name = CommandBuilder name
 let inline rootCommand args = RootCommandBuilder args

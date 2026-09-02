@@ -1,7 +1,10 @@
 ﻿module Partas.Build.Tests.CommandTests
 
 open System
+open System.IO
+open System.Reflection
 open System.CommandLine
+open System.CommandLine.Invocation
 open Expecto
 open Partas.Build
 open Partas.Build.Internal
@@ -140,26 +143,74 @@ let tests =
             Expect.equal (built.Parse("").Invoke()) 1 "a failed pipeline should exit one"
         }
 
-        test "the root command takes the name it was given" {
-            let rootCommandBuilder = RootCommandBuilder [||]
-            let build = rootCommandBuilder.name (id, "build.fsx")
-            let spec = CommandSpec.create "" |> build
-            Expect.equal spec.Name (ValueSome "build.fsx") "the name custom operation reaches the spec"
+        test "the root command renames itself in --help output" {
+            use output = new StringWriter()
+            let config = InvocationConfiguration(Output = output)
+
+            let exitCode =
+                rootCommand [| "--help" |] {
+                    name "build.fsx"
+                    invocationConfiguration config
+                }
+
+            Expect.equal exitCode 0 "help exits zero"
+            let text = output.ToString()
+            Expect.stringContains text "build.fsx" "the resolved name reaches the rendered help"
         }
 
-        test "Args.script takes everything after the first separator" {
+        test "the root command's help still works when no name was given" {
+            // Args.scriptName () reads the test host's own command line, which is not a .fsx script, so this
+            // exercises the branch where the rename is skipped rather than applied.
+            use output = new StringWriter()
+            let config = InvocationConfiguration(Output = output)
+            let exitCode = rootCommand [| "--help" |] { invocationConfiguration config }
+            Expect.equal exitCode 0 "help exits zero without a name to fall back to"
+        }
+
+        test "rootCommandOfScript is rootCommand over Args.script ()" {
+            // RootCommandBuilder keeps args in a private field with no public accessor; comparing that field
+            // is the only way to assert the delegation without running against the test host's own argv,
+            // which the task notes warn against relying on.
+            let argsField = typeof<RootCommandBuilder>.GetField("args", BindingFlags.NonPublic ||| BindingFlags.Instance)
+            let captured = argsField.GetValue(rootCommandOfScript) :?> string array
+            Expect.equal captured (Args.script ()) "rootCommandOfScript captures Args.script ()"
+        }
+
+        test "Args.take takes everything after the first separator" {
             let taken = Args.take [| "fsi.dll"; "build.fsx"; "--"; "test"; "--quick" |]
             Expect.equal taken [| "test"; "--quick" |] "the script's own arguments and nothing else"
         }
 
-        test "Args.script is empty when there is no separator" {
+        test "Args.take is empty when there is no separator" {
             let taken = Args.take [| "fsi.dll"; "build.fsx" |]
             Expect.isEmpty taken "no separator means no arguments were passed to the script"
         }
 
-        test "Args.scriptName finds the script file among the host's arguments" {
+        test "Args.nameOf finds the script file among the host's arguments" {
             let named = Args.nameOf [| "fsi.dll"; "tools/generate-wire.fsx"; "--"; "generate" |]
             Expect.equal named (ValueSome "generate-wire.fsx") "the filename, without its directory"
+        }
+
+        test "Args.afterScript takes everything after the script name when fsi strips the separator" {
+            // dotnet fsi build.fsx -- test --quick reaches the process with the "--" already consumed.
+            let taken = Args.afterScript [| ".../fsi.dll"; "build.fsx"; "test"; "--quick" |]
+            Expect.equal taken [| "test"; "--quick" |] "everything after the script's own filename"
+        }
+
+        test "Args.afterScript drops a separator that survived a doubled one" {
+            // dotnet fsi argv.fsx -- -- test reaches the process with one "--" still in it.
+            let taken = Args.afterScript [| ".../fsi.dll"; "argv.fsx"; "--"; "test" |]
+            Expect.equal taken [| "test" |] "the leftover separator is not part of the script's arguments"
+        }
+
+        test "Args.afterScript takes everything after argv[0] for a compiled host" {
+            // dotnet run --project X -- test reaches the process as [| exePath; "test" |], no .fsx present.
+            let taken = Args.afterScript [| "/path/to/Build.dll"; "test" |]
+            Expect.equal taken [| "test" |] "everything after the host executable"
+        }
+
+        test "Args.afterScript is empty for an empty argv" {
+            Expect.isEmpty (Args.afterScript [||]) "nothing to slice"
         }
     ]
 

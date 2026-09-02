@@ -102,31 +102,47 @@ type StageTiming = {
     Outcome: StageOutcome
 }
 
-/// <summary>The stages a pipeline run has finished.</summary>
+/// <summary>The stages a pipeline run has finished, as the tree the stages nest into.</summary>
 /// <remarks>
-/// Stages append concurrently under <c>parallel'</c>. <c>Start</c> supplies the ordinal <c>Ordered</c> sorts by.
+/// Stages append concurrently under <c>parallel'</c>. <c>Start</c> supplies the ordinal that orders a stage
+/// among its siblings and that its own sub-stages record as their parent; a stage of the pipeline records
+/// <c>0L</c>.
 /// </remarks>
 type StageTimings() =
-    let entries = System.Collections.Concurrent.ConcurrentBag<struct (int64 * StageTiming)>()
+    let entries = System.Collections.Concurrent.ConcurrentBag<struct (int64 * int64 * StageTiming)>()
     let mutable started = 0L
 
     /// The ordinal of the stage starting now.
     member _.Start() = System.Threading.Interlocked.Increment &started
 
-    member _.Add(order: int64, timing: StageTiming) = entries.Add (struct (order, timing))
+    member _.Add(parent: int64, order: int64, timing: StageTiming) = entries.Add (struct (parent, order, timing))
 
     /// Discards every recorded stage. A second run of the same pipeline value reports itself alone.
     member _.Clear() =
         // netstandard2.0's ConcurrentBag has no Clear.
-        let mutable entry = Unchecked.defaultof<struct (int64 * StageTiming)>
+        let mutable entry = Unchecked.defaultof<struct (int64 * int64 * StageTiming)>
         while entries.TryTake &entry do ()
 
-    /// Every recorded stage, in the order the stages started.
+    /// <summary>Every recorded stage in pre-order, each sub-stage under the stage containing it.</summary>
+    /// <remarks>Siblings read in the order they started, which under <c>parallel'</c> is the order declared.</remarks>
     member _.Ordered =
-        entries
-        |> Seq.sortBy (fun struct (order, _) -> order)
-        |> Seq.map (fun struct (_, timing) -> timing)
-        |> List.ofSeq
+        let children =
+            entries
+            |> List.ofSeq
+            |> List.groupBy (fun struct (parent, _, _) -> parent)
+            |> List.map (fun (parent, siblings) -> parent, siblings |> List.sortBy (fun struct (_, order, _) -> order))
+            |> Map.ofList
+
+        let rec walk parent = [
+            match Map.tryFind parent children with
+            | None -> ()
+            | Some siblings ->
+                for struct (_, order, timing) in siblings do
+                    timing
+                    yield! walk order
+        ]
+
+        walk 0L
 
 [<Struct>]
 type InputSpec<'T> = { Inputs: ActionInput list; Read: CommandLine.ParseResult -> 'T }
@@ -202,6 +218,13 @@ and StageContext = {
     Output: StageOutput voption
     ShuffleExecuteSequence: bool
     ParentContext: StageParent voption
+    /// <summary>The ordinal this stage took from the pipeline's <c>StageTimings</c> when it started.</summary>
+    /// <remarks>
+    /// Set on the value the stage's sub-stages take as their parent, so that a timing records whose child it
+    /// is. <c>ValueNone</c> before the stage runs, and throughout a condition stage, whose stages belong to the
+    /// condition rather than to the run.
+    /// </remarks>
+    TimingOrder: int64 voption
     Steps: Step list
 }
 and PipelineContext = {
@@ -288,6 +311,7 @@ module StageContext =
             Output = ValueNone
             ShuffleExecuteSequence = false
             ParentContext = ValueNone
+            TimingOrder = ValueNone
             Steps = []
         }
     let inline mapParentContext ifNone ([<InlineIfLambda>] mapPipe) ([<InlineIfLambda>] mapStage) ctx =
@@ -306,6 +330,12 @@ module StageContext =
 
     /// The number of stages enclosing <paramref name="ctx"/>; 0 for a stage of a pipeline.
     let rec getDepth ctx = mapStageParentContext 0 (getDepth >> (+) 1) ctx
+
+    /// <summary>The timing ordinal of the stage enclosing <paramref name="ctx"/>; <c>0L</c> for a stage of a
+    /// pipeline.</summary>
+    /// <remarks><c>ValueNone</c> where the enclosing stage holds no ordinal, which is every stage under a
+    /// condition stage.</remarks>
+    let getParentTimingOrder ctx = mapParentContext ValueNone (fun _ -> ValueSome 0L) _.TimingOrder ctx
 
     let tryGetEnvVar (stage: StageContext) (name: string) =
         stage.EnvVars
@@ -814,11 +844,19 @@ module Runners =
             let isActive = stage.IsActive stage
             let pipeline = getParentPipeline stage
 
-            // A condition stage belongs to the condition that runs it, not to the run.
+            // A condition stage belongs to the condition that runs it, not to the run, and so does every stage
+            // under one: `getParentTimingOrder` answers `ValueNone` for those.
             let timings =
-                match index with
-                | StageIndex.Condition -> None
-                | _ -> pipeline |> Option.map (fun pipeline -> pipeline.Timings, pipeline.Timings.Start())
+                match index, pipeline, getParentTimingOrder stage with
+                | StageIndex.Condition, _, _ -> None
+                | _, Some pipeline, ValueSome parent -> Some(pipeline.Timings, parent, pipeline.Timings.Start())
+                | _ -> None
+
+            // Sub-stages read their parent's ordinal off the value given to them as `ParentContext`.
+            let stage =
+                match timings with
+                | Some(_, _, order) -> { stage with TimingOrder = ValueSome order }
+                | None -> stage
 
             let stageSw = Stopwatch.StartNew()
 
@@ -1058,7 +1096,7 @@ module Runners =
                 pipeline |> Option.iter _.RunAfterEachStage(stage)
 
                 timings
-                |> Option.iter (fun (timings, order) ->
+                |> Option.iter (fun (timings, parent, order) ->
                     let outcome =
                         if not isSuccess then
                             stepExns
@@ -1069,7 +1107,7 @@ module Runners =
                         elif not isActive then StageOutcome.Skipped
                         else StageOutcome.Succeeded
 
-                    timings.Add (order, { Name = stage.Name; Depth = getDepth stage; Elapsed = stageSw.Elapsed; Outcome = outcome }))
+                    timings.Add (parent, order, { Name = stage.Name; Depth = getDepth stage; Elapsed = stageSw.Elapsed; Outcome = outcome }))
 
             stage.ContinueStageOnFailure || isSuccess, stepExns
 

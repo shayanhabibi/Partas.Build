@@ -75,11 +75,16 @@ supplies none, because a `bool` argument leaves nothing to report.
 `Summary.fs` renders the per-stage timing table printed at the end of a run, as text and nothing else, the
 way `Explain.fs` renders the tree. The timings themselves are collected in `Types.fs`: `PipelineContext.Timings`
 is a `StageTimings` the stages append a `StageTiming` to as each finishes, reached by walking `ParentContext` up
-to the pipeline, ordered by an ordinal taken at stage start because the underlying bag is unordered and
-`parallel'` stages finish out of order. A condition stage records nothing. The print site is
-`Builders/Command.fs`'s `runReportingTimings`, which prints in a `finally` so a failed run still reports, and
-prints nothing for a quiet pipeline or for a run of a single stage, whose wall time the pipeline's own line
-already carries.
+to the pipeline. A stage takes an ordinal from `StageTimings.Start()` when it starts and records it alongside
+its parent's, which it reads off `StageContext.TimingOrder` — the field `StageContext.run` sets on the value it
+gives its sub-stages as their `ParentContext`. `Ordered` walks those pairs into a pre-order tree, so a stage sits
+under its own parent however its siblings interleave under `parallel'`; a stage of the pipeline records the
+parent ordinal `0L`. A condition stage takes no ordinal, and neither it nor anything under it is recorded. The
+print site is `Builders/Command.fs`'s `runReportingTimings`, which prints in a `finally` so a failed run still
+reports, and prints nothing for a quiet pipeline or for a run of a single stage, whose wall time the pipeline's
+own line already carries. `Summary.render` sizes its three columns to the ambient console and elides what does
+not fit — the middle of a stage name, the end of an outcome — so the table is one row per stage at any width and
+the `Depth` indent survives an 80-column CI log.
 
 `Baked.fs` is the batteries-included layer over everything before it: ready-made `Input.*`/`Argument.*` definitions
 for the options every build CLI ends up wanting (`--configuration`, `--nuget-key`, `--project`, `--ci`, a version

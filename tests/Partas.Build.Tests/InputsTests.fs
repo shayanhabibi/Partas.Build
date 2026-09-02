@@ -3,6 +3,7 @@ module Partas.Build.Tests.InputsTests
 open Expecto
 open Partas.Build
 open Partas.Build.Tests.Helpers
+open System.CommandLine
 
 /// Fresh options per test: a `System.CommandLine` option is a mutable object, and dedup is by
 /// reference, so sharing them across tests would make one test's registrations another's fixture.
@@ -10,6 +11,20 @@ let private options () =
     Input.option<string> "--configuration" |> Input.def "Debug",
     Input.option<bool> "--quick" |> Input.def false,
     Input.option<bool> "--watch" |> Input.def false
+
+type private Layer = { Name: string; Path: string }
+
+let private layers =
+    [ { Name = "ast"; Path = "src/Ast" }
+      { Name = "proto"; Path = "src/Proto" } ]
+
+let private choiceTable = layers |> List.map (fun layer -> layer.Name, layer)
+
+/// Unwraps the option a `choices`-family input wraps, for direct registration outside `input { }`.
+let private getOption (input: ActionInput<'T>) =
+    match input.Source with
+    | ParsedOption option -> option
+    | _ -> failwith "expected a ParsedOption input"
 
 [<Tests>]
 let tests =
@@ -128,5 +143,51 @@ let tests =
 
             let spec = factory (InputSpec.ret [ "a"; "b" ])
             Expect.equal spec.Inputs [] "a pure spec declares no inputs"
+        }
+
+        test "choices binds a token to its typed value" {
+            let input = Input.choices<Layer> "--layer" choiceTable
+            let command = Command "generate"
+            command.Options.Add (getOption input)
+
+            let parsed = command.Parse [| "--layer"; "proto" |]
+
+            Expect.isEmpty parsed.Errors "a legal token parses cleanly"
+            Expect.equal (input.GetValue parsed).Path "src/Proto" "the stage receives the record, not the token"
+        }
+
+        test "choices rejects an unknown token as a parse error rather than an exception" {
+            let input = Input.choices<Layer> "--layer" choiceTable
+            let command = Command "generate"
+            command.Options.Add (getOption input)
+
+            let parsed = command.Parse [| "--layer"; "nope" |]
+
+            Expect.isNonEmpty parsed.Errors "an illegal token is a CLI diagnostic"
+            let message = parsed.Errors |> Seq.map (fun e -> e.Message) |> String.concat " "
+            Expect.stringContains message "nope" "the message names the offending token"
+            Expect.stringContains message "ast" "and lists what was legal"
+        }
+
+        test "choicesCI accepts a differently-cased token" {
+            let input = Input.choicesCI<Layer> "--layer" choiceTable
+            let command = Command "generate"
+            command.Options.Add (getOption input)
+
+            let parsed = command.Parse [| "--layer"; "PROTO" |]
+
+            Expect.isEmpty parsed.Errors "case-insensitive lookup accepts it"
+            Expect.equal (input.GetValue parsed).Name "proto" "and yields the canonical entry"
+        }
+
+        test "choicesMany binds every token it was given" {
+            let input = Input.choicesMany<Layer> "--layer" choiceTable
+            let command = Command "generate"
+            command.Options.Add (getOption input)
+
+            let parsed = command.Parse [| "--layer"; "ast"; "--layer"; "proto" |]
+
+            Expect.isEmpty parsed.Errors "both tokens are legal"
+            Expect.equal (input.GetValue parsed |> List.map (fun l -> l.Name)) [ "ast"; "proto" ] "in the order given"
         }
     ]

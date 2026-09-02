@@ -297,6 +297,78 @@ module Input =
         input
         |> editOption (fun o -> o.AllowMultipleArgumentsPerToken <- true)
 
+    /// <summary>An option whose legal values are a known set, each bound to a typed value.</summary>
+    /// <remarks>
+    /// One declaration produces completions, validation, help text and typed values. An unrecognised token
+    /// becomes a parse diagnostic listing the legal set, not an exception out of a lookup in the caller.
+    /// <para>
+    /// Comparison is a parameter of construction rather than a pipeable combinator: the parser closes over
+    /// this table when the input is built, and nothing downstream can reach back into that closure.
+    /// </para>
+    /// <para>
+    /// Verified against System.CommandLine 2.0.11: <c>AcceptOnlyFromAmong</c> runs its own validator ahead
+    /// of the custom parser and always compares tokens ordinally, so a case-insensitive <paramref name="comparer"/>
+    /// would still see a differently-cased token rejected before <c>tryParse</c> ever ran. When the comparer
+    /// is case-insensitive this registers the legal set as completions instead of calling
+    /// <c>acceptOnlyFromAmong</c>; the <c>tryParse</c> error below is what supplies validation on that path.
+    /// </para>
+    /// </remarks>
+    let choicesWith<'T> (comparer: StringComparer) (name: string) (choices: (string * 'T) list): ActionInput<'T> =
+        let keys = choices |> List.map fst
+        let legal = String.Join (", ", keys)
+        let lookup token = choices |> List.tryFind (fun (key, _) -> comparer.Equals (key, token)) |> Option.map snd
+        let caseSensitive = not (comparer.Equals ("a", "A"))
+
+        option<'T> name
+        |> (if caseSensitive then
+                acceptOnlyFromAmong keys
+            else
+                editOption (fun o -> for key in keys do o.CompletionSources.Add key))
+        |> tryParse (fun argResult ->
+            match argResult.Tokens |> Seq.tryLast with
+            | None -> Error $"'%s{name}' needs one of: %s{legal}"
+            | Some token ->
+                match lookup token.Value with
+                | Some value -> Ok value
+                | None -> Error $"'%s{token.Value}' is not one of: %s{legal}")
+
+    /// <summary>An option whose legal values are a known set, matched case-sensitively.</summary>
+    let choices<'T> (name: string) (choices: (string * 'T) list): ActionInput<'T> =
+        choicesWith<'T> StringComparer.Ordinal name choices
+
+    /// <summary>An option whose legal values are a known set, matched without regard to case.</summary>
+    let choicesCI<'T> (name: string) (choices: (string * 'T) list): ActionInput<'T> =
+        choicesWith<'T> StringComparer.OrdinalIgnoreCase name choices
+
+    /// <summary>A repeatable option over a known set, collecting every token as a typed value.</summary>
+    let choicesManyWith<'T> (comparer: StringComparer) (name: string) (choices: (string * 'T) list): ActionInput<'T list> =
+        let keys = choices |> List.map fst
+        let legal = String.Join (", ", keys)
+        let caseSensitive = not (comparer.Equals ("a", "A"))
+        let lookup token = choices |> List.tryFind (fun (key, _) -> comparer.Equals (key, token)) |> Option.map snd
+
+        option<'T list> name
+        |> (if caseSensitive then
+                acceptOnlyFromAmong keys
+            else
+                editOption (fun o -> for key in keys do o.CompletionSources.Add key))
+        |> arity Arity.ZeroOrMore
+        |> allowMultipleArgumentsPerToken
+        |> tryParse (fun argResult ->
+            let resolved = [ for token in argResult.Tokens -> token.Value, lookup token.Value ]
+
+            match resolved |> List.tryPick (fun (raw, value) -> if value.IsNone then Some raw else None) with
+            | Some unknown -> Error $"'%s{unknown}' is not one of: %s{legal}"
+            | None -> Ok [ for _, value in resolved -> value.Value ])
+
+    /// <summary>A repeatable option over a known set, matched case-sensitively.</summary>
+    let choicesMany<'T> (name: string) (choices: (string * 'T) list): ActionInput<'T list> =
+        choicesManyWith<'T> StringComparer.Ordinal name choices
+
+    /// <summary>A repeatable option over a known set, matched without regard to case.</summary>
+    let choicesManyCI<'T> (name: string) (choices: (string * 'T) list): ActionInput<'T list> =
+        choicesManyWith<'T> StringComparer.OrdinalIgnoreCase name choices
+
     /// Hides an option or argument from the help output.
     let hidden (input: ActionInput<'T>) =
         input

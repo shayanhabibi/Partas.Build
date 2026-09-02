@@ -118,4 +118,30 @@ let tests =
             Expect.equal ctx.WorkingDir (ValueSome "/tmp") "workingDir should be recorded"
             Expect.equal ctx.AcceptableExitCodes (set [ 0; 2 ]) "acceptExitCodes should be recorded"
         }
+
+        test "a step built from a literal command line carries it as a label" {
+            let built = stage "test" { run "dotnet test --no-build" }
+
+            let labels = [ for step in built.Steps do match step with Step.StepFn(label, _) -> label | _ -> () ]
+            Expect.equal labels [ ValueSome "dotnet test --no-build" ] "the literal is the label"
+        }
+
+        test "a step built from cmd carries the printable command line, with secrets masked" {
+            let key = "super-secret-key"
+            let built = stage "push" { runSensitive $"dotnet nuget push pkg.nupkg -k {key}" }
+
+            let labels = [ for step in built.Steps do match step with Step.StepFn(label, _) -> label | _ -> () ]
+            match labels with
+            | [ ValueSome label ] ->
+                Expect.stringContains label "nuget push" "the label shows the command"
+                Expect.isFalse (label.Contains key) "and never the secret"
+            | other -> failtestf "expected one labelled step, got %A" other
+        }
+
+        test "a step built from a function has no label to show" {
+            let built = stage "compute" { run (fun (_: StageContext) -> ()) }
+
+            let labels = [ for step in built.Steps do match step with Step.StepFn(label, _) -> label | _ -> () ]
+            Expect.equal labels [ ValueNone ] "an opaque closure claims nothing"
+        }
     ]

@@ -98,7 +98,15 @@ type StepIndex = int<stepIndex>
 
 type [<Struct; RequireQualifiedAccess>]
     Step =
-    | StepFn of fn: (StageContext -> StepIndex -> Async<Result<unit, string>>)
+    /// <summary>A step, and the command line it prints as when there is one.</summary>
+    /// <remarks>
+    /// The label is what <c>--explain</c> renders. It is populated for the <c>run</c> overloads whose
+    /// command is known at construction — a literal string, or a <c>Cmd</c> — and left empty for the ones
+    /// taking a function, whose command is a closure nothing can read. An empty label renders as the step's
+    /// index rather than as a guess.
+    /// <para>Labels come from <c>Cmd.toLogString</c>, which masks secrets, so a label is safe to print.</para>
+    /// </remarks>
+    | StepFn of label: string voption * fn: (StageContext -> StepIndex -> Async<Result<unit, string>>)
     | StepOfStage of stage: StageContext
 
 /// <summary>
@@ -655,9 +663,10 @@ module StageContext =
     let inline addSteps (steps: Step seq) (stage: StageContext) = { stage with Steps = stage.Steps @ (steps |> Seq.toList) }
     let inline addSubStage (subStage: StageContext) stage = addStep (Step.StepOfStage subStage) stage
     let inline addSubStages (subStages: StageContext seq) stage = addSteps (subStages |> Seq.map Step.StepOfStage) stage
-    let inline addBuildStep ([<InlineIfLambda>] step: BuildStep) stage = addStep (Step.StepFn step) stage
-    let inline addBuildSteps (steps: BuildStep seq) stage = addSteps (steps |> Seq.map Step.StepFn) stage
+    let inline addBuildStep ([<InlineIfLambda>] step: BuildStep) stage = addStep (Step.StepFn(ValueNone, step)) stage
+    let inline addBuildSteps (steps: BuildStep seq) stage = addSteps (steps |> Seq.map (fun step -> Step.StepFn(ValueNone, step))) stage
     let addStepFn = addBuildStep
+    let inline addLabelledStepFn (label: string) ([<InlineIfLambda>] step: BuildStep) stage = addStep (Step.StepFn(ValueSome label, step)) stage
     let inline addPredicate ([<InlineIfLambda>] condition: BuildStageIsActive) stage =
         { stage with IsActive = fun ctx -> stage.IsActive ctx && condition ctx }
     let inline addEnvVars (kvs: seq<string * string>) (stage: StageContext) = { stage with EnvVars = kvs |> Seq.fold (fun state (k, v) -> Map.add k v state) stage.EnvVars }
@@ -799,7 +808,7 @@ module Runners =
                                 |> vprintn stage
                                 let! isSuccess =
                                     match step with
-                                    | Step.StepFn fn -> async {
+                                    | Step.StepFn(_, fn) -> async {
                                         match! fn stage (i |> LanguagePrimitives.Int32WithMeasure) with
                                         | Error e when not (String.IsNullOrEmpty e) ->
                                             if parallelism.IsNone && getNoPrefixForStep stage

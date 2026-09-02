@@ -1,5 +1,7 @@
 module Partas.Build.Tests.StageTests
 
+open System
+open System.Threading
 open Expecto
 open Partas.Build
 open Partas.Build.Internal
@@ -218,6 +220,42 @@ let tests =
             runStage built |> ignore
             Expect.equal attempts.Value 2 "one attempt plus one retry"
             Expect.equal capture.Lines [ "from the parent"; "from the attempt" ] "a retry keeps what ran before the stage and one attempt's own"
+        }
+
+        test "a retry under parallel' leaves a concurrent sibling's lines in the shared capture" {
+            let capture = OutputCapture ()
+            let attempts = ref 0
+            use wrote = new ManualResetEventSlim (false)
+
+            let built =
+                stage "outer" {
+                    captureOutput capture
+                    parallel' 2
+
+                    stage "sibling" {
+                        run (fun (ctx: StageContext) ->
+                            for i in 1 .. 5 do
+                                StageContext.writeLine ctx StdStream.Out $"sibling {i}"
+                            wrote.Set ())
+                    }
+
+                    stage "flaky" {
+                        retry 3
+                        run (fun (ctx: StageContext) ->
+                            // The sibling has written by the time the first attempt ends, so every later attempt
+                            // starts with the sibling's lines already in the shared capture.
+                            wrote.Wait (TimeSpan.FromSeconds 10.) |> ignore
+                            incr attempts
+                            StageContext.writeLine ctx StdStream.Out "flaky"
+                            Error "always")
+                    }
+                }
+
+            runStage built |> ignore
+            let siblingLines = capture.Lines |> List.filter _.StartsWith("sibling")
+            Expect.equal attempts.Value 4 "one attempt plus three retries"
+            Expect.equal siblingLines.Length 5 $"a retry must not take a concurrent sibling's lines: {capture.Lines}"
+            Expect.equal capture.Lines.Length 9 $"a shared capture keeps every attempt: {capture.Lines}"
         }
 
         test "a sub-stage runs once inside each attempt of a retrying parent" {

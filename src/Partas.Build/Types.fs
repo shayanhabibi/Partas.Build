@@ -220,7 +220,8 @@ and StageContext = {
     /// <summary>How many further attempts the stage's steps get after a failing one; <c>0</c> gives a single attempt.</summary>
     /// <remarks>
     /// <c>Timeout</c> is the budget for the whole stage, retries included. A stage that exhausts it stops with
-    /// attempts remaining.
+    /// attempts remaining. A failure lifts the last attempt's output; under a <c>parallel'</c> ancestor whose
+    /// capture the stage shares, it lifts every attempt together.
     /// </remarks>
     Retry: int
     WorkingDir: string voption
@@ -388,6 +389,28 @@ module StageContext =
         match getOutput ctx with
         | ValueSome(StageOutput.Captured capture) -> ValueSome capture
         | _ -> ValueNone
+
+    /// <summary>The capture into which this stage is the only writer while it runs.</summary>
+    /// <remarks>
+    /// A stage's own capture always qualifies, and an inherited one qualifies while every stage between the two
+    /// runs its sub-stages sequentially. Under a <c>parallel'</c> ancestor a sibling writes into the same capture
+    /// at the same time, and the answer is <c>ValueNone</c>.
+    /// </remarks>
+    let tryGetOwnCapture (ctx: StageContext) =
+        match ctx.Output with
+        | ValueSome(StageOutput.Captured capture) -> ValueSome capture
+        | ValueSome _ -> ValueNone
+        | ValueNone ->
+            match tryGetCapture ctx with
+            | ValueNone -> ValueNone
+            | ValueSome capture ->
+                let rec sharesWithSiblings (child: StageContext) =
+                    mapParentContext
+                        false
+                        (fun _ -> false)
+                        (fun parent -> (parent.IsParallel parent).IsSome || (parent.Output.IsNone && sharesWithSiblings parent))
+                        child
+                if sharesWithSiblings ctx then ValueNone else ValueSome capture
 
     /// <summary>Writes one line of step output wherever <see cref="M:getOutput"/> says it belongs.</summary>
     /// <remarks>
@@ -902,9 +925,10 @@ module Runners =
 
                     // The length of the capture this stage writes into, as the stage found it. Each attempt trims
                     // back to this length, discarding the lines of earlier attempts and retaining those contributed
-                    // by an ancestor's earlier stages.
+                    // by an ancestor's earlier stages. A stage sharing a capture with a concurrent sibling has no
+                    // length that separates the two, and keeps every attempt.
                     let capturedBefore =
-                        tryGetCapture stage
+                        tryGetOwnCapture stage
                         |> ValueOption.map (fun capture -> capture, capture.Count)
 
                     let parallelism = stage.IsParallel stage
@@ -943,7 +967,6 @@ module Runners =
                         succeed()
                         stepExns.Clear()
 
-                        // Every attempt starts from the capture as the stage found it.
                         match capturedBefore with
                         | ValueSome(capture, count) -> capture.TrimTo count
                         | ValueNone -> ()

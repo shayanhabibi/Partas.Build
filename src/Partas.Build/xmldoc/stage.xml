@@ -7,9 +7,10 @@
     <remarks>
     <para>A stage whose steps fail runs them again, up to <c>count</c> further attempts; <c>0</c>, the default,
     gives a single attempt, and a negative count is read as <c>0</c>.</para>
-    <para>Every attempt starts from the <c>OutputCapture</c> as the stage found it, whether the stage declared
-    that capture or inherited it: a failure lifts the last attempt's output, and the lines an ancestor's earlier
-    stages wrote into an inherited capture are retained.</para>
+    <para>A failure lifts the last attempt's output alone, alongside the lines an inherited
+    <c>OutputCapture</c> already held when the stage started.</para>
+    <para>Under a <c>parallel'</c> ancestor, whose capture this stage shares with the stages running beside it,
+    every attempt is kept instead: a sibling's lines survive, and a failure lifts all the attempts together.</para>
     <para>Only the stage's own steps are repeated. A sub-stage retries under its own <c>retry</c> setting, and
     otherwise runs once inside each attempt of its parent.</para>
     <para><c>timeout</c> is the budget for the whole stage, retries included, rather than for each attempt. A

@@ -132,4 +132,26 @@ let tests =
             let peak = peakOf (fun ctx -> { ctx with IsParallel = fun _ -> ValueSome -1 })
             Expect.equal peak stepCount "nothing should hold a step back when the stage is unbounded"
         }
+
+        test "parallel branches flush output in blocks, not interleaved" {
+            let lines = ResizeArray<string>()
+            let write _ line = lock lines (fun () -> lines.Add line)
+
+            let built =
+                pipeline "install" {
+                    stage "installs" {
+                        parallel' 2
+                        redirectOutput write
+
+                        stage "a" { run (fun ctx -> for i in 1..5 do Thread.Sleep 5; StageContext.writeLine ctx StdStream.Out $"a{i}") }
+                        stage "b" { run (fun ctx -> for i in 1..5 do Thread.Sleep 5; StageContext.writeLine ctx StdStream.Out $"b{i}") }
+                    }
+                }
+
+            PipelineContext.run built
+
+            let sequence = List.ofSeq lines |> List.map (fun l -> l.Substring(0, 1))
+            let blocks = sequence |> List.fold (fun acc c -> match acc with | h :: _ when h = c -> acc | _ -> c :: acc) []
+            Expect.equal (List.length blocks) 2 "each branch's five lines should arrive as one contiguous run"
+        }
     ]

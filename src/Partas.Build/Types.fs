@@ -404,8 +404,9 @@ module StageContext =
     /// <summary>The capture into which this stage is the only writer while it runs.</summary>
     /// <remarks>
     /// A stage's own capture always qualifies, and an inherited one qualifies while every stage between the two
-    /// runs its sub-stages sequentially. Under a <c>parallel'</c> ancestor a sibling writes into the same capture
-    /// at the same time, and the answer is <c>ValueNone</c>.
+    /// runs its sub-stages sequentially. Under a <c>parallel'</c> ancestor a sibling's own writes go to its own
+    /// step buffer, but its finished flush still lands in the same inherited capture, so the answer is
+    /// <c>ValueNone</c>.
     /// </remarks>
     let tryGetOwnCapture (ctx: StageContext) =
         match ctx.Output with
@@ -1004,10 +1005,10 @@ module Runners =
                         use stepCts = new System.Threading.CancellationTokenSource(timeoutForStep)
                         use linkedStepCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(stepCts.Token, linkedCts.Token)
 
-                        // Shared by every step's flush, so two branches finishing at once cannot interleave.
+                        // Held by every step's flush of this stage, serialising them against each other.
                         let flushLock = obj ()
-                        // Whether two of this stage's steps can be running at the same time; a `parallel' 1`
-                        // throttle admits only one, so it takes the sequential branch below alongside `ValueNone`.
+                        // Whether two of this stage's steps can be running at the same time. A `parallel' 1`
+                        // throttle takes the sequential branch below, alongside `ValueNone`.
                         let canOverlap = parallelism |> ValueOption.map ((<>) 1) |> ValueOption.defaultValue false
 
                         let steps =
@@ -1025,8 +1026,8 @@ module Runners =
                                         |> sprintf "%s>"
                                         |> Markup.escape
 
-                                // A step's own transport buffer, ahead of `stage`'s `Output`: it holds every line
-                                // this one step writes, so a concurrent sibling's lines cannot land between them.
+                                // A step's own transport buffer, ahead of `stage`'s `Output`, holding every line
+                                // this one step writes until its flush.
                                 let buffer = if canOverlap then ValueSome(OutputCapture()) else ValueNone
                                 let stepStage =
                                     match buffer with

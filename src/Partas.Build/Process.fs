@@ -311,6 +311,7 @@ module CmdRunner =
         |> vprintn ctx
 
         let output = StageContext.getOutput ctx
+        let stepBuffer = StageContext.getStepBuffer ctx
 
         let toConsole =
             match output with
@@ -318,9 +319,12 @@ module CmdRunner =
             | _ -> false
 
         // Redirection costs the child's colours, so it is only worth it when the output has to be prefixed --
-        // or when the stage has said it goes somewhere that is not the console, which cannot be done without it.
-        // `noStdRedirectForStep` is the explicit opt out and wins over both: it makes capture impossible, by design.
-        let redirect = (not noPrefix || not toConsole) && not (StageContext.getNoStdRedirectForStep ctx)
+        // or when the stage has said it goes somewhere that is not the console, which cannot be done without it --
+        // or when a step buffer is in play, since buffering a line is impossible without first receiving it here.
+        // `noStdRedirectForStep` is the explicit opt out and wins over all three: it makes capture impossible, by
+        // design.
+        let redirect =
+            (not noPrefix || not toConsole || stepBuffer.IsSome) && not (StageContext.getNoStdRedirectForStep ctx)
         let startInfo = toStartInfo ctx cmd
 
         if redirect then
@@ -375,8 +379,19 @@ module CmdRunner =
                 // error instead, which is what reaches `printError` and the GitHub Actions annotation.
                 | Error message ->
                     match output with
-                    | ValueSome(StageOutput.Captured capture) when not capture.IsEmpty ->
-                        Error $"%s{message}%s{Environment.NewLine}%s{capture.FailureText}"
+                    | ValueSome(StageOutput.Captured capture) ->
+                        // A step buffer in play holds this step's own lines; the author's capture only sees them
+                        // once flushed, by which point a concurrent sibling's lines may already be in it. Lifting
+                        // from the buffer when there is one keeps the annotation to this step's own output.
+                        let failureText =
+                            match stepBuffer with
+                            | ValueSome buffer when not buffer.IsEmpty -> ValueSome buffer.FailureText
+                            | ValueSome _ -> ValueNone
+                            | ValueNone when not capture.IsEmpty -> ValueSome capture.FailureText
+                            | ValueNone -> ValueNone
+                        match failureText with
+                        | ValueSome text -> Error $"%s{message}%s{Environment.NewLine}%s{text}"
+                        | ValueNone -> Error message
                     | _ -> Error message
     }
 

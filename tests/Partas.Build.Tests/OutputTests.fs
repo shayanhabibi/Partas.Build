@@ -81,6 +81,30 @@ let tests =
             | Error message -> Expect.isFalse (message.Contains "Could not execute") "nothing was held, so there is nothing to lift"
         }
 
+        test "a step buffer forces redirection even under the console sink" {
+            let buffer = OutputCapture()
+            let ctx = { StageContext.create "output" with StepBuffer = ValueSome buffer }
+
+            let result = runStep ctx quiet
+
+            Expect.equal result (Ok()) "the command exits zero"
+            Expect.isNonEmpty buffer.Lines "a step buffer in play must redirect the child, not let it write the console handle directly"
+        }
+
+        test "a failing step under a step buffer lifts its own lines, not a sibling's already-flushed ones" {
+            let capture = OutputCapture()
+            capture.Add (StdStream.Out, "sibling-1")
+            capture.Add (StdStream.Out, "sibling-2")
+            let buffer = OutputCapture()
+            let ctx = { stageWith (StageOutput.Captured capture) with StepBuffer = ValueSome buffer }
+
+            match runStep ctx loud with
+            | Ok () -> failtest "the command exits one"
+            | Error message ->
+                Expect.stringContains message "Could not execute" "its own stderr should still be lifted"
+                Expect.isFalse (message.Contains "sibling") "a sibling's already-flushed lines must not be lifted as this step's own"
+        }
+
         test "redirect hands over each line as it arrives" {
             let lines = ResizeArray()
             let ctx = stageWith (StageOutput.Redirect (fun stream line -> lock lines (fun () -> lines.Add (stream, line))))

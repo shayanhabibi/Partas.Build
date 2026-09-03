@@ -235,6 +235,13 @@ and StageContext = {
     NoPrefixForStep: bool
     NoStdRedirectForStep: bool
     Output: StageOutput voption
+    /// <summary>The capture a running step's writes go to under <c>parallel'</c>, ahead of the stage's own
+    /// <c>Output</c>.</summary>
+    /// <remarks>
+    /// Set by <c>StageContext.run</c> on the value it hands a step for the step's own duration, never by a
+    /// stage builder. A stage's own declared <c>Output</c> still takes precedence over an inherited one.
+    /// </remarks>
+    StepBuffer: OutputCapture voption
     ShuffleExecuteSequence: bool
     ParentContext: StageParent voption
     /// <summary>The ordinal this stage took from the pipeline's <c>StageTimings</c> when it started.</summary>
@@ -329,6 +336,7 @@ module StageContext =
             NoPrefixForStep = true
             NoStdRedirectForStep = false
             Output = ValueNone
+            StepBuffer = ValueNone
             ShuffleExecuteSequence = false
             ParentContext = ValueNone
             TimingOrder = ValueNone
@@ -415,18 +423,31 @@ module StageContext =
                         child
                 if sharesWithSiblings ctx then ValueNone else ValueSome capture
 
-    /// <summary>Writes one line of step output wherever <see cref="M:getOutput"/> says it belongs.</summary>
+    /// <summary>The transport buffer a step's writes go to instead of <see cref="M:getOutput"/>'s answer, taking
+    /// the nearest declaration walking upward.</summary>
+    /// <remarks>A stage's own <c>Output</c> stops the walk: an explicit sink is never rerouted into an ancestor's
+    /// buffer.</remarks>
+    let rec getStepBuffer (ctx: StageContext) =
+        match ctx.StepBuffer with
+        | ValueSome _ as buffer -> buffer
+        | ValueNone -> if ctx.Output.IsSome then ValueNone else mapStageParentContext ValueNone getStepBuffer ctx
+
+    /// <summary>Writes one line of step output wherever <see cref="M:getStepBuffer"/> or, failing that,
+    /// <see cref="M:getOutput"/> says it belongs.</summary>
     /// <remarks>
     /// The way for a step to emit something the stage can suppress or capture. A bare <c>printfn</c> goes to
     /// the console whatever the stage says, because nothing routes it.
     /// </remarks>
     let writeLine (ctx: StageContext) (stream: StdStream) (line: string) =
-        match getOutput ctx with
-        // Both streams merged onto stdout, as they were before there was anywhere else to put them.
-        | ValueNone | ValueSome StageOutput.Console -> Console.WriteLine line
-        | ValueSome StageOutput.Silent -> ()
-        | ValueSome(StageOutput.Captured capture) -> capture.Add (stream, line)
-        | ValueSome(StageOutput.Redirect write) -> write stream line
+        match getStepBuffer ctx with
+        | ValueSome buffer -> buffer.Add (stream, line)
+        | ValueNone ->
+            match getOutput ctx with
+            // Both streams merged onto stdout, as they were before there was anywhere else to put them.
+            | ValueNone | ValueSome StageOutput.Console -> Console.WriteLine line
+            | ValueSome StageOutput.Silent -> ()
+            | ValueSome(StageOutput.Captured capture) -> capture.Add (stream, line)
+            | ValueSome(StageOutput.Redirect write) -> write stream line
 
     let rec buildEnvVars (ctx: StageContext) =
         mapParentContext Map.empty _.EnvVars buildEnvVars ctx
@@ -984,7 +1005,10 @@ module Runners =
                         use linkedStepCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(stepCts.Token, linkedCts.Token)
 
                         // Shared by every step's flush, so two branches finishing at once cannot interleave.
-                        let flushLock = obj()
+                        let flushLock = obj ()
+                        // Whether two of this stage's steps can be running at the same time; a `parallel' 1`
+                        // throttle admits only one, so it takes the sequential branch below alongside `ValueNone`.
+                        let canOverlap = parallelism |> ValueOption.map ((<>) 1) |> ValueOption.defaultValue false
 
                         let steps =
                             stage.Steps
@@ -1001,22 +1025,19 @@ module Runners =
                                         |> sprintf "%s>"
                                         |> Markup.escape
 
-                                // Under `parallel'`, a step writes into a capture of its own rather than the shared
-                                // sink, so two branches finishing at once cannot interleave their lines; `stepStage`
-                                // still answers `stage`'s own `IsParallel`, so a sub-stage's retries still see
-                                // themselves as sharing a capture with a concurrent sibling.
-                                let buffer = if parallelism.IsSome then ValueSome(OutputCapture()) else ValueNone
+                                // A step's own transport buffer, ahead of `stage`'s `Output`: it holds every line
+                                // this one step writes, so a concurrent sibling's lines cannot land between them.
+                                let buffer = if canOverlap then ValueSome(OutputCapture()) else ValueNone
                                 let stepStage =
                                     match buffer with
-                                    | ValueSome capture -> { stage with Output = ValueSome(StageOutput.Captured capture) }
+                                    | ValueSome capture -> { stage with StepBuffer = ValueSome capture }
                                     | ValueNone -> stage
-                                // Replays the buffer into `stage`'s own sink, under a lock shared by every branch of
-                                // this stage so two flushes cannot interleave.
+                                // Replays the buffer into `stage`'s real sink, under `flushLock`.
                                 let flush () =
                                     match buffer with
                                     | ValueSome capture ->
                                         lock flushLock (fun () ->
-                                            for struct(stream, line) in capture.Entries do
+                                            for struct (stream, line) in capture.Entries do
                                                 writeLine stage stream line)
                                     | ValueNone -> ()
 

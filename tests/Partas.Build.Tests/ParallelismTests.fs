@@ -1,5 +1,6 @@
 module Partas.Build.Tests.ParallelismTests
 
+open System
 open System.Threading
 open Expecto
 open Partas.Build
@@ -8,6 +9,21 @@ open Partas.Build.Internal
 /// `IsParallel` is a function of the stage, so reading it back means applying it. Nothing in these overloads
 /// consults the context, so the stage can be its own argument.
 let private parallelism (ctx: StageContext) = ctx.IsParallel ctx
+
+/// The number of runs of the same first character: two branches each writing five lines and never
+/// interleaving give 2, however finely their writes end up interleaved give up to 10.
+let private blocksOf (lines: string seq) =
+    lines
+    |> Seq.map (fun (l: string) -> l.Substring(0, 1))
+    |> Seq.fold (fun acc c -> match acc with | h :: _ when h = c -> acc | _ -> c :: acc) []
+    |> List.length
+
+/// Forces two branches into lockstep, one write each before either takes the next: without the fix this
+/// interleaves every single line, so the assertion cannot pass by scheduling luck either way.
+let private lockstepWrite (barrier: Barrier) ctx prefix =
+    for i in 1..5 do
+        StageContext.writeLine ctx StdStream.Out $"{prefix}{i}"
+        barrier.SignalAndWait(TimeSpan.FromSeconds 5.) |> ignore
 
 let private voptionOf (value: int voption) : StageContext -> int voption = fun _ -> value
 let private boolOf (value: bool) : StageContext -> bool = fun _ -> value
@@ -133,9 +149,10 @@ let tests =
             Expect.equal peak stepCount "nothing should hold a step back when the stage is unbounded"
         }
 
-        test "parallel branches flush output in blocks, not interleaved" {
+        test "parallel sub-stages flush output in blocks, not interleaved" {
             let lines = ResizeArray<string>()
             let write _ line = lock lines (fun () -> lines.Add line)
+            use barrier = new Barrier(2)
 
             let built =
                 pipeline "install" {
@@ -143,15 +160,34 @@ let tests =
                         parallel' 2
                         redirectOutput write
 
-                        stage "a" { run (fun ctx -> for i in 1..5 do Thread.Sleep 5; StageContext.writeLine ctx StdStream.Out $"a{i}") }
-                        stage "b" { run (fun ctx -> for i in 1..5 do Thread.Sleep 5; StageContext.writeLine ctx StdStream.Out $"b{i}") }
+                        stage "a" { run (fun ctx -> lockstepWrite barrier ctx "a") }
+                        stage "b" { run (fun ctx -> lockstepWrite barrier ctx "b") }
                     }
                 }
 
             PipelineContext.run built
 
-            let sequence = List.ofSeq lines |> List.map (fun l -> l.Substring(0, 1))
-            let blocks = sequence |> List.fold (fun acc c -> match acc with | h :: _ when h = c -> acc | _ -> c :: acc) []
-            Expect.equal (List.length blocks) 2 "each branch's five lines should arrive as one contiguous run"
+            Expect.equal (blocksOf lines) 2 "each sub-stage's five lines should arrive as one contiguous run"
+        }
+
+        test "parallel steps flush output in blocks, not interleaved" {
+            let lines = ResizeArray<string>()
+            let write _ line = lock lines (fun () -> lines.Add line)
+            use barrier = new Barrier(2)
+
+            let built =
+                pipeline "install" {
+                    stage "installs" {
+                        parallel' 2
+                        redirectOutput write
+
+                        run (fun ctx -> lockstepWrite barrier ctx "a")
+                        run (fun ctx -> lockstepWrite barrier ctx "b")
+                    }
+                }
+
+            PipelineContext.run built
+
+            Expect.equal (blocksOf lines) 2 "each step's five lines should arrive as one contiguous run"
         }
     ]

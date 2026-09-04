@@ -1,5 +1,6 @@
 module Partas.Build.Tests.InputsTests
 
+open System
 open Expecto
 open Partas.Build
 open Partas.Build.Tests.Helpers
@@ -145,8 +146,10 @@ let tests =
             Expect.equal spec.Inputs [] "a pure spec declares no inputs"
         }
 
-        test "choices binds a token to its typed value" {
-            let input = Input.choices<Layer> "--layer" choiceTable
+        test "mapFromAmong binds a token to its typed value" {
+            let input =
+                Input.option<Layer> "--layer"
+                |> Input.mapFromAmong choiceTable
             let command = Command "generate"
             command.Options.Add (getOption input)
 
@@ -156,21 +159,25 @@ let tests =
             Expect.equal (input.GetValue parsed).Path "src/Proto" "the stage receives the record, not the token"
         }
 
-        test "choices rejects an unknown token as a parse error rather than an exception" {
-            let input = Input.choices<Layer> "--layer" choiceTable
+        test "mapFromAmong rejects an unknown token as a parse error rather than an exception" {
+            let input =
+                Input.option<Layer> "--layer"
+                |> Input.mapFromAmong choiceTable
             let command = Command "generate"
             command.Options.Add (getOption input)
 
             let parsed = command.Parse [| "--layer"; "nope" |]
 
             Expect.isNonEmpty parsed.Errors "an illegal token is a CLI diagnostic"
-            let message = parsed.Errors |> Seq.map (fun e -> e.Message) |> String.concat " "
+            let message = parsed.Errors |> Seq.map _.Message |> String.concat " "
             Expect.stringContains message "nope" "the message names the offending token"
             Expect.stringContains message "ast" "and lists what was legal"
         }
 
         test "choicesCI accepts a differently-cased token" {
-            let input = Input.choicesCI<Layer> "--layer" choiceTable
+            let input =
+                Input.option<Layer> "--layer"
+                |> Input.mapFromAmongWith StringComparer.OrdinalIgnoreCase choiceTable
             let command = Command "generate"
             command.Options.Add (getOption input)
 
@@ -181,7 +188,9 @@ let tests =
         }
 
         test "choicesMany binds every token it was given" {
-            let input = Input.choicesMany<Layer> "--layer" choiceTable
+            let input =
+                Input.option<Layer list> "--layer"
+                |> Input.mapFromMany choiceTable
             let command = Command "generate"
             command.Options.Add (getOption input)
 

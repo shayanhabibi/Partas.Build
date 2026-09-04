@@ -11,6 +11,47 @@ module private MaybeParser =
         | t when t = typeof<Uri> -> Uri(tokenValue) |> unbox<'T> |> Some
         | t -> Convert.ChangeType(tokenValue, t) :?> 'T |> Some
 
+module private SafeDefaults =
+    let private dynamicListParser<'T>(): Parsing.ArgumentResult -> 'T = fun result ->
+        let typ = typeof<'T>
+        let elementType =
+            match typ.GetElementType() with
+            | Null -> typ.GetGenericArguments()[0]
+            | typ -> typ
+        let dynamicArray = Array.CreateInstance(elementType, result.Tokens.Count)
+        result.Tokens
+        |> Seq.iteri (fun i token ->
+            dynamicArray.SetValue(Convert.ChangeType(token.Value, elementType), i)
+            )
+
+        let listModule = typeof<list<obj>>.Assembly.GetType("Microsoft.FSharp.Collections.FSharpList`1")
+        let method = listModule.GetMethod("OfArray", System.Reflection.BindingFlags.Static ||| System.Reflection.BindingFlags.Public)
+        method.MakeGenericMethod(elementType).Invoke(null, [| dynamicArray |]) |> unbox
+    let private dynamicEmptyList<'T>(): 'T =
+        match typeof<'T>.GetProperty("Empty", System.Reflection.BindingFlags.Static ||| System.Reflection.BindingFlags.Public) with
+        | Null -> failwithf $"Could not find Empty property on type %s{typeof<'T>.FullName}"
+        | prop -> prop.GetValue(null) |> unbox
+
+    [<AutoOpen>]
+    type ActionInputProtector =
+        static member protect<'T>(o: Option<'T>) =
+            match typeof<'T> with
+            | typ when typ.IsGenericType && typ.GetGenericTypeDefinition() = typedefof<list<_>> ->
+                o.Arity <- ArgumentArity (0, 100_000)
+                o.CustomParser <- dynamicListParser<'T>()
+                o.DefaultValueFactory <- (fun _ -> dynamicEmptyList<'T>())
+                o
+            | _ -> o
+        static member protect<'T>(o: Argument<'T>) =
+            match typeof<'T> with
+            | typ when typ.IsGenericType && typ.GetGenericTypeDefinition() = typedefof<list<_>> ->
+                o.Arity <- ArgumentArity (0, 100_000)
+                o.CustomParser <- dynamicListParser<'T>()
+                o.DefaultValueFactory <- (fun _ -> dynamicEmptyList<'T>())
+                o
+            | _ -> o
+
+
 type ActionContext =
     {
         ParseResult: ParseResult
@@ -78,7 +119,9 @@ module Input =
 
     /// Creates a named option. Example: `option "--file-name"`
     let option<'T> (name: string) =
-        Option<'T>(name) |> ActionInput.OfOption
+        Option<'T>(name)
+        |> SafeDefaults.ActionInputProtector.protect
+        |> ActionInput.OfOption
 
     /// Edits the underlying System.CommandLine.Option<'T>.
     let editOption (edit: Option<'T> -> unit) (input: ActionInput<'T>) =
@@ -193,8 +236,9 @@ module Input =
 
     /// Creates a named argument. Example: `argument "file-name"`
     let argument<'T> (name: string) =
-        let a = Argument<'T>(name)
-        ActionInput.OfArgument<'T> a
+        Argument<'T>(name)
+        |> SafeDefaults.ActionInputProtector.protect
+        |> ActionInput.OfArgument<'T>
 
     /// Creates a named argument of type `Argument<'T option>` that defaults to `None`.
     let argumentMaybe<'T> (name: string) =
@@ -296,77 +340,53 @@ module Input =
         input
         |> editOption (fun o -> o.AllowMultipleArgumentsPerToken <- true)
 
-    /// <summary>An option whose legal values are a known set, each bound to a typed value.</summary>
-    /// <remarks>
-    /// One declaration produces completions, validation, help text and typed values. An unrecognised token
-    /// becomes a parse diagnostic listing the legal set, not an exception out of a lookup in the caller.
-    /// <para>
-    /// Comparison is a parameter of construction rather than a pipeable combinator: the parser closes over
-    /// this table when the input is built, and nothing downstream can reach back into that closure.
-    /// </para>
-    /// <para>
-    /// Verified against System.CommandLine 2.0.11: <c>AcceptOnlyFromAmong</c> runs its own validator ahead
-    /// of the custom parser and always compares tokens ordinally, so a case-insensitive <paramref name="comparer"/>
-    /// would still see a differently-cased token rejected before <c>tryParse</c> ever ran. When the comparer
-    /// is case-insensitive this registers the legal set as completions instead of calling
-    /// <c>acceptOnlyFromAmong</c>; the <c>tryParse</c> error below is what supplies validation on that path.
-    /// </para>
-    /// </remarks>
-    let choicesWith<'T> (comparer: StringComparer) (name: string) (choices: (string * 'T) list): ActionInput<'T> =
-        let keys = choices |> List.map fst
-        let legal = String.Join (", ", keys)
-        let lookup token = choices |> List.tryFind (fun (key, _) -> comparer.Equals (key, token)) |> Option.map snd
-        let caseSensitive = not (comparer.Equals ("a", "A"))
+    let addCompletion (completion: string) (input: ActionInput<'T>) =
+        input
+        |> editOption _.CompletionSources.Add(completion)
+        |> editArgument _.CompletionSources.Add(completion)
 
-        option<'T> name
-        |> (if caseSensitive then
-                acceptOnlyFromAmong keys
-            else
-                editOption (fun o -> for key in keys do o.CompletionSources.Add key))
+    let addCompletions (completions: string seq) (input: ActionInput<'T>) =
+        input
+        |> editOption (fun o -> completions |> Seq.iter o.CompletionSources.Add)
+        |> editArgument (fun a -> completions |> Seq.iter a.CompletionSources.Add)
+
+    let mapFromAmongWith<'T> (comparer: StringComparer) (choices: seq<string * 'T>) (action: ActionInput<'T>) =
+        let keys = choices |> Seq.map fst
+        let legal = String.Join (", ", keys)
+        let lookup token = choices |> Seq.tryFind (fun (key, _) -> comparer.Equals (key, token)) |> Option.map snd
+        action
+        |> addCompletions keys
         |> tryParse (fun argResult ->
             match argResult.Tokens |> Seq.tryLast with
-            | None -> Error $"'%s{name}' needs one of: %s{legal}"
+            | None -> Error $"'%s{argResult.Argument.Name}' needs one of: %s{legal}"
             | Some token ->
                 match lookup token.Value with
                 | Some value -> Ok value
                 | None -> Error $"'%s{token.Value}' is not one of: %s{legal}")
+    let mapFromAmong<'T> choices action: ActionInput<'T> = mapFromAmongWith StringComparer.Ordinal choices action
 
-    /// <summary>An option whose legal values are a known set, matched case-sensitively.</summary>
-    let choices<'T> (name: string) (choices: (string * 'T) list): ActionInput<'T> =
-        choicesWith<'T> StringComparer.Ordinal name choices
-
-    /// <summary>An option whose legal values are a known set, matched without regard to case.</summary>
-    let choicesCI<'T> (name: string) (choices: (string * 'T) list): ActionInput<'T> =
-        choicesWith<'T> StringComparer.OrdinalIgnoreCase name choices
-
-    /// <summary>A repeatable option over a known set, collecting every token as a typed value.</summary>
-    let choicesManyWith<'T> (comparer: StringComparer) (name: string) (choices: (string * 'T) list): ActionInput<'T list> =
-        let keys = choices |> List.map fst
+    let mapFromManyWith<'T> (comparer: StringComparer) (choices: seq<string * 'T>) (action: ActionInput<'T list>) =
+        let keys = choices |> Seq.map fst
         let legal = String.Join (", ", keys)
-        let caseSensitive = not (comparer.Equals ("a", "A"))
-        let lookup token = choices |> List.tryFind (fun (key, _) -> comparer.Equals (key, token)) |> Option.map snd
-
-        option<'T list> name
-        |> (if caseSensitive then
-                acceptOnlyFromAmong keys
-            else
-                editOption (fun o -> for key in keys do o.CompletionSources.Add key))
-        |> arity Arity.ZeroOrMore
-        |> allowMultipleArgumentsPerToken
+        let lookup token = choices |> Seq.tryFind (fun (key, _) -> comparer.Equals (key, token)) |> Option.map snd
+        action
+        |> addCompletions keys
         |> tryParse (fun argResult ->
-            let resolved = [ for token in argResult.Tokens -> token.Value, lookup token.Value ]
-
-            match resolved |> List.tryPick (fun (raw, value) -> if value.IsNone then Some raw else None) with
-            | Some unknown -> Error $"'%s{unknown}' is not one of: %s{legal}"
-            | None -> Ok [ for _, value in resolved -> value.Value ])
-
-    /// <summary>A repeatable option over a known set, matched case-sensitively.</summary>
-    let choicesMany<'T> (name: string) (choices: (string * 'T) list): ActionInput<'T list> =
-        choicesManyWith<'T> StringComparer.Ordinal name choices
-
-    /// <summary>A repeatable option over a known set, matched without regard to case.</summary>
-    let choicesManyCI<'T> (name: string) (choices: (string * 'T) list): ActionInput<'T list> =
-        choicesManyWith<'T> StringComparer.OrdinalIgnoreCase name choices
+            ([],[])
+            |> Seq.foldBack (fun (token: Parsing.Token) (acc, errs) ->
+                match lookup token.Value with
+                | Some value -> (value :: acc, errs)
+                | None -> (acc, token.Value :: errs)
+                ) argResult.Tokens
+            |> function
+                | values, [] -> Ok values
+                | _, errs ->
+                    errs
+                    |> String.concat ", "
+                    |> fun errs -> $"[ %s{errs} ] are not one of: %s{legal}"
+                    |> Error
+            )
+    let mapFromMany<'T> choices action: ActionInput<'T list> = mapFromManyWith StringComparer.Ordinal choices action
 
     /// Hides an option or argument from the help output.
     let hidden (input: ActionInput<'T>) =

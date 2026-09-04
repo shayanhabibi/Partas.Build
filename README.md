@@ -99,18 +99,18 @@ Options:
 
 ## Did you look for this?
 
-| You want | Use |
-|---|---|
-| An environment variable for one stage and its children | `envVars` on the stage — it is applied to the child process, so your own environment is untouched and needs no restore |
-| A secret in a command line | `runSensitive $"..."`, or `Cmd.secretOption` — every hole is masked `***` wherever the library prints it |
-| A stage's output only when it fails | `captureOutput` |
+| You want | Use                                                                                                                        |
+|---|----------------------------------------------------------------------------------------------------------------------------|
+| An environment variable for one stage and its children | `envVars` on the stage — it is applied to the child process, so your own environment is untouched and needs no restore     |
+| A secret in a command line | `runSensitive $"..."`, or `Cmd.secretOption` — every hole is masked `***` wherever the library prints it                   |
+| A stage's output only when it fails | `captureOutput`                                                                                                            |
 | Another script's commands as subcommands | `#load` it and yield the `Command` value — see [Composition](https://shayanhabibi.github.io/Partas.Build/composition.html) |
-| An option with a fixed set of legal values, each bound to a typed value | `Input.choices` |
-| A flag added to a command line only sometimes | `Cmd.argIf`, or `Cmd.argWhenSome` |
-| A working directory for a stage's children | `workingDir` on the parent — it is inherited |
-| A stage that exists only when an option has a value | `whenSome`, which yields no stage for `None` rather than an inactive one |
-| A block of stages parameterised by an option someone else declares | Take an `InputSpec<'T>` parameter and `let!` it |
-| The root command to call itself something other than the script's filename | `name` on `rootCommand` |
+| An option with a fixed set of legal values, each bound to a typed value | `Input.mapFromAmong`                                                                                                       |
+| A flag added to a command line only sometimes | `Cmd.argIf`, or `Cmd.argWhenSome`                                                                                          |
+| A working directory for a stage's children | `workingDir` on the parent — it is inherited                                                                               |
+| A stage that exists only when an option has a value | `whenSome`, which yields no stage for `None` rather than an inactive one                                                   |
+| A block of stages parameterised by an option someone else declares | Take an `InputSpec<'T>` parameter and `let!` it                                                                            |
+| The root command to call itself something other than the script's filename | `name` on `rootCommand`                                                                                                    |
 
 The right-hand column in full is [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md)
 ([rendered](https://shayanhabibi.github.io/Partas.Build/CAPABILITIES.html)).

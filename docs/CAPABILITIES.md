@@ -163,42 +163,41 @@ inactive stage requiring a name. `build` receives the value already unwrapped, i
 
 Declaring functions:
 
-| Function | What it makes |
-|---|---|
-| `Input.option<'T> "--name"` | An option bound as `'T` |
-| `Input.optionMaybe<'T> "--name"` | An option bound as `'T option`, `None` when absent |
-| `Input.argument<'T> "name"` | A positional argument bound as `'T` |
-| `Input.argumentMaybe<'T> "name"` | A positional argument bound as `'T option` |
-| `Input.choices<'T> "--name" [ "key", value ]` | An option over a known set, each key bound to a typed value. Completions, validation, help text and the typed value from one declaration; an unrecognised token becomes a parse diagnostic listing the legal set |
-| `Input.choicesCI` | `choices`, matched without regard to case |
-| `Input.choicesWith comparer` | `choices` under an explicit `StringComparer` |
-| `Input.choicesMany` / `choicesManyCI` / `choicesManyWith` | The repeatable forms, binding `'T list` |
-| `Input.context` | Injects the `ActionContext` — the `ParseResult` and a cancellation token |
-| `Input.inject value` | Injects a value that is not parsed from the command line |
-| `Input.ofOption` / `Input.ofArgument` | Lifts a raw `System.CommandLine` `Option<'T>` / `Argument<'T>` |
+| Function                                                  | What it makes |
+|-----------------------------------------------------------|---|
+| `Input.option<'T> "--name"`                               | An option bound as `'T` |
+| `Input.optionMaybe<'T> "--name"`                          | An option bound as `'T option`, `None` when absent |
+| `Input.argument<'T> "name"`                               | A positional argument bound as `'T` |
+| `Input.argumentMaybe<'T> "name"`                          | A positional argument bound as `'T option` |
+| `Input.context`                                           | Injects the `ActionContext` — the `ParseResult` and a cancellation token |
+| `Input.inject value`                                      | Injects a value that is not parsed from the command line |
+| `Input.ofOption` / `Input.ofArgument`                     | Lifts a raw `System.CommandLine` `Option<'T>` / `Argument<'T>` |
 
 Shaping combinators, all `ActionInput<'T> -> ActionInput<'T>` and all pipeable:
 
-| Function | What it does |
-|---|---|
-| `Input.alias` / `Input.aliases` | Adds alternative names. Options only |
-| `Input.description`, `Input.desc` | The help text |
-| `Input.helpName` | The value placeholder in help — `<Debug\|Release>` |
-| `Input.defaultValue`, `Input.def` | The value used when the token is absent |
-| `Input.defaultValueFactory` | The same, computed from the `ArgumentResult` |
-| `Input.arity` | How many values are accepted: `ExactlyOne`, `OneOrMore`, `Zero`, `ZeroOrMore`, `ZeroOrOne`, or `ArgumentArity (min, max)` |
-| `Input.required` | Marks an option required |
-| `Input.recursive` | Applies the option to the command and, recursively, its subcommands |
-| `Input.hidden` | Keeps it out of help output |
-| `Input.allowMultipleArgumentsPerToken` | Lets one identifier token carry several values |
-| `Input.acceptOnlyFromAmong` | Restricts to a set of legal strings, ordinally |
-| `Input.acceptLegalFileNamesOnly` / `Input.acceptLegalFilePathsOnly` | Restricts to legal file names / paths |
-| `Input.validate` | A `'T -> Result<unit, string>` check; `Error` becomes a CLI validation message |
-| `Input.validateFileExists` / `Input.validateDirectoryExists` | The two common cases, over `FileInfo` / `DirectoryInfo` |
-| `Input.addValidator` | A raw `SymbolResult -> unit` validator |
-| `Input.customParser` | An `ArgumentResult -> 'T` parser |
-| `Input.tryParse` | An `ArgumentResult -> Result<'T, string>` parser; `Error` becomes a parse diagnostic instead of an exception |
-| `Input.editOption` / `Input.editArgument` | Reaches the underlying `Option<'T>` / `Argument<'T>` for anything not covered above |
+| Function                                                            | What it does                                                                                                              |
+|---------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| `Input.alias` / `Input.aliases`                                     | Adds alternative names. Options only                                                                                      |
+| `Input.description`, `Input.desc`                                   | The help text                                                                                                             |
+| `Input.helpName`                                                    | The value placeholder in help — `<Debug\|Release>`                                                                        |
+| `Input.defaultValue`, `Input.def`                                   | The value used when the token is absent                                                                                   |
+| `Input.defaultValueFactory`                                         | The same, computed from the `ArgumentResult`                                                                              |
+| `Input.arity`                                                       | How many values are accepted: `ExactlyOne`, `OneOrMore`, `Zero`, `ZeroOrMore`, `ZeroOrOne`, or `ArgumentArity (min, max)` |
+| `Input.required`                                                    | Marks an option required                                                                                                  |
+| `Input.recursive`                                                   | Applies the option to the command and, recursively, its subcommands                                                       |
+| `Input.hidden`                                                      | Keeps it out of help output                                                                                               |
+| `Input.allowMultipleArgumentsPerToken`                              | Lets one identifier token carry several values                                                                            |
+| `Input.acceptOnlyFromAmong`                                         | Restricts to a set of legal strings, ordinally                                                                            |
+| `Input.mapFromAmong<'T> [ "key", value ]`                           | An option over a known set, each key bound to a typed value                                                               |
+| `Input.mapFromAmongWith<'T> comparer`                               | `mapFromAmong` under an explicit `StringComparer`                                                                         |
+| `Input.mapFromMany` / `mapFromManyWith`                             | The repeatable forms, binding `'T list`                                                                                   |
+| `Input.acceptLegalFileNamesOnly` / `Input.acceptLegalFilePathsOnly` | Restricts to legal file names / paths                                                                                     |
+| `Input.validate`                                                    | A `'T -> Result<unit, string>` check; `Error` becomes a CLI validation message                                            |
+| `Input.validateFileExists` / `Input.validateDirectoryExists`        | The two common cases, over `FileInfo` / `DirectoryInfo`                                                                   |
+| `Input.addValidator`                                                | A raw `SymbolResult -> unit` validator                                                                                    |
+| `Input.customParser`                                                | An `ArgumentResult -> 'T` parser                                                                                          |
+| `Input.tryParse`                                                    | An `ArgumentResult -> Result<'T, string>` parser; `Error` becomes a parse diagnostic instead of an exception              |
+| `Input.editOption` / `Input.editArgument`                           | Reaches the underlying `Option<'T>` / `Argument<'T>` for anything not covered above                                       |
 
 ## `InputSpec<'T>`
 

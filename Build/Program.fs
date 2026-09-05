@@ -287,6 +287,7 @@ module Commands =
             pipeline "docs" {
                 workingDir root
                 Prelude.restore
+                ProjectManagement.buildAll
                 Documentation.generate
                 Documentation.llms
             }

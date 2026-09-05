@@ -1,4 +1,4 @@
-﻿(**
+(**
 ---
 title: F# surface
 category: ExternalAnnotations
@@ -15,17 +15,19 @@ index: 2
 #r "nuget: Spectre.Console, 0.57.2"
 #r "nuget: System.Reflection.MetadataLoadContext, 10.0.11"
 
-#load "../src/Partas.Build/System.CommandLine/Aliases.fs"
-#load "../src/Partas.Build/System.CommandLine/Inputs.fs"
-#load "../src/Partas.Build/Types.fs"
-#load "../src/Partas.Build/Process.fs"
-#load "../src/Partas.Build/Builders/Stage.fs"
-#load "../src/Partas.Build/Builders/Conditions.fs"
-#load "../src/Partas.Build/Builders/Pipeline.fs"
-#load "../src/Partas.Build/Builders/Inputs.fs"
-#load "../src/Partas.Build/Builders/Command.fs"
-#load "../Partas.ExternalAnnotations/Library.fs"
-#load "../Partas.Build.ExternalAnnotations/Library.fs"
+#load "../../../src/Partas.Build/System.CommandLine/Aliases.fs"
+#load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
+#load "../../../src/Partas.Build/Types.fs"
+#load "../../../src/Partas.Build/Process.fs"
+#load "../../../src/Partas.Build/Builders/Stage.fs"
+#load "../../../src/Partas.Build/Builders/Conditions.fs"
+#load "../../../src/Partas.Build/Builders/Pipeline.fs"
+#load "../../../src/Partas.Build/Builders/Inputs.fs"
+#load "../../../src/Partas.Build/Explain.fs"
+#load "../../../src/Partas.Build/Summary.fs"
+#load "../../../src/Partas.Build/Builders/Command.fs"
+#load "../../../Partas.ExternalAnnotations/Library.fs"
+#load "../../../Partas.Build.ExternalAnnotations/Library.fs"
 
 open Partas.Build
 open Partas.Build.ExternalAnnotations

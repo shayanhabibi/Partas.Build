@@ -1,8 +1,7 @@
-﻿(**
+(**
 ---
-title: Overview
-category: Build
-index: 2
+title: Partas.Build
+order: 0
 ---
 *)
 (*** hide ***)
@@ -15,24 +14,25 @@ index: 2
 #r "nuget: System.CommandLine, 2.0.11"
 #r "nuget: Spectre.Console, 0.57.2"
 
-#load "../src/Partas.Build/System.CommandLine/Aliases.fs"
-#load "../src/Partas.Build/System.CommandLine/Inputs.fs"
-#load "../src/Partas.Build/Types.fs"
-#load "../src/Partas.Build/Process.fs"
-#load "../src/Partas.Build/Builders/Stage.fs"
-#load "../src/Partas.Build/Builders/Conditions.fs"
-#load "../src/Partas.Build/Builders/Pipeline.fs"
-#load "../src/Partas.Build/Builders/Inputs.fs"
-#load "../src/Partas.Build/Builders/Command.fs"
-#load "../src/Partas.Build/Baked.fs"
+#load "../../../src/Partas.Build/System.CommandLine/Aliases.fs"
+#load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
+#load "../../../src/Partas.Build/Types.fs"
+#load "../../../src/Partas.Build/Process.fs"
+#load "../../../src/Partas.Build/Builders/Stage.fs"
+#load "../../../src/Partas.Build/Builders/Conditions.fs"
+#load "../../../src/Partas.Build/Builders/Pipeline.fs"
+#load "../../../src/Partas.Build/Builders/Inputs.fs"
+#load "../../../src/Partas.Build/Explain.fs"
+#load "../../../src/Partas.Build/Summary.fs"
+#load "../../../src/Partas.Build/Builders/Command.fs"
+#load "../../../src/Partas.Build/Baked.fs"
 
 open Partas.Build
 open Partas.Build.Internal
 
 (**
-# Partas.Build
 
-<img src=".\content\img\sun-ztu.jpeg" width="50%" />
+<img src="\img\sun-ztu.jpeg" width="50%" />
 
 Command line & build pipelines in F#. Composable, hints of elderberry - thick in tannins; a glorious vintage.
 
@@ -86,7 +86,8 @@ let steps =
         // executable and arguments kept apart
         run "dotnet" "build --no-restore"
 
-        // an F# function; also Async<_>, Task<_>, StageContext -> _ and Result-returning variants
+        // an F# function; also Async<_>, Task<_>,
+        // StageContext -> _ and Result-returning variants
         run (fun (ctx: StageContext) -> printfn "%s" ctx.Name)
     }
 
@@ -672,7 +673,7 @@ first away. To widen a condition, put the alternatives in one `whenAny { }`.
 convert a `string` into when a single overload is in play. It has no `InputSpec` form: bind the value outside
 the stage and use `runSensitive $"…"` inside it as normal.
 
-<img src="content\img\the-glass.jpeg" width="400"/>
+<img src="\img\the-glass.jpeg" width="400"/>
 
 ## API reference
 

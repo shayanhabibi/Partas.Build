@@ -60,6 +60,7 @@ module Project =
     let allProjects =
         [
             "build", Repo.Project.``Partas.Build``.Path
+            "docs", Repo.Project.docs.Path
             "external-annotations", Repo.Project.``Partas.ExternalAnnotations``.Path
             "external-annotations-tool", Repo.Project.``Partas.ExternalAnnotations.Tool``.Path
             "build-external-annotations", Repo.Project.``Partas.Build.ExternalAnnotations``.Path
@@ -199,8 +200,13 @@ module Documentation =
     /// Serves under --watch, builds otherwise.
     let generate = input {
         let! watch = Options.watch
+        and! noHotReload = Input.option<bool> "--no-hot-reload"
         return stage "docs" {
-            run (if watch then "dotnet fsdocs watch --eval --saveimages" else "dotnet fsdocs build --eval --clean --saveimages")
+            run (
+                if watch && noHotReload then "dotnet watch --no-hot-reload run --project docs/docs.fsproj -- watch"
+                elif watch then "dotnet run --project docs/docs.fsproj -- watch"
+                else "dotnet run --project docs/docs.fsproj -- build"
+                )
         }
     }
 
@@ -215,7 +221,7 @@ module Documentation =
         return stage "llms" {
             when' (not watch)
             run (fun ctx ->
-                let header = File.ReadAllText(Path.Combine(root, "docs", "llms.txt")).TrimEnd()
+                let header = File.ReadAllText(Path.Combine(root, "docs", "static", "llms.txt")).TrimEnd()
                 for name in [ "llms.txt"; "llms-full.txt" ] do
                     let path = Path.Combine(root, "output", name)
                     if File.Exists path then

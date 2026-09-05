@@ -1,8 +1,8 @@
-﻿(**
+(**
 ---
 title: Stage CE run overloads
 category: Build
-index: 4
+order: 4
 ---
 *)
 
@@ -16,16 +16,18 @@ index: 4
 #r "nuget: System.CommandLine, 2.0.11"
 #r "nuget: Spectre.Console, 0.57.2"
 
-#load "../src/Partas.Build/System.CommandLine/Aliases.fs"
-#load "../src/Partas.Build/System.CommandLine/Inputs.fs"
-#load "../src/Partas.Build/Types.fs"
-#load "../src/Partas.Build/Process.fs"
-#load "../src/Partas.Build/Builders/Stage.fs"
-#load "../src/Partas.Build/Builders/Conditions.fs"
-#load "../src/Partas.Build/Builders/Pipeline.fs"
-#load "../src/Partas.Build/Builders/Inputs.fs"
-#load "../src/Partas.Build/Builders/Command.fs"
-#load "../src/Partas.Build/Baked.fs"
+#load "../../../src/Partas.Build/System.CommandLine/Aliases.fs"
+#load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
+#load "../../../src/Partas.Build/Types.fs"
+#load "../../../src/Partas.Build/Process.fs"
+#load "../../../src/Partas.Build/Builders/Stage.fs"
+#load "../../../src/Partas.Build/Builders/Conditions.fs"
+#load "../../../src/Partas.Build/Builders/Pipeline.fs"
+#load "../../../src/Partas.Build/Builders/Inputs.fs"
+#load "../../../src/Partas.Build/Explain.fs"
+#load "../../../src/Partas.Build/Summary.fs"
+#load "../../../src/Partas.Build/Builders/Command.fs"
+#load "../../../src/Partas.Build/Baked.fs"
 
 open System.Threading
 open Partas.Build

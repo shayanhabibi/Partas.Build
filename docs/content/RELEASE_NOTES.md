@@ -1,3 +1,7 @@
+---
+title: Release Notes
+---
+
 ### 0.1.5
 
 * Stage-level output sinks: `silentOutput`, `captureOutput`, `redirectOutput` and `outputTo` on both the stage

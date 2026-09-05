@@ -1,7 +1,7 @@
 ---
 title: Capabilities
 category: Build
-index: 1
+order: 1
 ---
 
 # Capabilities

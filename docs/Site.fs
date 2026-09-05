@@ -66,8 +66,8 @@ let collections =
 
 let site =
     Site.create "Partas.Build"
-    |> Site.origin "https://shayanhabibi.github.io/Partas.Build"
-    |> Site.baseUrl "/"
+    |> Site.origin "https://shayanhabibi.github.io"
+    |> Site.baseUrl "/Partas.Build/"
     |> Site.output "../output"
     |> Site.staticFiles "static"
     |> Theme.register theme

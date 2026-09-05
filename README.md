@@ -5,8 +5,8 @@ An F# build-pipeline DSL where a stage declares the CLI options it reads, and a 
 the pipeline definition instead of registered by hand. It runs from a `.fsx` script or a build project.
 
 - **Documentation:** <https://shayanhabibi.github.io/Partas.Build>
-- **Every operation, one line each:** [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md)
-  ([rendered](https://shayanhabibi.github.io/Partas.Build/CAPABILITIES.html))
+- **Every operation, one line each:** [`docs/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md)
+  ([rendered](https://shayanhabibi.github.io/Partas.Build/build/CAPABILITIES.html))
 - **Agents:** start at <https://shayanhabibi.github.io/Partas.Build/llms.txt>
 
 > The entire [`FSharp.SystemCommandLine`](https://github.com/jordanmarr/FSharp.SystemCommandLine) was essentially just copy pasted directly into this repo. All credit to the original author.

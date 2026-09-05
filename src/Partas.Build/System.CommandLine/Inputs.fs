@@ -24,7 +24,7 @@ module private SafeDefaults =
             dynamicArray.SetValue(Convert.ChangeType(token.Value, elementType), i)
             )
 
-        let listModule = typeof<list<obj>>.Assembly.GetType("Microsoft.FSharp.Collections.FSharpList`1")
+        let listModule = typeof<list<obj>>.Assembly.GetType("Microsoft.FSharp.Collections.ListModule")
         let method = listModule.GetMethod("OfArray", System.Reflection.BindingFlags.Static ||| System.Reflection.BindingFlags.Public)
         method.MakeGenericMethod(elementType).Invoke(null, [| dynamicArray |]) |> unbox
     let private dynamicEmptyList<'T>(): 'T =

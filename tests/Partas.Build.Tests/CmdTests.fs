@@ -84,6 +84,14 @@ let tests =
             Expect.equal (parts (cmd $"tool {number:N2}")) ("tool", [ "3.14" ]) "a format specifier should be applied"
         }
 
+        test "an empty interpolated value yields no argument" {
+            let empty = ""
+            Expect.equal (parts (cmd $"tool check src {empty}")) ("tool", [ "check"; "src" ]) "a trailing empty value should not become an argument"
+            Expect.equal (parts (cmd $"tool {empty} check")) ("tool", [ "check" ]) "an empty value between tokens should not become an argument"
+            Expect.equal (parts (cmd $"tool --flag={empty}")) ("tool", [ "--flag=" ]) "an empty value glued to literal text should keep the literal"
+            Expect.equal (parts (cmd $"tool \"\"")) ("tool", [ "" ]) "a quoted empty literal should stay an empty argument"
+        }
+
         test "a sensitive command passes its values through but does not print them" {
             let password = "hunter two"
             let sensitive = Cmd.ofFormattable true $"docker login -u me -p {password}"

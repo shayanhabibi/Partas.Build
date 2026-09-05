@@ -7,6 +7,11 @@
         <NoWarn>NU1608;NU1901;NU1904</NoWarn>
         <!-- The build CLI is infrastructure; it is never shipped. -->
         <IsPackable>false</IsPackable>
+        <IsTrimmable>true</IsTrimmable>
+        <VerifyReferenceTrimCompatibility>true</VerifyReferenceTrimCompatibility>
+        <IsAotCompatible>true</IsAotCompatible>
+        <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+        <PublishTrimmed>true</PublishTrimmed>
     </PropertyGroup>
 
     <ItemGroup>

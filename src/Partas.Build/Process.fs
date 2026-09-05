@@ -58,7 +58,7 @@ module Cmd =
 
         member private _.Flush() =
             if started then
-                if current[0] = secretDelimiter then
+                if current.Length > 0 && current[0] = secretDelimiter then
                     tokens.Add(current.Remove(0, 1).ToString())
                     secrets.Add (tokens.Count - 1)
                 else
@@ -82,11 +82,12 @@ module Cmd =
                     current.Append ch |> ignore
                     started <- true
 
-        /// An interpolated value: appended whole, whatever it contains.
+        /// An interpolated value: appended whole, whatever it contains. An empty value on its own yields no token.
         member _.AddValue(value: string, secret: bool) =
-            current.Append value |> ignore
-            started <- true
-            if secret then isSecret <- true
+            if not (String.IsNullOrEmpty value) then
+                current.Append value |> ignore
+                started <- true
+                if secret then isSecret <- true
 
         /// The executable is the first token; an empty command line yields an empty executable.
         member this.ToCmd() =

@@ -54,6 +54,15 @@ let tests =
                 "inputs should keep first-declaration order"
         }
 
+        test "a list option reads every token it was given" {
+            let defines = Input.option<string list> "--define"
+            let spec = input { let! d = defines in return d }
+
+            Expect.equal (spec.Read(parse spec.Inputs "--define FOO --define BAR")) [ "FOO"; "BAR" ] "each occurrence should be one element"
+            Expect.equal (spec.Read(parse spec.Inputs "--define FOO")) [ "FOO" ] "one token should be a singleton"
+            Expect.equal (spec.Read(parse spec.Inputs "")) [] "an absent option should read as empty"
+        }
+
         test "reads the parsed value of every binding" {
             let config, quick, watch = options ()
 

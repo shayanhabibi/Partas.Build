@@ -4,52 +4,76 @@ open System
 open System.CommandLine
 
 module private MaybeParser =
+    let parseTokenValueForType (typ: Type) (tokenValue: string) =
+        match typ with
+        | t when t = typeof<IO.DirectoryInfo> -> IO.DirectoryInfo(tokenValue) :> obj
+        | t when t = typeof<IO.FileInfo> -> IO.FileInfo(tokenValue)
+        | t when t = typeof<Uri> -> Uri(tokenValue)
+        | t -> Convert.ChangeType(tokenValue, t)
+
+    /// Parses an argument token value.
+    /// TODO: Ideally, this should use the S.CL Arugment parser.
     let parseTokenValue<'T> (tokenValue: string) =
-        match typeof<'T> with
-        | t when t = typeof<IO.DirectoryInfo> -> IO.DirectoryInfo tokenValue |> unbox<'T> |> Some
-        | t when t = typeof<IO.FileInfo> -> IO.FileInfo tokenValue |> unbox<'T> |> Some
-        | t when t = typeof<Uri> -> Uri(tokenValue) |> unbox<'T> |> Some
-        | t -> Convert.ChangeType(tokenValue, t) :?> 'T |> Some
+        parseTokenValueForType typeof<'T> tokenValue :?> 'T |> Some
 
-module private SafeDefaults =
-    let private dynamicListParser<'T>(): Parsing.ArgumentResult -> 'T = fun result ->
+/// Short alias used in SafeInputLists for constraints and delegate construction.
+type private ParseFunc<'T> = Func<Parsing.ArgumentResult, 'T>
+type private SafeInputLists =
+    static let ofArrayInfo =
+        typeof<list<obj>>
+            .Assembly
+            .GetType("Microsoft.FSharp.Collections.ListModule")
+            .GetMethod("OfArray", System.Reflection.BindingFlags.Static ||| System.Reflection.BindingFlags.Public)
+    static let ofArrayForType (typ: Type) (elements: Array) =
+        ofArrayInfo.MakeGenericMethod(typ.GetGenericArguments()[0]).Invoke(null, [| elements |])
+    static let listElementType (typ: Type) =
+        // naive tests show more predictable behaviour
+        // with the presence of this branch
+        match typ.GetElementType() with
+        | null -> typ.GetGenericArguments()[0]
+        | typ -> typ
+    static let makeEmptyList (typ: Type) =
+        match typ.GetProperty("Empty", System.Reflection.BindingFlags.Static ||| System.Reflection.BindingFlags.Public) with
+        | null -> Error $"Could not find Empty property on type %s{typ.FullName}."
+        | prop -> prop.GetValue(null) |> Ok
+    static let isListGeneric (typ: Type) =
+        typ.IsGenericType
+        && typ.GetGenericTypeDefinition() = typedefof<list<_>>
+    static member inline private dynamicParser<^T, ^U
+        when ^U:(member set_DefaultValueFactory: ParseFunc<^T> -> unit)
+        and ^U:(member set_CustomParser: ParseFunc<^T> -> unit)
+        and ^U:(member set_Arity: ArgumentArity -> unit)>
+        (o: ^U) =
         let typ = typeof<'T>
-        let elementType =
-            match typ.GetElementType() with
-            | Null -> typ.GetGenericArguments()[0]
-            | typ -> typ
-        let dynamicArray = Array.CreateInstance(elementType, result.Tokens.Count)
-        result.Tokens
-        |> Seq.iteri (fun i token ->
-            dynamicArray.SetValue(Convert.ChangeType(token.Value, elementType), i)
-            )
+        if not <| isListGeneric typ then () else
+        let elementType = listElementType typ
+        let changeType: Parsing.Token -> obj =
+            let fn = MaybeParser.parseTokenValueForType elementType
+            _.Value >> fn
+        let ofArray = ofArrayForType typ
+        let empty = makeEmptyList typ
+        ParseFunc(fun result ->
+            match empty with
+            | Error err ->
+                result.AddError err
+                Unchecked.defaultof<'T>
+            | Ok empty -> empty |> unbox<'T>)
+        |> o.set_DefaultValueFactory
+        ParseFunc(fun result ->
+            let count = result.Tokens.Count
+            let dynamicArray = Array.CreateInstance(elementType, count)
+            for i, token in result.Tokens |> Seq.indexed do
+                try
+                    dynamicArray.SetValue(changeType token, i)
+                // should this be more permissive?
+                with :? FormatException as e -> result.AddError e.Message
+            ofArray dynamicArray |> unbox<'T>)
+        |> o.set_CustomParser
+        ArgumentArity(0, 100_000)
+        |> o.set_Arity
+    static member protect<'T>(o: Argument<'T>) = SafeInputLists.dynamicParser<'T, _> o; o
+    static member protect<'T>(o: Option<'T>) = SafeInputLists.dynamicParser<'T, _> o; o
 
-        let listModule = typeof<list<obj>>.Assembly.GetType("Microsoft.FSharp.Collections.ListModule")
-        let method = listModule.GetMethod("OfArray", System.Reflection.BindingFlags.Static ||| System.Reflection.BindingFlags.Public)
-        method.MakeGenericMethod(elementType).Invoke(null, [| dynamicArray |]) |> unbox
-    let private dynamicEmptyList<'T>(): 'T =
-        match typeof<'T>.GetProperty("Empty", System.Reflection.BindingFlags.Static ||| System.Reflection.BindingFlags.Public) with
-        | Null -> failwithf $"Could not find Empty property on type %s{typeof<'T>.FullName}"
-        | prop -> prop.GetValue(null) |> unbox
-
-    [<AutoOpen>]
-    type ActionInputProtector =
-        static member protect<'T>(o: Option<'T>) =
-            match typeof<'T> with
-            | typ when typ.IsGenericType && typ.GetGenericTypeDefinition() = typedefof<list<_>> ->
-                o.Arity <- ArgumentArity (0, 100_000)
-                o.CustomParser <- dynamicListParser<'T>()
-                o.DefaultValueFactory <- (fun _ -> dynamicEmptyList<'T>())
-                o
-            | _ -> o
-        static member protect<'T>(o: Argument<'T>) =
-            match typeof<'T> with
-            | typ when typ.IsGenericType && typ.GetGenericTypeDefinition() = typedefof<list<_>> ->
-                o.Arity <- ArgumentArity (0, 100_000)
-                o.CustomParser <- dynamicListParser<'T>()
-                o.DefaultValueFactory <- (fun _ -> dynamicEmptyList<'T>())
-                o
-            | _ -> o
 
 
 type ActionContext =
@@ -120,7 +144,7 @@ module Input =
     /// Creates a named option. Example: `option "--file-name"`
     let option<'T> (name: string) =
         Option<'T>(name)
-        |> SafeDefaults.ActionInputProtector.protect
+        |> SafeInputLists.protect
         |> ActionInput.OfOption
 
     /// Edits the underlying System.CommandLine.Option<'T>.
@@ -237,7 +261,7 @@ module Input =
     /// Creates a named argument. Example: `argument "file-name"`
     let argument<'T> (name: string) =
         Argument<'T>(name)
-        |> SafeDefaults.ActionInputProtector.protect
+        |> SafeInputLists.protect
         |> ActionInput.OfArgument<'T>
 
     /// Creates a named argument of type `Argument<'T option>` that defaults to `None`.

@@ -60,7 +60,7 @@ module Stages =
         }
     }
 
-exit (
+do exit (
     rootCommandOfScript {
         description "The repository build"
 

@@ -284,6 +284,7 @@ module Cmd =
         do! proc.WaitForExitAsync()
 #endif
         return
+            struct
             {| exitCode = proc.ExitCode
                output = output.ToArray()
                error = error.ToArray() |}

@@ -15,7 +15,7 @@ order: 4
 #r "nuget: FsToolkit.ErrorHandling, 5.2.0"
 #r "nuget: System.CommandLine, 2.0.11"
 #r "nuget: Spectre.Console, 0.57.2"
-
+#load "../../../src/Partas.Build.Cmd/Program.fs"
 #load "../../../src/Partas.Build/System.CommandLine/Aliases.fs"
 #load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
 #load "../../../src/Partas.Build/Types.fs"
@@ -27,7 +27,13 @@ order: 4
 #load "../../../src/Partas.Build/Explain.fs"
 #load "../../../src/Partas.Build/Summary.fs"
 #load "../../../src/Partas.Build/Builders/Command.fs"
-#load "../../../src/Partas.Build/Baked.fs"
+#load "../../../src/Partas.Build.Baked/Program.fs"
+#load "../../../src/Partas.Build.Baked/Common.fs"
+#load "../../../src/Partas.Build.Baked/NuGet.fs"
+#load "../../../src/Partas.Build.Baked/Dotnet.fs"
+#load "../../../src/Partas.Build.Baked/SemVer.fs"
+
+
 
 open System.Threading
 open Partas.Build

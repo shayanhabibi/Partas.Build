@@ -15,6 +15,7 @@ index: 2
 #r "nuget: Spectre.Console, 0.57.2"
 #r "nuget: System.Reflection.MetadataLoadContext, 10.0.11"
 
+#load "../../../src/Partas.Build.Cmd/Program.fs"
 #load "../../../src/Partas.Build/System.CommandLine/Aliases.fs"
 #load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
 #load "../../../src/Partas.Build/Types.fs"
@@ -26,6 +27,13 @@ index: 2
 #load "../../../src/Partas.Build/Explain.fs"
 #load "../../../src/Partas.Build/Summary.fs"
 #load "../../../src/Partas.Build/Builders/Command.fs"
+#load "../../../src/Partas.Build.Baked/Program.fs"
+#load "../../../src/Partas.Build.Baked/Common.fs"
+#load "../../../src/Partas.Build.Baked/NuGet.fs"
+#load "../../../src/Partas.Build.Baked/Dotnet.fs"
+#load "../../../src/Partas.Build.Baked/SemVer.fs"
+
+
 #load "../../../Partas.ExternalAnnotations/Library.fs"
 #load "../../../Partas.Build.ExternalAnnotations/Library.fs"
 

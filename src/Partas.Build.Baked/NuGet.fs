@@ -5,6 +5,7 @@ open Partas.Build
 /// NuGet key from an arg/opt, defaults to the environment variable NUGET_API_KEY
 let apiKey =
     BuildOptionInput.create "nuget-key"
+    |> BuildOptionInput.withAlias "nuget"
     |> BuildOptionInput.withAlias "k"
     |> BuildOption.createMaybe<string>
     |> BuildOption.map (

@@ -264,6 +264,31 @@ module Cmd =
         envVar |> Map.iter (fun key value -> startInfo.Environment[key] <- value)
         startInfo
 
+    let run (workingDir: string voption) (envVar: Map<string, string>) (cmd: Cmd) = task {
+        let startInfo = toStartInfo workingDir envVar cmd
+        startInfo.RedirectStandardOutput <- true
+        startInfo.RedirectStandardError <- true
+        let output = ResizeArray<string>()
+        let error = ResizeArray<string>()
+        use proc = Process.Start startInfo
+        let onData isError (ev: DataReceivedEventArgs) =
+            if (String.IsNullOrEmpty ev.Data) then () else
+            ev.Data |> if isError then error.Add else output.Add
+        proc.OutputDataReceived.Add (onData false)
+        proc.ErrorDataReceived.Add (onData true)
+        proc.BeginErrorReadLine()
+        proc.BeginOutputReadLine()
+#if NETSTANDARD2_0
+        proc.WaitForExit()
+#else
+        do! proc.WaitForExitAsync()
+#endif
+        return
+            {| exitCode = proc.ExitCode
+               output = output.ToArray()
+               error = error.ToArray() |}
+    }
+
 [<AutoOpen>]
 module CmdHelpers =
     /// <summary>Builds a <see cref="T:Partas.Build.Cmd"/> from an interpolated command line, taking each hole as

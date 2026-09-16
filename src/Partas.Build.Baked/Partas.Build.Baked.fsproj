@@ -9,7 +9,7 @@
         <PackageId>Partas.Build.Baked</PackageId>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <Description>Prebaked options, arguments, and composed stages for Partas.Build</Description>
-    <Version>0.1.0</Version><AssemblyVersion>0.0.0.0</AssemblyVersion></PropertyGroup>
+    <Version>0.1.1</Version><AssemblyVersion>0.0.0.0</AssemblyVersion></PropertyGroup>
 
     <ItemGroup>
         <Compile Include="Program.fs" />

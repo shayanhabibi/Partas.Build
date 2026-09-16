@@ -14,6 +14,8 @@
     <File Path="Directory.Build.targets" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Partas.Build.Baked/Partas.Build.Baked.fsproj" />
+    <Project Path="src/Partas.Build.Cmd/Partas.Build.Cmd.fsproj" />
     <Project Path="src/Partas.Build/Partas.Build.fsproj" />
   </Folder>
   <Folder Name="/src/external-annotations/">

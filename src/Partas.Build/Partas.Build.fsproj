@@ -9,7 +9,7 @@
         <Title>Partas.Build</Title>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <!-- Owned by `dotnet run bump`; CI packs whatever this says. -->
-        <Version>0.4.0-alpha.3</Version>
+        <Version>0.5.0</Version>
         <AssemblyVersion>0.0.0.0</AssemblyVersion>
     </PropertyGroup>
 
@@ -25,7 +25,6 @@
         <Compile Include="Explain.fs" />
         <Compile Include="Summary.fs" />
         <Compile Include="Builders\Command.fs" />
-        <Compile Include="Baked.fs" />
         <None Include="../../README.md" Pack="true" PackagePath="\" />
     </ItemGroup>
 
@@ -46,6 +45,10 @@
       <PackageReference Include="FsToolkit.ErrorHandling" Version="5.2.0" />
       <PackageReference Include="Spectre.Console" Version="0.57.2" />
       <PackageReference Include="System.CommandLine" Version="2.0.11" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Partas.Build.Cmd\Partas.Build.Cmd.fsproj" />
     </ItemGroup>
 
 </Project>

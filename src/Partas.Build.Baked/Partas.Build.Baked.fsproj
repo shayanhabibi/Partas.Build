@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <TargetFrameworks>net10.0;net8.0;netstandard2.0</TargetFrameworks>
+        <RootNamespace>Partas.Build.Baked</RootNamespace>
+        <AssemblyName>Partas.Build.Baked</AssemblyName>
+        <Title>Partas.Build.Baked</Title>
+        <PackageId>Partas.Build.Baked</PackageId>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <Description>Prebaked options, arguments, and composed stages for Partas.Build</Description>
+    <Version>0.1.0</Version><AssemblyVersion>0.0.0.0</AssemblyVersion></PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="Program.fs" />
+        <Compile Include="Common.fs" />
+        <Compile Include="NuGet.fs" />
+        <Compile Include="Dotnet.fs" />
+        <Compile Include="SemVer.fs" />
+        <None Include="../../README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Partas.Build\Partas.Build.fsproj" />
+    </ItemGroup>
+
+</Project>

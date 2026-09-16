@@ -9,6 +9,7 @@
 /// </summary>
 module Build
 
+open System
 open System.IO
 open Fake.Core.Context
 open Fake.IO
@@ -52,15 +53,29 @@ module Options =
         |> Input.desc "Runs the operation in watch mode."
 
     let config =
-        Baked.Input.DotNet.configString
+        Baked.Dotnet.config.option
         |> InputSpec.ofInput
         |> InputSpec.map (Option.defaultValue "Release")
 
 module Project =
+    let projects = Repo.Project.AllProjects()
+    let testProjects =
+        projects
+        |> List.filter (function
+            | { Name = name } when name.Contains("Test") -> true
+            | { Path = path } when path.Contains("test") -> true
+            | _ -> false
+            )
+    let srcProjects =
+        projects
+        |> List.except testProjects
+        |> List.filter (fun proj -> proj.Directory.Contains("src") || proj.Name.Contains("ExternalAnnotations"))
+
     let allProjects =
         [
             "build", Repo.Project.``Partas.Build``.Path
-            "docs", Repo.Project.docs.Path
+            "baked", Repo.Project.``Partas.Build.Baked``.Path
+            "cmd", Repo.Project.``Partas.Build.Cmd``.Path
             "external-annotations", Repo.Project.``Partas.ExternalAnnotations``.Path
             "external-annotations-tool", Repo.Project.``Partas.ExternalAnnotations.Tool``.Path
             "build-external-annotations", Repo.Project.``Partas.Build.ExternalAnnotations``.Path
@@ -71,18 +86,10 @@ module Project =
         |> Input.arity Arity.OneOrMore
         |> Input.desc "The project(s) to target"
         |> Input.allowMultipleArgumentsPerToken
-        |> Input.acceptOnlyFromAmong (allProjects |> List.map fst)
-        |> Input.customParser (fun tok ->
-            match Seq.toArray tok.Tokens with
-            | [||] -> []
-            | projects ->
-                let map =
-                    allProjects
-                    |> Map.ofList
-                projects
-                |> Array.map (fun project -> map |> Map.find project.Value )
-                |> Array.toList
-            )
+        |> Input.mapFromManyWith StringComparer.OrdinalIgnoreCase [
+            yield! allProjects
+        ]
+        |> Input.def (allProjects |> List.map snd)
 
 /// <summary>Stages every command opens with. All are skipped by <c>--quick</c>.</summary>
 module Prelude =
@@ -138,7 +145,7 @@ module ProjectManagement =
         |> pack
     }
     let publish (project: InputSpec<string>) = input {
-        let! key = Baked.Input.NuGet.apiKeyOrEnv
+        let! key = Baked.NuGet.apiKey.option
         and! project = project
         return stage $"publish {project}" {
             stage "local publish" {
@@ -160,18 +167,14 @@ module ProjectManagement =
         |> publish
     }
     let bumpArgument =
-        Baked.Pipelines.bumpArgument (Project.allProjects |> List.map snd) (InputSpec.ofInput Project.target)
+        Baked.SemVer.Stages.bumpArgument (InputSpec.ofInput Project.target)
 
 module Tests =
     let buildAll = input {
         let! skipTests = Options.skipTests
         and! projects =
-            [
-                Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Path
-                Repo.Project.``Partas.Build.Tests``.Path
-                Repo.Project.``Partas.ExternalAnnotations.Tests``.Path
-            ]
-            |> List.map (InputSpec.ret >> ProjectManagement.build)
+            Project.testProjects
+            |> List.map (_.Path >> InputSpec.ret >> ProjectManagement.build)
             |> InputSpec.sequence
         return stage "build tests" {
             when' (not skipTests)
@@ -181,7 +184,7 @@ module Tests =
     let execute = input {
         let! skipTests = Options.skipTests
         and! config = Options.config
-        and! ci = Baked.Input.CI.isCI
+        and! ci = Baked.Common.isCI
         return stage "test" {
             when' (not skipTests)
             outputTo (if ci then StageOutput.Captured(OutputCapture()) else StageOutput.Console)

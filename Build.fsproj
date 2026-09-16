@@ -34,11 +34,12 @@
         <PackageReference Include="FsToolkit.ErrorHandling" Version="5.2.0"/>
         <PackageReference Include="Fake.Core.ReleaseNotes" Version="6.1.4"/>
         <PackageReference Include="Partas.GitNet" Version="3.0.0"/>
-        <PackageReference Include="Partas.TypeProvider.BuildHelper" Version="0.2.2" />
+        <PackageReference Include="Partas.TypeProvider.BuildHelper" Version="0.2.5" />
     </ItemGroup>
 
     <ItemGroup>
         <!-- The build CLI is the library's acceptance test: it is written against Partas.Build. -->
+        <ProjectReference Include="src\Partas.Build.Baked\Partas.Build.Baked.fsproj" />
         <ProjectReference Include="src\Partas.Build\Partas.Build.fsproj"/>
     </ItemGroup>
 

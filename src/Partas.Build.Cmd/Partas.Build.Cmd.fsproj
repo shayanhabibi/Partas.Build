@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <TargetFrameworks>net10.0;net8.0;netstandard2.0</TargetFrameworks>
+        <LangVersion>latest</LangVersion>
+        <RootNamespace>Partas.Build.Cmd</RootNamespace>
+        <AssemblyName>Partas.Build.Cmd</AssemblyName>
+        <PackageId>Partas.Build.Cmd</PackageId>
+        <Title>Partas.Build.Cmd</Title>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <Description>Cmd line arg builder with masking for sensitive values.</Description>
+    <Version>0.1.0</Version><AssemblyVersion>0.0.0.0</AssemblyVersion></PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="Program.fs" />
+        <None Include="../../README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+</Project>

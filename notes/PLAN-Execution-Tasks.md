@@ -15,6 +15,12 @@
 - Planning only: no implementation tasks have been executed in the repository.
 - T0–T1 establish a compiler-backed design; T2–T7 establish the behavioral vertical slice.
 - T8 broadens the builder refactor only after the slice works; T9 validates the complete deliverable.
+- Ship as four branches, each merged green before the next starts. Later branches depend on earlier ones; none
+  is reviewable as a whole otherwise:
+  1. `execution/commands`: T0, T1, T2, T3. Shared executor, typed capture, `Operation<'T>`, `Step.Operation`.
+  2. `execution/producers`: T4, T5. Producer identity, validation, publication, scope reset.
+  3. `execution/failures`: T6, T7. Raw outcomes, structured evidence, `onFailure`, the end-to-end fixture.
+  4. `execution/builders`: T8, T9. SRTP dedup of the remaining settings, docs, full acceptance.
 - Preserve unrelated existing changes; create an isolated worktree at implementation time if needed.
 - Prefix every shell command with `rtk`.
 - Prefer `voption`/`ValueOption` and struct DUs where consistent with existing library style.
@@ -43,6 +49,10 @@
 - Modify `src/Partas.Build/Explain.fs` and `Summary.fs`: dependency descriptions and actual outcomes.
 - Modify `src/Partas.Build/Partas.Build.fsproj`: explicit compile ordering; keep model declarations needed by earlier files in `Types.fs`.
 - Create `tests/Partas.Build.CompilerProbe/`: separate consumer executable referencing the real library, not copied library models.
+- Create `tests/Partas.Build.CompilerProbe.Negative/`: one `.fsproj` per must-not-compile case, each a single
+  file, none referenced by the solution. `tests/Partas.Build.Tests/CompilerTests.fs` runs `dotnet build` on each
+  and asserts a non-zero exit and the expected `FS` code in the output; a build that fails for any other reason
+  (restore, missing SDK) fails the test with the full output. This is the harness every negative fixture uses.
 - Create `tests/Fixtures/ProcessFixture/`: deterministic console child for stdout/stderr, exit, delay, and cancellation cases.
 - Add focused `ExecutionTests.fs`, `DependencyTests.fs`, and `FailureTests.fs` to `tests/Partas.Build.Tests/`.
 - Extend existing `CompositionTests.fs`, `InputsTests.fs`, `OutputTests.fs`, `CmdTests.fs`, `StageTests.fs`, `ParallelismTests.fs`, `ExplainTests.fs`, and `SummaryTests.fs` for regressions relevant to each task.
@@ -55,10 +65,13 @@
 - Files: existing build/test projects; `notes/PLAN-Execution-Tasks.md` evidence section.
 - Consumes: current repository state and `notes/PLAN.md` verified compiler findings.
 - Produces: recorded baseline, relevant regression inventory, and exact implementation starting point.
-- [ ] Record branch, commit, and working-tree changes without modifying unrelated files.
-- [ ] Run Debug/Release library builds and the existing sequenced test suite using the commands below.
-- [ ] Identify existing tests covering argument masking, environment inheritance, cancellation/tree kill, retry, parallel buffers, and command defaults.
-- [ ] Record pre-existing failures separately from implementation failures.
+- [x] Record branch, commit, and working-tree changes without modifying unrelated files.
+- [x] Run Debug/Release library builds and the existing sequenced test suite using the commands below.
+- [x] Identify existing tests covering argument masking, environment inheritance, cancellation/tree kill, retry, parallel buffers, and command defaults.
+- [x] Record pre-existing failures separately from implementation failures.
+- [x] Reproduce each defect in the spec's *Pre-existing defects* list with a failing test, marked pending until
+      the task that fixes it: `netstandard2.0` argument re-splitting (T2), discarded `stageExns` (T6), and a
+      pinning test for legacy `run` returning `Ok()` on caller-token cancellation (T2, behaviour preserved).
 - Completion: baseline is reproducible; failures have identifiable causes before new runtime work begins.
 
 ## T1 — Prove builder mapping and static dependency composition
@@ -74,11 +87,16 @@
 - [ ] Assert inferred result types through functions requiring exactly `StageContext` or `InputSpec<StageContext>`.
 - [ ] Assert input declarations are visible with zero `Read` executions.
 - [ ] Compile a separate consumer in Debug and Release to exercise public inline helper accessibility.
-- [ ] Add a negative compiler fixture showing nested `InputSpec<InputSpec<_>>` is not silently accepted/flattened.
+- [ ] Add a negative compiler fixture showing nested `InputSpec<InputSpec<_>>` is not silently accepted/flattened, through the `CompilerProbe.Negative` harness.
+- [ ] Add a negative compiler fixture showing `let! x = needs p` inside `stage { }` fails with `FS0708`.
+- [ ] Record the diagnostic text an SRTP setting produces when applied to an unsupported state, for T9's docs.
 - [ ] Prove a functional producer declaration accepting input sources, static dependencies, and a deferred callback before adding CE sugar.
+- [ ] Prove the consumer side: `Stage.consuming` returns `StageContext`, `Stage.consumingWith` an input source
+      returns `InputSpec<StageContext>`, and a two-producer `DependencySpec.zip` delivers a typed tuple.
 - [ ] Prove multiple dependencies compose applicatively and contribute their inputs without invoking callbacks.
+- [ ] Attempt the `needs`/`execute` CE sugar over two producers; record whether the tuple type infers without annotation, and mark the sugar rejected or accepted in the spec.
 - [ ] Record concrete signatures, compile order, diagnostics, and examples in the spec; label any failed syntax as rejected.
-- Completion: real-library positive/negative compiler probes establish composition and type boundaries; no producer work occurs during construction.
+- Completion: real-library positive/negative compiler probes establish composition and type boundaries for producers and consumers; no producer work occurs during construction.
 
 ## T2 — Consolidate process execution and introduce typed command results
 
@@ -93,6 +111,8 @@
 - [ ] Add a failing test: stdout containing blank lines/newlines is returned exactly and contains no stage prefix.
 - [ ] Add a failing test: simultaneous large stdout/stderr both drain completely before completion.
 - [ ] Add start-failure and cancellation tests; retain existing process-tree regression coverage.
+- [ ] Add a failing test: an argument containing whitespace and quotes reaches the child intact on every target, including `netstandard2.0`, where the executor quotes into `ProcessStartInfo.Arguments` with the MSVCRT rules.
+- [ ] Add a pinning test: legacy `run` still returns `Ok()` when the caller-supplied token cancels the command.
 - [ ] Implement the shared executor; preserve argument transport, target-specific APIs, and command-log masking.
 - [ ] Adapt legacy entry points without changing their documented return shapes or ordinary output routing.
 - [ ] Verify an uncaptured command does not allocate/store a hidden full-output result.
@@ -111,8 +131,9 @@
   - `Operation.ofTaskFactory: (unit -> Task<'T>) -> Operation<'T>`.
 - [ ] Add failing tests for nonzero checked capture, nonzero attempted capture, accepted nonzero exit, parse failure, and startup failure.
 - [ ] Add a cancellation test proving an attempted capture cannot trigger fallback by treating cancellation as a process exit.
+- [ ] Add a failing test: cancelling an `attemptCapture` from the caller token surfaces as cancellation, not `Ok` and not a `CommandResult`.
 - [ ] Implement deferred execution and sequencing with inherited working directory/environment and acceptable exit codes.
-- [ ] Preserve structured causes before adapting to legacy `Result<unit,string>` reporting where required.
+- [ ] Add `Step.Operation` to the `Step` union and run it in `StageContext.run` beside `StepFn`; leave `StepFn` and every `unifyResult` overload unchanged. Render a failed `StepOutcome` to the legacy string at the print site only.
 - [ ] Verify declaration/materialization invokes no operation or task factory.
 - Completion: one executing stage can consume clean command data, branch on an attempted exit, and report structured failure.
 
@@ -124,7 +145,9 @@
 - Produces: stable typed producer handles, applicative dependency declarations, and a validated invocation plan.
 - [ ] Add failing tests for shared-handle identity, distinct same-name handles, transitive CLI option harvesting, and deferred callbacks.
 - [ ] Add failing validation tests for dependency cycles and consumers preceding explicitly placed required producers.
-- [ ] Implement identity and declaration traversal without parsing/command side effects.
+- [ ] Add a failing validation test: an unlisted producer whose first consumer sits inside a `parallel'` or `shuffleExecuteSequence` scope is rejected, naming the producer and the scope.
+- [ ] Add a failing test: a handle's `ProducerId` survives the runner's stage copy, and two `Producer.define` calls with identical arguments get different ids.
+- [ ] Implement identity as an allocated `ProducerId` and declaration traversal without parsing/command side effects.
 - [ ] Validate ownership/placement before execution; reject ambiguous arrangements with producer and scope names in diagnostics.
 - [ ] Teach `--explain` to display dependencies without invoking producer callbacks; retain existing legacy-condition semantics.
 - Completion: the graph and CLI requirements are inspectable; invalid supported-model arrangements fail before producer effects.
@@ -152,6 +175,8 @@
 - Produces: actual scope outcome, propagation decision, and structured failure evidence as separate data.
 - [ ] Add failing test: suppressed producer failure remains failed and supplies no value while independent work continues.
 - [ ] Add failing tests retaining exceptions, unacceptable exit codes, and parse failures without inferring anything from stderr.
+- [ ] Fix `runStagesWithFailFast` to collect the exceptions `StageContext.run` returns; the T0 pending test for a `PipelineFailedException` carrying its cause turns green here.
+- [ ] Retain a suppressed step's exception as evidence on the raw outcome even when `ContinueStageOnFailure` keeps it out of the propagated list.
 - [ ] Integrate structured reports with existing stage execution and timing/summary output.
 - [ ] Preserve existing public timing behavior where possible; avoid introducing a breaking public union change solely for internal control flow.
 - Completion: downstream control flow never consults rendered logs or timing summaries to determine failure.
@@ -166,6 +191,8 @@
   - `FailureContext` with primary/secondary causes and stage/step identity.
   - `FailureContext.TryGetOutput: Producer<'T> -> 'T voption` with no execution side effects.
 - [ ] Add failing tests: handler runs after retry exhaustion, never on successful retry, and never for ordinary cancellation.
+- [ ] Add failing tests: a stage's own `timeout` runs its `onFailure` with `FailureCause.TimedOut`; a pipeline timeout or invocation cancellation runs no handler in the stages it cancels.
+- [ ] Add failing tests: `onFailure` on `pipeline { }` runs after the failed stage's own handler and observes the pipeline's final failure.
 - [ ] Add failing tests: inner-before-outer ordering, per-scope-execution invocation, and handler failure preserving the primary cause.
 - [ ] Add failing test: lookup of an absent producer does not run it; successful still-valid metadata is available.
 - [ ] Implement handlers subject to invocation cancellation; do not add general cleanup or a new cleanup budget.
@@ -210,6 +237,7 @@ rtk dotnet run --project tests/Partas.Build.Tests -- --sequenced
 rtk dotnet run --project tests/Partas.Build.Tests -- --sequenced --filter-test-case "<exact test name added by the task>"
 rtk dotnet run --project tests/Partas.Build.CompilerProbe -c Debug
 rtk dotnet run --project tests/Partas.Build.CompilerProbe -c Release
+rtk dotnet run --project tests/Partas.Build.Tests -- --sequenced --filter "CompilerTests"   # drives CompilerProbe.Negative
 rtk dotnet run --project Build.fsproj -- test --quick --configuration Debug
 rtk dotnet run --project Build.fsproj -- test --configuration Release
 ```
@@ -224,3 +252,25 @@ rtk dotnet run --project Build.fsproj -- test --configuration Release
 - Planning: inspected input/builders, process runners, runner hooks, existing tests, project targets, and repository guidance.
 - Prior reduced probe: generic inherited setting succeeded across both state representations and a separate Release consumer.
 - Repository implementation, full baselines, and end-to-end vertical slice: not run during planning.
+- T0 (2026-09-17, worktree `Partas.Build-execution-commands`, branch `execution/commands` from `657c30c`):
+  - Baseline builds: `src/Partas.Build` Debug and Release, `src/Partas.Build.Cmd` Release, all 0 errors 0 warnings.
+  - Baseline suite: `tests/Partas.Build.Tests --sequenced` 160 passed, 0 failed. The "Could not execute" lines
+    in the log are `OutputTests` deliberately running a missing `dotnet` command. No pre-existing failures.
+  - Regression inventory (names as of this commit): masking — `CmdTests` "a sensitive command passes its values
+    through …", "a secret argument masked in log string …", `ExplainTests` "explain masks secret …"; environment —
+    `CmdTests` "the working directory environment resolved through parent", `CommandTests` "env vars merge per
+    key"; cancellation/tree kill — `CmdTests` "a stage timeout kills the process and everything it started";
+    retry — `StageTests` "retry …" (six tests); parallel buffers — `ParallelismTests` "… flush output in blocks",
+    `OutputTests` "a step buffer forces redirection …", `StageTests` "a retry under parallel' …"; command
+    defaults — `CommandTests` "a command default …" family (eight tests).
+  - Pending defect tests (each observed failing un-pended, then marked `ptest`):
+    - `tests/Partas.Build.Cmd.NetStandard.Tests` (new; references the netstandard2.0 build of Partas.Build.Cmd
+      via `SetTargetFramework`) "the netstandard build quotes an argument that contains whitespace or a quote":
+      actual `a b plain say "hi"`. Unpend in T2. Not yet registered with the `Build` CLI `test` command.
+    - `PipelineTests` "a pipeline surfaces the exception a stage raised": `PipelineFailedException.InnerException`
+      is null. Unpend in T6.
+    - `CmdTests` "legacy run reports success when the caller's own token cancels the process": passes; pins C02.
+  - Suite after T0: 161 passed, 1 ignored (the pending pipeline test), 0 failed.
+  - Sibling worktree `Partas.Build-execution-slice` (`codex/typed-execution-slice`) holds uncommitted codex drafts of
+    `Execution.fs` (90 lines), `StageSettings.fs` (25 lines) and a C# `ProcessFixture`; read for salvage in T1/T2,
+    not built on.

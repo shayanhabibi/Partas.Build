@@ -166,4 +166,23 @@ let tests =
             let built = spec.Read (parse spec.Inputs "--configuration Release")
             Expect.equal (stageNames built) [ "first"; "second" ] "both stages should be present"
         }
+
+        // Pending until T6 (PLAN-Execution, pre-existing defects): `runStagesWithFailFast` discards the exceptions
+        // `StageContext.run` returns, so the pipeline reports "result is not indicating as successful" with no cause.
+        ptest "a pipeline surfaces the exception a stage raised" {
+            let boom (_: StageContext) : Async<Result<unit, string>> = raise (System.InvalidOperationException "boom")
+            let built = pipeline "raising" { stage "throws" { run boom } }
+
+            let raised =
+                try
+                    PipelineContext.run built
+                    None
+                with :? PipelineFailedException as ex -> Some ex
+
+            match raised with
+            | None -> failtest "a raising stage should fail the pipeline"
+            | Some ex ->
+                Expect.isNotNull ex.InnerException "the pipeline should carry the stage's exception as its cause"
+                Expect.equal ex.InnerException.Message "boom" "the cause should be the exception the step raised"
+        }
     ]

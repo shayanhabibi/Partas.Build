@@ -26,6 +26,14 @@ let private block name (config: ActionInput<string>) = input {
     return stage name { run (fun (_: StageContext) -> ignore cfg) }
 }
 
+/// A block that counts how often it is materialized, so a test can assert that construction reads nothing.
+let private countingBlock (reads: int ref) name (config: ActionInput<string>) = {
+    Inputs = [ config :> ActionInput ]
+    Read = fun _ ->
+        reads.Value <- reads.Value + 1
+        stage name { run noop }
+}
+
 /// The command's own options, minus the `--help` System.CommandLine adds to every command and the
 /// `--explain` the library adds to every command that runs a pipeline.
 let private declared (command: Command) =
@@ -163,5 +171,161 @@ let tests =
             }
 
             Expect.equal [ for sub in built.Subcommands -> sub.Name ] [ "one"; "two" ] "one subcommand per iteration"
+        }
+
+        // ---------------------------------------------------------------- one setting over both builder states
+        test "a setting applies on either side of an input-aware child" {
+            let config = configuration ()
+            let reads = ref 0
+            let child name = countingBlock reads name config
+
+            let plain: StageContext = stage "plain" { retry 2 }
+            let before: InputSpec<StageContext> = stage "before" { retry 3; child "a" }
+            let after: InputSpec<StageContext> = stage "after" { child "b"; retry 4 }
+            let both: InputSpec<StageContext> = stage "both" { retry 5; child "c"; retry 6 }
+            let wrapped: InputSpec<StageContext> = input { return stage "wrapped" { retry 7 } }
+
+            Expect.equal reads.Value 0 "declaring a stage should read no input"
+            Expect.equal (inputNames before.Inputs) [ "--configuration" ] "the child's input should surface on the parent"
+
+            let parsed = parse before.Inputs ""
+            Expect.equal plain.Retry 2 "a plain stage keeps its setting"
+            Expect.equal (before.Read parsed).Retry 3 "a setting before the child should reach the stage"
+            Expect.equal (after.Read parsed).Retry 4 "a setting after the child should reach the stage"
+            Expect.equal (both.Read parsed).Retry 6 "the last of two settings around the child should win"
+            Expect.equal (wrapped.Read parsed).Retry 7 "a returned stage stays singly wrapped"
+            Expect.equal reads.Value 3 "one read per materialized child, and none before"
+        }
+
+        test "a negative retry count is clamped in both builder states" {
+            let config = configuration ()
+            let reads = ref 0
+
+            let plain: StageContext = stage "plain" { retry -1 }
+            let spec: InputSpec<StageContext> = stage "spec" { countingBlock reads "child" config; retry -1 }
+
+            Expect.equal plain.Retry 0 "a plain stage clamps"
+            Expect.equal ((spec.Read (parse spec.Inputs "")).Retry) 0 "an input-aware stage clamps the same way"
+        }
+
+        test "one retry implementation serves every builder state" {
+            let builder = typeof<Partas.Build.StageBuilder.StageBuilder>
+            let retries = builder.GetMethods() |> Array.filter (fun method -> method.Name = "retry")
+
+            Expect.equal retries.Length 1 "the mirrored pair should collapse into one operation"
+            Expect.isTrue retries[0].IsGenericMethodDefinition "the surviving operation should be generic in the builder state"
+            Expect.notEqual retries[0].DeclaringType builder "the surviving operation should be inherited from the shared settings builder"
+            Expect.isNull
+                (System.Attribute.GetCustomAttribute(retries[0], typeof<System.ComponentModel.EditorBrowsableAttribute>))
+                "the operation itself should stay visible to completion"
+        }
+
+        // ---------------------------------------------------------------- producers and their consumers
+        test "declaring a producer declares its inputs and runs nothing" {
+            let calls = ref 0
+            let release = Input.option<string> "--release" |> Input.def "latest"
+            let target = Input.option<string> "--target" |> Input.def "local"
+
+            let resolve =
+                Producer.define "resolve" (InputSpec.ofInput release) DependencySpec.empty (fun requested () ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret requested)
+
+            let download =
+                Producer.define "download" (InputSpec.ofInput target) (DependencySpec.require resolve) (fun destination resolved ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret $"{destination}/{resolved}")
+
+            Expect.equal calls.Value 0 "declaring a producer should invoke no callback"
+            Expect.equal (inputNames download.Inputs) [ "--target"; "--release" ] "a producer should declare its dependencies' inputs too"
+            Expect.equal [ for required in download.Requires -> required.Name ] [ "resolve" ] "the declared prerequisite should be listed"
+            Expect.notEqual resolve.Id download.Id "each declaration should take its own identity"
+        }
+
+        test "two producers declared alike stay distinct" {
+            let define () = Producer.define "same" (InputSpec.ret ()) DependencySpec.empty (fun () () -> Operation.ret 1)
+
+            Expect.notEqual (define ()).Id (define ()).Id "identity is allocated per declaration, not derived from the arguments"
+        }
+
+        test "dependencies compose applicatively into a typed tuple" {
+            let calls = ref 0
+            let release = Input.option<string> "--release" |> Input.def "latest"
+
+            let resolve =
+                Producer.define "resolve" (InputSpec.ofInput release) DependencySpec.empty (fun requested () ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret requested)
+
+            let generate =
+                Producer.define "generate" (InputSpec.ret ()) DependencySpec.empty (fun () () ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret 7)
+
+            let both: DependencySpec<string * int> = DependencySpec.zip resolve generate
+
+            Expect.equal calls.Value 0 "composing dependencies should invoke no callback"
+            Expect.equal (inputNames both.Inputs) [ "--release" ] "the composed specification should carry its producers' inputs"
+            Expect.equal [ for required in both.Requires -> required.Name ] [ "resolve"; "generate" ] "both producers should be required, in order"
+
+            let published =
+                ProducerValues.Empty
+                    .Add(resolve.Id, "v1")
+                    .Add(generate.Id, 7)
+
+            Expect.equal (both.Read published) ("v1", 7) "the composed specification should read a typed tuple"
+        }
+
+        test "a consuming stage keeps the representation its declarations imply" {
+            let calls = ref 0
+            let target = Input.option<string> "--target" |> Input.def "local"
+            let release = Input.option<string> "--release" |> Input.def "latest"
+
+            let resolve =
+                Producer.define "resolve" (InputSpec.ofInput release) DependencySpec.empty (fun _ () ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret "v1")
+
+            let publish: StageContext =
+                Stage.consuming "publish" (DependencySpec.require resolve) (fun _ ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret ())
+
+            let publishTo: InputSpec<StageContext> =
+                Stage.consumingWith "publishTo" (InputSpec.ofInput target) (DependencySpec.require resolve) (fun _ _ ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret ())
+
+            Expect.equal calls.Value 0 "declaring a consumer should invoke no callback"
+            Expect.equal publish.Name "publish" "a dependency-only consumer is a plain stage"
+            Expect.equal (inputNames publishTo.Inputs) [ "--target"; "--release" ]
+                "a consumer should declare its own input and its prerequisites'"
+            Expect.equal (publishTo.Read (parse publishTo.Inputs "")).Name "publishTo" "an input-aware consumer materializes to a stage"
+            Expect.equal calls.Value 0 "materializing a consumer should still invoke no callback"
+        }
+
+        test "a consumer runs its operation and blocks on an unpublished prerequisite" {
+            let ran = ref 0
+
+            let resolve =
+                Producer.define "resolve" (InputSpec.ret ()) DependencySpec.empty (fun () () -> Operation.ret "v1")
+
+            let independent =
+                Stage.consuming "independent" DependencySpec.empty (fun () ->
+                    Operation.ofAsync (async { ran.Value <- ran.Value + 1 }))
+
+            let dependent =
+                Stage.consuming "dependent" (DependencySpec.require resolve) (fun _ ->
+                    Operation.ofAsync (async { ran.Value <- ran.Value + 1 }))
+
+            Expect.equal (runStage independent) (Ok ()) "a consumer requiring nothing should run its operation"
+            Expect.equal ran.Value 1 "the operation should run exactly once"
+            Expect.equal (runStage dependent) (Error []) "a consumer should fail while its prerequisite has published nothing"
+            Expect.equal ran.Value 1 "the blocked consumer's operation should not have run"
+
+            Expect.throwsC
+                (fun () -> (DependencySpec.require resolve).Read ProducerValues.Empty |> ignore)
+                (fun unavailable ->
+                    Expect.stringContains unavailable.Message "resolve" "an unpublished prerequisite should name its producer")
         }
     ]

@@ -26,6 +26,7 @@
     <Project Path="Partas.ExternalAnnotations/Partas.ExternalAnnotations.fsproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Partas.Build.CompilerProbe/Partas.Build.CompilerProbe.fsproj" />
     <Project Path="tests/Partas.Build.ExternalAnnotations.Tests/Partas.Build.ExternalAnnotations.Tests.fsproj" />
     <Project Path="tests/Partas.Build.Cmd.NetStandard.Tests/Partas.Build.Cmd.NetStandard.Tests.fsproj" />
     <Project Path="tests/Partas.Build.Tests/Partas.Build.Tests.fsproj" />

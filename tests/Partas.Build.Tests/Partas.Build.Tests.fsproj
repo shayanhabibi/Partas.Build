@@ -21,6 +21,7 @@
         <Compile Include="CompositionTests.fs"/>
         <Compile Include="ExplainTests.fs"/>
         <Compile Include="SummaryTests.fs"/>
+        <Compile Include="CompilerTests.fs"/>
         <Compile Include="Main.fs"/>
     </ItemGroup>
 

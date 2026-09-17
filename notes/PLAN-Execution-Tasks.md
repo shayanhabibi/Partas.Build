@@ -83,19 +83,19 @@
   - `mapStage: (StageContext -> StageContext) -> ^State -> ^State`, constrained to supported mapping cases.
   - A shared base implementation of `retry` only; leave broad settings migration for T8.
   - Compiled candidate interfaces for `Operation<'T>`, `Producer<'T>`, and `DependencySpec<'T>`.
-- [ ] Port the reduced mapping probe to the real library; test `retry` before, after, and on both sides of an input-aware child.
-- [ ] Assert inferred result types through functions requiring exactly `StageContext` or `InputSpec<StageContext>`.
-- [ ] Assert input declarations are visible with zero `Read` executions.
-- [ ] Compile a separate consumer in Debug and Release to exercise public inline helper accessibility.
-- [ ] Add a negative compiler fixture showing nested `InputSpec<InputSpec<_>>` is not silently accepted/flattened, through the `CompilerProbe.Negative` harness.
-- [ ] Add a negative compiler fixture showing `let! x = needs p` inside `stage { }` fails with `FS0708`.
-- [ ] Record the diagnostic text an SRTP setting produces when applied to an unsupported state, for T9's docs.
-- [ ] Prove a functional producer declaration accepting input sources, static dependencies, and a deferred callback before adding CE sugar.
-- [ ] Prove the consumer side: `Stage.consuming` returns `StageContext`, `Stage.consumingWith` an input source
+- [x] Port the reduced mapping probe to the real library; test `retry` before, after, and on both sides of an input-aware child.
+- [x] Assert inferred result types through functions requiring exactly `StageContext` or `InputSpec<StageContext>`.
+- [x] Assert input declarations are visible with zero `Read` executions.
+- [x] Compile a separate consumer in Debug and Release to exercise public inline helper accessibility.
+- [x] Add a negative compiler fixture showing nested `InputSpec<InputSpec<_>>` is not silently accepted/flattened, through the `CompilerProbe.Negative` harness.
+- [x] Add a negative compiler fixture showing `let! x = needs p` inside `stage { }` fails with `FS0708`.
+- [x] Record the diagnostic text an SRTP setting produces when applied to an unsupported state, for T9's docs.
+- [x] Prove a functional producer declaration accepting input sources, static dependencies, and a deferred callback before adding CE sugar.
+- [x] Prove the consumer side: `Stage.consuming` returns `StageContext`, `Stage.consumingWith` an input source
       returns `InputSpec<StageContext>`, and a two-producer `DependencySpec.zip` delivers a typed tuple.
-- [ ] Prove multiple dependencies compose applicatively and contribute their inputs without invoking callbacks.
-- [ ] Attempt the `needs`/`execute` CE sugar over two producers; record whether the tuple type infers without annotation, and mark the sugar rejected or accepted in the spec.
-- [ ] Record concrete signatures, compile order, diagnostics, and examples in the spec; label any failed syntax as rejected.
+- [x] Prove multiple dependencies compose applicatively and contribute their inputs without invoking callbacks.
+- [x] Attempt the `needs`/`execute` CE sugar over two producers; record whether the tuple type infers without annotation, and mark the sugar rejected or accepted in the spec.
+- [x] Record concrete signatures, compile order, diagnostics, and examples in the spec; label any failed syntax as rejected.
 - Completion: real-library positive/negative compiler probes establish composition and type boundaries for producers and consumers; no producer work occurs during construction.
 
 ## T2 — Consolidate process execution and introduce typed command results
@@ -274,3 +274,18 @@ rtk dotnet run --project Build.fsproj -- test --configuration Release
   - Sibling worktree `Partas.Build-execution-slice` (`codex/typed-execution-slice`) holds uncommitted codex drafts of
     `Execution.fs` (90 lines), `StageSettings.fs` (25 lines) and a C# `ProcessFixture`; read for salvage in T1/T2,
     not built on.
+- T1 (2026-09-17, worktree `Partas.Build-execution-commands`, branch `execution/commands`):
+  - Builder mapping: `Builders/StageSettings.fs` holds `StageMap` (three `Map` overloads plus the SRTP `Apply`),
+    `StageMap.mapStage`, and `StageSettingsBuilder` with the one generic `retry`. `StageBuilder` inherits it and
+    declares neither `retry` any more. Debug and Release library builds cover all three target frameworks;
+    `Build.fsproj`, written against the library, compiles unchanged.
+  - Dependencies: `src/Partas.Build/Dependencies.fs` (after `Types.fs`) holds `RuntimeContext`, `Operation<'T>`,
+    `ProducerId`, `ProducerRef`, `ProducerValues`, `Producer<'T>`, `DependencySpec<'T>`, and the `Operation`,
+    `DependencySpec`, `Producer` and `Stage` modules. Signatures and limits are in the spec's *Compiled surface*.
+  - Probes: `tests/Partas.Build.CompilerProbe` (5 tests, green in Debug and Release, added to `Partas.Build.slnx`);
+    `tests/Partas.Build.CompilerProbe.Negative/{NestedInputSpec,MonadicNeeds,UnsupportedSettingState}` driven by
+    `tests/Partas.Build.Tests/CompilerTests.fs`, in no solution. Observed `FS0193`, `FS0708` and `FS0001`
+    respectively; the three builds take about 5s together.
+  - CE sugar over two producers is rejected: the threaded state is `(unit * 'A) * 'B`, so a flat tuple pattern is
+    `FS0001`. Recorded in the spec under *Rejected syntax*.
+  - Suite after T1: 171 passed, 1 ignored (the T0 pending pipeline test), 0 failed.

@@ -43,6 +43,7 @@ type SRTPStageBuilderRunner =
 
 and [<EB(advanced)>]
     StageBuilder(name: string) =
+    inherit StageSettingsBuilder()
     [<EB(never)>] // `Run` is deliberately not `inline`: `BuildStage` is a plain function type rather than a delegate,
     // and inlining an application of one defeats the optimiser (`FS1118`) in Release builds only.
     // It applies a closure once at construction time, so there is nothing to gain by inlining it.
@@ -245,12 +246,6 @@ and [<EB(advanced)>]
         timeout
         ([<InlineIfLambda>] build: BuildStage, timespan: TimeSpan): BuildStage
         = build >> fun ctx -> { ctx with Timeout = ValueSome timespan }
-    /// <summary>Sets how many further attempts the stage's steps get after a failing one.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/retry/*"/>
-    [<CustomOperation>] member inline _.
-        retry
-        ([<InlineIfLambda>] build: BuildStage, count: int): BuildStage
-        = build >> fun ctx -> { ctx with Retry = max 0 count }
     /// <summary>Sets the timeout for each step in the stage.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/timeoutForStep/*"/>
     [<CustomOperation>] member inline _.
@@ -694,13 +689,6 @@ and [<EB(advanced)>]
         timeout
         (spec: InputSpec<BuildStage>, timespan: TimeSpan): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.timeout(build, timespan)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("retry")>] member inline this.
-        retry
-        (spec: InputSpec<BuildStage>, count: int): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.retry(build, count)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>

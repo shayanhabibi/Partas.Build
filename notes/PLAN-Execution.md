@@ -94,8 +94,9 @@ Recorded here so T0 can separate them from implementation failures. Each is fixe
 - Do not hide the user-facing custom operations from completion.
 - Do not assume future `.fsi` files can hide helpers referenced by public inline code or constraints.
 - Keep CE finalizers applying `Build*` function aliases non-inline where required to avoid Release-only FS1118.
-- Accepted cost: an SRTP member shows `^State` in completion and reports a constraint failure instead of an
-  overload mismatch when misused. T1 records the actual diagnostic text for a misuse so T9 can document it.
+- Accepted cost: an SRTP member shows `^State` in completion. T1 measured the misuse diagnostic: the compiler
+  lists the three supported states as unmatched `StageMap.Map` overloads, recorded verbatim under
+  *Compiled surface (T1)* for T9's docs.
 - The reduced probe proved compilation over stand-in types only. Behaviour against the real overload set, XML
   documentation, and IntelliSense presentation is T1's to establish, not this contract's.
 
@@ -255,7 +256,7 @@ Recorded here so T0 can separate them from implementation failures. Each is fixe
 
 ## Candidate composition interface
 
-- This is pseudocode; Task T1 proves the concrete F# surface.
+- This was pseudocode; *Compiled surface* below records what T1 compiled, and takes precedence over it.
 - Dependencies and inputs are declared outside the runtime callback.
 - Plain and input-aware definitions must compose without nested `InputSpec` values.
 
@@ -330,20 +331,180 @@ without annotation is a T1 question; the functional form is the fallback the fix
 - Keep existing `input { return stage { ... } }` valid and typed as `InputSpec<StageContext>`.
 - Specify the exact producer integration with `Yield`/`Combine` only after checking real compiler inference.
 
+## Compiled surface (T1)
+
+Compiled against the real library and exercised from a separate consumer assembly in Debug and Release.
+Signatures are as the compiler reports them.
+
+### Shared builder mapping
+
+`src/Partas.Build/Builders/StageSettings.fs`, namespace `Partas.Build.Internal`:
+
+```fsharp
+type StageMap =
+    static member Map: build: BuildStage * update: (StageContext -> StageContext) -> BuildStage
+    static member Map: spec: InputSpec<BuildStage> * update: (StageContext -> StageContext) -> InputSpec<BuildStage>
+    static member Map: spec: InputSpec<StageContext> * update: (StageContext -> StageContext) -> InputSpec<StageContext>
+    static member inline Apply: state: ^State * update: (StageContext -> StageContext) -> ^State
+
+module StageMap =                                                    // [<CompilationRepresentation(ModuleSuffix)>]
+    val inline mapStage: update: (StageContext -> StageContext) -> state: ^State -> ^State
+
+type StageSettingsBuilder =
+    [<CustomOperation("retry")>] member inline retry: state: ^State * count: int -> ^State
+```
+
+- `StageBuilder` inherits `StageSettingsBuilder`, and the two `retry` members it used to declare are gone.
+  Reflection over `StageBuilder` finds one `retry`: generic, declared by the base, carrying no `EditorBrowsable`.
+- `retry` compiles before a yielded input-aware child, after one, and on both sides of one. The last setting
+  wins, a negative count clamps in either representation, and declaring any of it reads no input.
+- `StageMap` carries `EditorBrowsable(Never)`; `StageSettingsBuilder` carries `Advanced`, as `StageBuilder` does.
+- Only `retry` moved to the base. The remaining mirrored pairs are T8's.
+
+### Compile order
+
+`Types.fs` → `Dependencies.fs` → `Process.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs`, the rest
+unchanged. `Dependencies.fs` depends on `Types.fs` alone. `StageSettings.fs` precedes the builder inheriting it.
+
+### Producers, dependencies, consumers
+
+`src/Partas.Build/Dependencies.fs`, namespace `Partas.Build`:
+
+```fsharp
+type RuntimeContext = { Stage: StageContext; StepIndex: StepIndex }
+type Operation<'T> = { Execute: RuntimeContext -> Async<'T> }
+type ProducerId = ProducerId of id: int64
+type ProducerRef = { Id: ProducerId; Name: string; Requires: ProducerRef list }
+
+type ProducerValues =
+    static member Empty: ProducerValues
+    member Add: id: ProducerId * value: 'T -> ProducerValues
+    member TryGet: id: ProducerId -> 'T voption
+
+type Producer<'T> = {
+    Id: ProducerId
+    Name: string
+    Inputs: ActionInput list
+    Requires: ProducerRef list
+    Prepare: ParseResult -> ProducerValues -> Operation<'T>
+}
+
+type DependencySpec<'T> = { Requires: ProducerRef list; Inputs: ActionInput list; Read: ProducerValues -> 'T }
+
+module Operation =
+    val ret: value: 'T -> Operation<'T>
+    val ofAsync: work: Async<'T> -> Operation<'T>
+
+module DependencySpec =
+    val empty: DependencySpec<unit>
+    val require: producer: Producer<'T> -> DependencySpec<'T>
+    val map: fn: ('T -> 'U) -> spec: DependencySpec<'T> -> DependencySpec<'U>
+    val map2: fn: ('T -> 'U -> 'V) -> first: DependencySpec<'T> -> second: DependencySpec<'U> -> DependencySpec<'V>
+    val zip: first: Producer<'T> -> second: Producer<'U> -> DependencySpec<'T * 'U>
+
+module Producer =
+    val define:
+        name: string -> inputs: InputSpec<'I> -> dependencies: DependencySpec<'D> -> execute: ('I -> 'D -> Operation<'T>)
+            -> Producer<'T>
+
+module Stage =
+    val consuming: name: string -> dependencies: DependencySpec<'D> -> execute: ('D -> Operation<unit>) -> StageContext
+    val consumingWith:
+        name: string -> inputs: InputSpec<'I> -> dependencies: DependencySpec<'D> -> execute: ('I -> 'D -> Operation<unit>)
+            -> InputSpec<StageContext>
+```
+
+Compiled example, both consumer forms, from `tests/Partas.Build.CompilerProbe/Probe.fs`:
+
+```fsharp
+let resolve =
+    Producer.define "resolve" (InputSpec.ofInput release) DependencySpec.empty (fun requested () -> Operation.ret requested)
+
+let generate =
+    Producer.define "generate" (InputSpec.ret ()) (DependencySpec.require resolve) (fun () resolved ->
+        Operation.ret (String.length resolved))
+
+let both: DependencySpec<string * int> = DependencySpec.zip resolve generate
+
+let publish: StageContext =
+    Stage.consuming "publish" both (fun (resolved, generated) -> Operation.ret (printfn "%s %d" resolved generated))
+
+let publishTo: InputSpec<StageContext> =
+    Stage.consumingWith "publishTo" (InputSpec.ofInput target) (DependencySpec.require resolve) (fun destination resolved ->
+        Operation.ret (printfn "%s %s" destination resolved))
+```
+
+- `Producer.define` allocates a `ProducerId` from an interlocked counter and harvests its own inputs together
+  with its prerequisites'. Two declarations sharing a name and arguments take different identities.
+- Declaring a producer, composing dependencies, and materializing a consumer invoke no callback. `Prepare` is
+  applied by whoever schedules the producer, and the `Operation` it answers runs after that.
+- `DependencySpec.map2` unions prerequisites by identity and inputs by reference, keeping declaration order, so
+  a producer required twice is listed once.
+- `ProducerValues` stores results as `obj` behind `TryGet`, which answers a value only when the identity and the
+  result type agree.
+
+### Diagnostics for T9's docs
+
+An unsupported state does not report a bare constraint failure: the compiler lists the supported states. Both
+paths — the helper and the custom operation — produce the same list, with `FS0001` for `StageMap.mapStage` and
+`FS0193` for `StageBuilder.retry`. Pinned by the `UnsupportedSettingState` fixture:
+
+```
+error FS0001: No overloads match method 'Map'.
+
+Known return type: InputSpec<int>
+
+Known type parameters: < InputSpec<int> , (StageContext -> StageContext) >
+
+Available overloads:
+ - static member StageMap.Map: build: BuildStage * update: (StageContext -> StageContext) -> BuildStage // Argument 'build' doesn't match
+ - static member StageMap.Map: spec: InputSpec<BuildStage> * update: (StageContext -> StageContext) -> InputSpec<BuildStage> // Argument 'spec' doesn't match
+ - static member StageMap.Map: spec: InputSpec<StageContext> * update: (StageContext -> StageContext) -> InputSpec<StageContext> // Argument 'spec' doesn't match
+```
+
+`InputSpec<InputSpec<_>>` stays unflattened: yielding an input-aware value inside a returned stage is
+`FS0193: Type mismatch. The type 'InputSpec<StageContext>' is not compatible with the type 'StageContext'`.
+Pinned by the `NestedInputSpec` fixture.
+
+### Rejected syntax
+
+- `let! value = needs producer` inside `stage { }`: `FS0708`. Pinned by the `MonadicNeeds` fixture.
+- `needs`/`execute` CE sugar over two producers: the state a custom operation threads is a left-nested tuple
+  seeded by the builder's `Yield(unit)`, so two `needs` carry `(unit * Release) * Generated`. A flat
+  `fun (release, changes) -> …` is `FS0001`, "This expression was expected to have type 'string' but is a tuple
+  of type 'unit * string'", and the same body compiles as `fun (((), release), changes) -> …`. The sugar is
+  **rejected**: `DependencySpec.zip`/`require` deliver the flat tuple the fixture wants, without a pattern that
+  exposes the seed. Revisit only with a builder shape that avoids seeding the state with `unit`.
+
+### Limits of this surface
+
+- `Stage.consumingWith` declares its own inputs together with its prerequisites', so a command registers both.
+  `Stage.consuming` answers a plain `StageContext`, which has nowhere to record the producers it requires, so its
+  prerequisites' inputs reach no command. The step's `--explain` label names them; the model field that makes
+  them harvestable is T4's, and until then a consumer whose producers declare CLI inputs uses `consumingWith`.
+- Nothing publishes producer values yet. A consumer declaring prerequisites therefore fails when it runs, naming
+  the producer whose result is unavailable; a consumer declaring none executes its operation. T5 replaces the
+  `ProducerValues.Empty` the consumer step reads with the owning scope's published values.
+- `RuntimeContext` carries the executing stage and the step index; cancellation reaches an operation as the
+  ambient token. T3 settles it alongside `Step.Operation`.
+
 ## Evidence and limits
 
-- Verified in a reduced throwaway F# probe over stand-in types (`StageContext = { Retry; Names }`, a two-field
-  `InputSpec`), not the library's:
-  - One inherited generic `retry` custom operation supports both state representations.
-  - Settings compile before and after yielding an input-aware child.
-  - Inferred results remain `StageContext` or `InputSpec<StageContext>` as appropriate.
-  - Input reads stay deferred.
-  - Separate Release consumer assembly compiles and executes the probe.
+- Verified against the real library by T1, and reproducible from the repository:
+  - `tests/Partas.Build.CompilerProbe` (in the solution, Debug and Release): one inherited generic `retry` over
+    both state representations, settings on either side of an input-aware child, inferred results fixed by
+    functions taking exactly `StageContext` or `InputSpec<StageContext>`, deferred input reads, `mapStage` over
+    all three supported states, and producer/consumer declaration without a callback.
+  - `tests/Partas.Build.CompilerProbe.Negative/<Case>` (in no solution, driven by
+    `tests/Partas.Build.Tests/CompilerTests.fs`): `NestedInputSpec`, `MonadicNeeds`, `UnsupportedSettingState`.
+  - `tests/Partas.Build.Tests/CompositionTests.fs`: the same composition and declaration properties inside the
+    library's own suite, including the zero-read assertions and the single-`retry` reflection check.
+  - Interaction with the complete overload set: `retry` is the only setting moved so far, and the `Build` CLI,
+    which is written against the library, compiles unchanged.
 - Not yet verified:
-  - Interaction with the complete Partas.Build overload set and XML documentation.
-  - Producer registration, ownership, retry reset, or dependency diagnostics.
-  - New operation/dependency CE syntax.
-- The original probe is temporary and outside the repository; T1 must create reproducible repository evidence.
+  - XML documentation rendering and IntelliSense presentation of the inherited operation.
+  - Producer registration, ownership, retry reset, publication, or dependency validation diagnostics.
+  - `Operation` sequencing, command adapters, and `Step.Operation`.
 
 ## Deferred work
 

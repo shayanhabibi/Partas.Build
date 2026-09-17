@@ -156,6 +156,30 @@ type StageTimings() =
 
         walk 0L
 
+/// A key allocated for one producer declaration and retained by every copy of its handle.
+[<Struct>]
+type ProducerId = ProducerId of id: int64
+
+/// Values published during one invocation or attempt scope.
+[<Sealed>]
+type ProducerValues private (values: Map<ProducerId, obj>) =
+    static member Empty = ProducerValues Map.empty
+    member _.Add(id: ProducerId, value: 'T) = ProducerValues(Map.add id (box value) values)
+    member _.TryGet<'T>(id: ProducerId): 'T voption =
+        match Map.tryFind id values with
+        | Some (:? 'T as value) -> ValueSome value
+        | _ -> ValueNone
+
+/// The executable-erased declaration shared by a typed handle and every stage using it.
+/// Prepare returns a boxed Operation<obj>; ProducerExecution.prepare exposes its typed form.
+type ProducerRef = {
+    Id: ProducerId
+    Name: string
+    Requires: ProducerRef list
+    Inputs: ActionInput list
+    Prepare: CommandLine.ParseResult -> ProducerValues -> Result<obj, string>
+}
+
 [<Struct>]
 type InputSpec<'T> = { Inputs: ActionInput list; Read: CommandLine.ParseResult -> 'T }
 
@@ -284,6 +308,12 @@ and [<Struct>] StageCondition = {
 and StageContext = {
     Id: int
     Name: string
+    /// CLI inputs declared by work represented by this stage, readable before parsing.
+    DeclaredInputs: ActionInput list
+    /// The producer explicitly listed at this stage, if any.
+    Producer: ProducerRef voption
+    /// Producers this stage consumes, in declaration order.
+    Requires: ProducerRef list
     Verbosity: Verbosity voption
     IsActive: StageContext -> bool
     /// <summary>Every condition conjoined into <c>IsActive</c>, in the order the stage declared them.</summary>
@@ -396,6 +426,9 @@ module StageContext =
     let create name = {
             Id = Random().Next()
             Name = name
+            DeclaredInputs = []
+            Producer = ValueNone
+            Requires = []
             IsActive = fun _ -> true
             Conditions = []
             IsParallel = fun _ -> ValueNone

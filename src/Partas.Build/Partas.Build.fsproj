@@ -19,7 +19,8 @@
         <Compile Include="Types.fs" />
         <Compile Include="Process.fs" />
         <Compile Include="Operations.fs" />
-        <Compile Include="Dependencies.fs" />
+    <Compile Include="Dependencies.fs" />
+    <Compile Include="DependencyPlan.fs" />
         <Compile Include="Builders\StageSettings.fs" />
         <Compile Include="Builders\Stage.fs" />
         <Compile Include="Builders\Conditions.fs" />

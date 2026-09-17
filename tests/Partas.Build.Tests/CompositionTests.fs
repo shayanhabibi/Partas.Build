@@ -348,15 +348,12 @@ let tests =
             Expect.equal ran.Value 1 "the blocked consumer's operation should not have run"
         }
 
-        test "a consumer of producers that read the command line must declare its inputs" {
+        test "consumers of producers that read the command line declare their inputs" {
             let release = Input.option<string> "--release" |> Input.def "latest"
             let resolve = Producer.define "resolve" (InputSpec.ofInput release) DependencySpec.empty (fun _ () -> Operation.ret "v1")
 
-            Expect.throwsC
-                (fun () -> Stage.consuming "publish" (DependencySpec.require resolve) (fun _ -> Operation.ret ()) |> ignore)
-                (fun rejected ->
-                    Expect.stringContains rejected.Message "consumingWith"
-                        "the rejection should name the form that carries a prerequisite's inputs to the command")
+            let plain = Stage.consuming "publish" (DependencySpec.require resolve) (fun _ -> Operation.ret ())
+            Expect.equal (inputNames plain.DeclaredInputs) [ "--release" ] "a plain consumer retains prerequisite inputs"
 
             let declared = Stage.consumingWith "publish" (InputSpec.ret ()) (DependencySpec.require resolve) (fun () _ -> Operation.ret ())
             Expect.equal (inputNames declared.Inputs) [ "--release" ] "the input-aware form should register the prerequisite's input"

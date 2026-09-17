@@ -11,6 +11,7 @@
     <ItemGroup>
         <Compile Include="Helpers.fs"/>
         <Compile Include="InputsTests.fs"/>
+        <Compile Include="DependencyTests.fs"/>
         <Compile Include="StageTests.fs"/>
         <Compile Include="ParallelismTests.fs"/>
         <Compile Include="PipelineTests.fs"/>

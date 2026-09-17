@@ -15,6 +15,21 @@ open FSharp.Data.UnitSystems.SI
 
 type StepFnSignature = StageContext -> StepIndex -> Async<Result<unit, string>>
 
+let rec private declaredStageInputs (stage: StageContext) =
+    InputSpec.union [
+        yield stage.DeclaredInputs
+        for step in stage.Steps do
+            match step with
+            | Step.StepOfStage child -> yield declaredStageInputs child
+            | _ -> ()
+    ]
+
+let private declaredBuildInputs name (build: BuildStage) =
+    StageContext.create name |> build |> declaredStageInputs
+
+let private withDeclaredBuildInputs name (build: BuildStage) (spec: InputSpec<'T>): InputSpec<'T> =
+    { spec with Inputs = InputSpec.union [ declaredBuildInputs name build; spec.Inputs ] }
+
 type private IILAttribute = InlineIfLambdaAttribute
 type private EBAttribute = EditorBrowsableAttribute
 [<Literal>]
@@ -108,11 +123,13 @@ and [<EB(advanced)>]
     [<EB(never)>]
     member inline _.Combine ([<IIL>] build1, [<IIL>] build2) = BuildStage.merge build1 build2
     [<EB(never)>]
-    member inline _.Combine ([<IIL>] build, spec) = InputSpec.map (BuildStage.merge build) spec
+    member _.Combine (build: BuildStage, spec: InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map (BuildStage.merge build) spec |> withDeclaredBuildInputs name build
     [<EB(never)>]
     member inline _.Combine (spec, rest): InputSpec<BuildStage> = InputSpec.map2 (>>) spec rest
     [<EB(never)>]
-    member inline _.Combine (spec, [<IIL>] rest: BuildStage): InputSpec<BuildStage> = InputSpec.map (fun build -> build >> rest) spec
+    member _.Combine (spec: InputSpec<BuildStage>, rest: BuildStage): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> build >> rest) spec |> withDeclaredBuildInputs name rest
     [<EB(never)>]
     member inline _.Combine (spec, [<IIL>] build: BuildStage): InputSpec<BuildStage> = InputSpec.map (fun stage -> StageContext.addSubStage stage >> build) spec
     [<EB(never)>]

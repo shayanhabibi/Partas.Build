@@ -22,6 +22,33 @@ let private injectCommandInfo (cmd: CommandSpec) (spec: InputSpec<PipelineContex
 let inline private addPipeline (spec: InputSpec<PipelineContext>): BuildCommand =
     fun cmd -> { cmd with Pipelines = cmd.Pipelines @ [ spec ] }
 
+let rec private declaredStageInputs (stage: StageContext) =
+    InputSpec.union [
+        yield stage.DeclaredInputs
+        for step in stage.Steps do
+            match step with
+            | Step.StepOfStage child -> yield declaredStageInputs child
+            | _ -> ()
+    ]
+
+let private ofPipeline (pipeline: PipelineContext): InputSpec<PipelineContext> = {
+    Inputs =
+        InputSpec.union [
+            for stage in pipeline.Stages @ pipeline.PostStages do
+                yield declaredStageInputs stage
+        ]
+    Read = fun _ -> pipeline
+}
+
+let private ofStage (stage: StageContext): InputSpec<StageContext list> = {
+    Inputs = declaredStageInputs stage
+    Read = fun _ -> [ stage ]
+}
+
+let private ofStages (stages: StageContext seq): InputSpec<StageContext list> =
+    let stages = List.ofSeq stages
+    { Inputs = InputSpec.union [ for stage in stages -> declaredStageInputs stage ]; Read = fun _ -> stages }
+
 /// <summary>The stages a command yields directly, before they are folded into its implicit pipeline.</summary>
 /// <remarks>
 /// One element per yielded expression rather than one per stage, because a single expression can carry several
@@ -45,9 +72,8 @@ let private register (command: Command) (input: ActionInput) =
 
 /// Prints the tree the command's pipelines resolve to under <paramref name="parseResult"/>, then the invocation
 /// paths still missing a description. Materialising a pipeline runs its stage builders, never its steps.
-let private explain (command: Command) (spec: CommandSpec) (parseResult: ParseResult) =
-    spec.Pipelines
-    |> List.map (fun pipeline -> pipeline.Read parseResult)
+let private explain (command: Command) (pipelines: PipelineContext list) =
+    pipelines
     |> Explain.ofPipelines command
     |> Console.Out.WriteLine
 
@@ -72,17 +98,21 @@ let private runReportingTimings (pipeline: PipelineContext) =
 /// Reads each pipeline out of the parse result and runs it, in declaration order.
 /// The runner has already reported the failure by the time it raises, so this only maps it to an exit code.
 let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseResult) =
-    if Explain.option.GetValue parseResult then explain command spec parseResult
-    else
+    let pipelines = spec.Pipelines |> List.map (fun pipeline -> pipeline.Read parseResult)
+    match DependencyPlan.validate pipelines with
+    | Error message ->
+        Console.Error.WriteLine message
+        1
+    | Ok _ when Explain.option.GetValue parseResult -> explain command pipelines
+    | Ok _ ->
+        try
+            for pipeline in pipelines do
+                runReportingTimings pipeline
 
-    try
-        for pipeline in spec.Pipelines do
-            pipeline.Read parseResult |> runReportingTimings
-
-        0
-    with
-    | :? PipelineFailedException -> 1
-    | :? PipelineCancelledException -> 130
+            0
+        with
+        | :? PipelineFailedException -> 1
+        | :? PipelineCancelledException -> 130
 
 /// Applies a finished spec to a command, registering the options its pipelines declared.
 let private applyTo (command: Command) (spec: CommandSpec) =
@@ -229,10 +259,10 @@ type CommandBuilderBase() =
         build >> fun cmd -> { cmd with PipelineDefaults = cmd.PipelineDefaults >> fn }
     member inline _.Zero(): BuildCommand = id
     member inline _.Yield(_: unit): BuildCommand = id
-    member inline _.Yield(pipeline: PipelineContext): BuildCommand = addPipeline (InputSpec.ret pipeline)
+    member _.Yield(pipeline: PipelineContext): BuildCommand = addPipeline (ofPipeline pipeline)
     member inline _.Yield(spec: InputSpec<PipelineContext>): BuildCommand = addPipeline spec
-    member inline _.Yield(pipelines: PipelineContext seq): BuildCommand =
-        fun cmd -> pipelines |> Seq.fold (fun cmd pipeline -> addPipeline (InputSpec.ret pipeline) cmd) cmd
+    member _.Yield(pipelines: PipelineContext seq): BuildCommand =
+        fun cmd -> pipelines |> Seq.fold (fun cmd pipeline -> addPipeline (ofPipeline pipeline) cmd) cmd
     member inline _.Yield(specs: InputSpec<PipelineContext> seq): BuildCommand =
         fun cmd -> specs |> Seq.fold (fun cmd spec -> addPipeline spec cmd) cmd
     /// A subcommand yielded into its parent, rather than passed to <c>addCommand</c>.
@@ -242,21 +272,21 @@ type CommandBuilderBase() =
     member inline _.Yield(input: ActionInput): BuildCommand = fun cmd -> { cmd with ExtraInputs = cmd.ExtraInputs @ [ input ] }
     member inline _.Yield(inputs: ActionInput seq): BuildCommand = fun cmd -> { cmd with ExtraInputs = cmd.ExtraInputs @ List.ofSeq inputs }
     // A stage yielded straight into a command is shorthand for a command running one unnamed pipeline of stages.
-    member inline _.Yield(stage: StageContext): CommandStages = [ InputSpec.ret [ stage ] ]
-    member inline _.Yield(stages: StageContext seq): CommandStages = [ InputSpec.ret (List.ofSeq stages) ]
+    member _.Yield(stage: StageContext): CommandStages = [ ofStage stage ]
+    member _.Yield(stages: StageContext seq): CommandStages = [ ofStages stages ]
     member inline _.Yield(spec: InputSpec<StageContext>): CommandStages = [ InputSpec.map List.singleton spec ]
     member inline _.Yield(spec: InputSpec<StageContext seq>): CommandStages = [ InputSpec.map List.ofSeq spec ]
     member inline _.Yield(spec: InputSpec<StageContext list>): CommandStages = [ spec ]
     /// A list of ready-made blocks - `[ Blocks.restore; Blocks.build ]` - rather than one block yielding many stages.
     member inline _.Yield(specs: InputSpec<StageContext> seq): CommandStages = [ InputSpec.sequence specs ]
 
-    member inline _.YieldFrom(pipelines: PipelineContext seq): BuildCommand =
-        fun cmd -> pipelines |> Seq.fold (fun cmd pipeline -> addPipeline (InputSpec.ret pipeline) cmd) cmd
+    member _.YieldFrom(pipelines: PipelineContext seq): BuildCommand =
+        fun cmd -> pipelines |> Seq.fold (fun cmd pipeline -> addPipeline (ofPipeline pipeline) cmd) cmd
     member inline _.YieldFrom(specs: InputSpec<PipelineContext> seq): BuildCommand =
         fun cmd -> specs |> Seq.fold (fun cmd spec -> addPipeline spec cmd) cmd
     member inline _.YieldFrom(subCommands: Command seq): BuildCommand = fun cmd -> { cmd with SubCommands = cmd.SubCommands @ List.ofSeq subCommands }
     member inline _.YieldFrom(inputs: ActionInput seq): BuildCommand = fun cmd -> { cmd with ExtraInputs = cmd.ExtraInputs @ List.ofSeq inputs }
-    member inline _.YieldFrom(stages: StageContext seq): CommandStages = [ InputSpec.ret (List.ofSeq stages) ]
+    member _.YieldFrom(stages: StageContext seq): CommandStages = [ ofStages stages ]
     member inline _.YieldFrom(specs: InputSpec<StageContext> seq): CommandStages = [ InputSpec.sequence specs ]
 
     member inline _.Delay([<InlineIfLambda>] fn: unit -> BuildCommand): BuildCommand = fn()
@@ -279,14 +309,14 @@ type CommandBuilderBase() =
         fun cmd -> collection |> Seq.fold (fun cmd item -> fn item cmd) cmd
     member _.For(collection: 'Collection when 'Collection :> 'T seq, fn: 'T -> CommandStages): CommandStages =
         collection |> Seq.collect fn |> List.ofSeq
-    member inline _.For(collection: 'Collection when 'Collection :> 'T seq, [<InlineIfLambda>] fn: 'T -> PipelineContext): BuildCommand =
-        fun cmd -> collection |> Seq.fold (fun cmd item -> addPipeline (InputSpec.ret (fn item)) cmd) cmd
+    member _.For(collection: 'Collection when 'Collection :> 'T seq, fn: 'T -> PipelineContext): BuildCommand =
+        fun cmd -> collection |> Seq.fold (fun cmd item -> addPipeline (ofPipeline (fn item)) cmd) cmd
     member inline _.For(collection: 'Collection when 'Collection :> 'T seq, [<InlineIfLambda>] fn: 'T -> InputSpec<PipelineContext>): BuildCommand =
         fun cmd -> collection |> Seq.fold (fun cmd item -> addPipeline (fn item) cmd) cmd
     member inline _.For(collection: 'Collection when 'Collection :> 'T seq, [<InlineIfLambda>] fn: 'T -> Command): BuildCommand =
         fun cmd -> { cmd with SubCommands = cmd.SubCommands @ (collection |> Seq.map fn |> List.ofSeq) }
-    member inline _.For(collection: 'Collection when 'Collection :> 'T seq, [<InlineIfLambda>] fn: 'T -> StageContext): CommandStages =
-        [ InputSpec.ret (collection |> Seq.map fn |> List.ofSeq) ]
+    member _.For(collection: 'Collection when 'Collection :> 'T seq, fn: 'T -> StageContext): CommandStages =
+        [ ofStages (collection |> Seq.map fn) ]
     member inline _.For(collection: 'Collection when 'Collection :> 'T seq, [<InlineIfLambda>] fn: 'T -> InputSpec<StageContext>): CommandStages =
         [ InputSpec.traverse fn collection ]
 

@@ -7,41 +7,10 @@ open Partas.Build.Internal
 /// <summary>The identity of one producer declaration.</summary>
 /// <remarks>Identity survives the runner's stage copies: every copy of a handle carries the one its declaration
 /// allocated. Two declarations are distinct even when their names and arguments match.</remarks>
-[<Struct>]
-type ProducerId = ProducerId of id: int64
-
 [<Sealed>]
 type private ProducerIdSource() =
     static let mutable allocated = 0L
     static member Next() = ProducerId(Interlocked.Increment &allocated)
-
-/// <summary>A producer declaration without its result type.</summary>
-type ProducerRef = {
-    Id: ProducerId
-    Name: string
-    /// <summary>The producers required before this one runs, in declaration order.</summary>
-    Requires: ProducerRef list
-}
-
-/// <summary>The producer results published within one attempt scope.</summary>
-/// <remarks>Storage is heterogeneous; <c>TryGet</c> answers a value only when both the identity and the result
-/// type agree.</remarks>
-[<Sealed>]
-type ProducerValues private (values: Map<ProducerId, obj>) =
-    /// <summary>The state of a scope before its first publication.</summary>
-    static member Empty = ProducerValues Map.empty
-
-    /// <summary>The same values plus <paramref name="value"/> published under <paramref name="id"/>.</summary>
-    member _.Add(id: ProducerId, value: 'T) = ProducerValues(Map.add id (box value) values)
-
-    /// <summary>The value published under <paramref name="id"/>, when one of type <c>'T</c> is available.</summary>
-    member _.TryGet<'T>(id: ProducerId): 'T voption =
-        match Map.tryFind id values with
-        | Some value ->
-            match value with
-            | :? 'T as typed -> ValueSome typed
-            | _ -> ValueNone
-        | None -> ValueNone
 
 /// <summary>A typed producer handle.</summary>
 /// <remarks>Declaring a producer registers its identity, its CLI inputs and its prerequisites; the callback it
@@ -59,7 +28,20 @@ type Producer<'T> = {
 }
 with
     /// <summary>This declaration seen without its result type.</summary>
-    member this.Ref: ProducerRef = { Id = this.Id; Name = this.Name; Requires = this.Requires }
+    member this.Ref: ProducerRef = {
+        Id = this.Id
+        Name = this.Name
+        Requires = this.Requires
+        Inputs = this.Inputs
+        Prepare = fun parseResult values ->
+            this.Prepare parseResult values
+            |> Result.map (Operation.map box >> box)
+    }
+
+module ProducerExecution =
+    /// Materialises a declared producer's deferred work after its prerequisites have published values.
+    let prepare (producer: ProducerRef) parseResult values: Result<Operation<obj>, string> =
+        producer.Prepare parseResult values |> Result.map unbox<Operation<obj>>
 
 /// <summary>The prerequisites of one piece of work, and the typed value their results read as.</summary>
 /// <remarks>
@@ -123,6 +105,12 @@ module DependencySpec =
         map2 (fun left right -> left, right) (require first) (require second)
 
 module Producer =
+    /// Lists a producer at this exact point in a pipeline or parent stage.
+    let stage (producer: Producer<'T>): StageContext =
+        { StageContext.create producer.Name with
+            Producer = ValueSome producer.Ref
+            DeclaredInputs = producer.Inputs }
+
     /// <summary>Declares a producer of <c>'T</c> from its CLI inputs, its prerequisites, and the work that
     /// computes the value.</summary>
     /// <remarks>Declaration allocates an identity and harvests inputs; <paramref name="execute"/> is called when
@@ -158,22 +146,13 @@ module Stage =
             | Ok values -> return! Operation.toStepOutcome (execute values) context
         }
 
-        StageContext.create name |> StageContext.addOperation (ValueSome(label dependencies.Requires)) step
+        { StageContext.create name with
+            DeclaredInputs = dependencies.Inputs
+            Requires = dependencies.Requires }
+        |> StageContext.addOperation (ValueSome(label dependencies.Requires)) step
 
     /// <summary>A stage whose work consumes producer results and returns unit.</summary>
-    /// <remarks>
-    /// Accepts prerequisites with an empty input set: a <c>StageContext</c> carries a stage's own inputs alone.
-    /// Use <c>consumingWith</c> for a consumer whose producers read the command line; it declares their inputs
-    /// alongside its own.
-    /// </remarks>
-    /// <exception cref="T:System.ArgumentException">A prerequisite declares a CLI input.</exception>
     let consuming (name: string) (dependencies: DependencySpec<'D>) (execute: 'D -> Operation<unit>): StageContext =
-        if not dependencies.Inputs.IsEmpty then
-            invalidArg
-                "dependencies"
-                $"The stage '%s{name}' consumes producers declaring CLI inputs, which a plain stage cannot register. \
-                  Declare it with Stage.consumingWith, which carries its prerequisites' inputs to the command."
-
         consumer name dependencies execute
 
     /// <summary>A stage that consumes CLI inputs of its own alongside producer results.</summary>

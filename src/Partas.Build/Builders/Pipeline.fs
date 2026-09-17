@@ -259,7 +259,7 @@ type PipelineBuilder(name: string) =
     [<CustomOperation>] member inline _.
         captureOutput
         ([<InlineIfLambda>] build: BuildPipeline, ?capture: OutputCapture): BuildPipeline
-        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture()))) }
+        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture.create()))) }
 
     /// <summary>Hands each line of step output to <paramref name="write"/> as it arrives.</summary>
     /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>

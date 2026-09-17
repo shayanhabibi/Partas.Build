@@ -69,7 +69,7 @@ module DependencySpec =
             []
 
     let private read (producer: ProducerRef) (values: ProducerValues): Result<'T, string> =
-        match values.TryGet<'T> producer.Id with
+        match ProducerValues.tryGet<'T> producer.Id values with
         | ValueSome value -> Ok value
         | ValueNone -> Error $"The producer '%s{producer.Name}' has published no value of type %s{typeof<'T>.Name}."
 

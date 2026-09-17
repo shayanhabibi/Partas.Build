@@ -81,7 +81,7 @@ let private runReportingTimings (pipeline: PipelineContext) =
     finally
         let verbosity = defaultValueArg pipeline.Verbosity Verbosity.Default
 
-        match pipeline.Timings.Ordered with
+        match StageTimings.ordered pipeline.Timings with
         | [] | [ _ ] -> ()
         | _ when verbosity.IsQuiet -> ()
         | timings -> Summary.render timings |> Console.Out.WriteLine
@@ -456,7 +456,7 @@ type CommandBuilderBase() =
     [<CustomOperation>] member inline this.
         captureOutput
         ([<InlineIfLambda>] build: BuildCommand, ?capture: OutputCapture): BuildCommand
-        = this.MapPipelineDefault(build, fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture()))) })
+        = this.MapPipelineDefault(build, fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture.create()))) })
 
     /// <summary>Hands each line of step output to <paramref name="writer"/> as it arrives.</summary>
     /// <include file="../xmldoc/command.xml" path="/command/pipelineDefault/*"/>

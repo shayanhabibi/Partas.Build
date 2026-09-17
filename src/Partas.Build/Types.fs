@@ -1,19 +1,15 @@
 ﻿namespace Partas.Build
 open System
 
-[<Struct; RequireQualifiedAccess>]
-type Verbosity =
-    | Quiet
-    | Normal
-    | Verbose
-    static member Default = Normal
+[<AutoOpen>]
+module Exceptions =
+    type PipelineCancelledException(msg: string)  = inherit Exception(msg)
 
-type PipelineCancelledException(msg: string)  = inherit Exception(msg)
+    type PipelineFailedException =
+        inherit Exception
+        new(msg: string) = { inherit Exception(msg) }
+        new(msg: string, ex: exn) = { inherit Exception(msg, ex) }
 
-type PipelineFailedException =
-    inherit Exception
-    new(msg: string) = { inherit Exception(msg) }
-    new(msg: string, ex: exn) = { inherit Exception(msg, ex) }
 type EnvArg =
     {
         Name: string
@@ -21,16 +17,26 @@ type EnvArg =
         Description: string option
         IsOptional: bool
     }
-    static member Create(name: string, ?description, ?values, ?isOptional) = {
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module EnvArg =
+    let create name = {
         Name = name
-        Values = defaultArg values []
-        Description = description
-        IsOptional = defaultArg isOptional false
+        Values = []
+        Description = None
+        IsOptional = false
     }
-    member inline this.WithName name = { this with Name = name }
-    member inline this.WithDescription description = { this with Description = description }
-    member inline this.WithValues values = { this with Values = values }
-    member inline this.WithIsOptional isOptional = { this with IsOptional = isOptional }
+    let withName name envArg = { envArg with Name = name }
+    let withValues values envArg = { envArg with Values = values }
+    let withIsOptional isOptional envArg = { envArg with IsOptional = isOptional }
+    let withDescription description envArg = { envArg with Description = Some description }
+
+[<Struct; RequireQualifiedAccess>]
+type Verbosity =
+    | Quiet
+    | Normal
+    | Verbose
+    static member Default = Normal
 
 /// <summary>Which of a step's two streams a line of output came from.</summary>
 [<Struct; RequireQualifiedAccess>]
@@ -43,40 +49,44 @@ type StdStream =
 /// One capture is shared by every step of the stage that declared it and by its sub-stages, so it locks:
 /// steps run in parallel, and a process's two streams are read on two threads of their own.
 /// </remarks>
-type OutputCapture() =
-    let lines = ResizeArray<struct (StdStream * string)>()
+[<ReferenceEquality>]
+type OutputCapture = private {
+    lines: ResizeArray<struct (StdStream * string)>
+}
 
-    member _.Add(stream, line) = lock lines (fun () -> lines.Add (struct (stream, line)))
-    member _.Clear() = lock lines lines.Clear
-    member _.IsEmpty = lock lines (fun () -> lines.Count = 0)
-
-    member _.Count = lock lines (fun () -> lines.Count)
-
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module OutputCapture =
+    let create() = { lines = ResizeArray() }
+    let inline private withLock<'T> (fn: ResizeArray<struct(StdStream * string)> -> 'T) (outputCapture: OutputCapture) =
+        lock outputCapture.lines (fun () -> fn outputCapture.lines)
+    let add stream line outputCapture = withLock _.Add(struct (stream, line)) outputCapture
+    let clear = withLock _.Clear()
+    let count = withLock _.Count
+    let isEmpty = withLock _.Count.Equals(0)
     /// <summary>Discards every line after the first <paramref name="count"/>.</summary>
     /// <remarks>A <paramref name="count"/> at or above <see cref="P:Count"/> leaves the capture as it is.</remarks>
-    member _.TrimTo(count: int) =
-        lock lines (fun () ->
-            let count = max 0 count
-            if lines.Count > count then lines.RemoveRange (count, lines.Count - count))
-
+    /// <param name="count"></param>
+    let trimTo count = withLock (fun lines ->
+        let count = max 0 count
+        if lines.Count > count then lines.RemoveRange (count, lines.Count - count)
+        )
     /// Everything written, both streams, interleaved in the order it arrived.
-    member _.Lines = lock lines (fun () -> [ for struct (_, line) in lines -> line ])
-
+    let lines = withLock (fun lines -> [ for struct (_, line) in lines do line ])
     /// Everything written, each line paired with the stream it arrived on, in write order.
-    member _.Entries = lock lines (fun () -> List.ofSeq lines)
-
+    let entries = withLock List.ofSeq
     /// Only what went to stderr.
-    member _.Errors = lock lines (fun () -> [ for struct (stream, line) in lines do if stream = StdStream.Err then yield line ])
-
-    member this.Text = String.Join (Environment.NewLine, this.Lines)
-    member this.ErrorText = String.Join (Environment.NewLine, this.Errors)
-
+    let errors = withLock (fun lines -> [ for struct (stream, line) in lines do if stream.IsErr then line ])
+    let text = lines >> String.concat Environment.NewLine
+    let errorText = errors >> String.concat Environment.NewLine
+    // TODO - optimize lock thrash
     /// <summary>What a failure lifts.</summary>
     /// <remarks>
     /// stderr when the process used it, and everything otherwise: a test runner that reports its failures on
     /// stdout is the ordinary case, and lifting only stderr there would lift nothing at all.
     /// </remarks>
-    member this.FailureText = if this.Errors.IsEmpty then this.Text else this.ErrorText
+    let failureText = fun oc ->
+        if errors oc |> List.isEmpty then text oc
+        else errorText oc
 
 /// <summary>Where the output of a stage's steps goes.</summary>
 /// <remarks>
@@ -106,6 +116,7 @@ type StageOutcome =
 
 /// <summary>The wall time of one stage of a run, with how the stage ended.</summary>
 /// <remarks><c>Elapsed</c> covers the stage's own steps and every stage nested under them.</remarks>
+[<Struct>]
 type StageTiming = {
     Name: string
     /// The number of stages enclosing this one; 0 for a stage of the pipeline itself.
@@ -120,26 +131,31 @@ type StageTiming = {
 /// among its siblings and that its own sub-stages record as their parent; a stage of the pipeline records
 /// <c>0L</c>.
 /// </remarks>
-type StageTimings() =
-    let entries = System.Collections.Concurrent.ConcurrentBag<struct (int64 * int64 * StageTiming)>()
-    let mutable started = 0L
+[<ReferenceEquality>]
+type StageTimings = private {
+    entries: System.Collections.Concurrent.ConcurrentBag<struct (int64 * int64 * StageTiming)>
+    mutable started: int64
+}
 
+module StageTimings =
+    let create() = {
+        entries = System.Collections.Concurrent.ConcurrentBag()
+        started = 0L
+    }
     /// The ordinal of the stage starting now.
-    member _.Start() = System.Threading.Interlocked.Increment &started
-
-    member _.Add(parent: int64, order: int64, timing: StageTiming) = entries.Add (struct (parent, order, timing))
-
+    let start (stageTimings: StageTimings) = System.Threading.Interlocked.Increment &stageTimings.started
+    let add (parent: int64) (order: int64) (stageTiming: StageTiming) (stageTimings: StageTimings) =
+        stageTimings.entries.Add(struct(parent, order, stageTiming))
     /// Discards every recorded stage. A second run of the same pipeline value reports itself alone.
-    member _.Clear() =
-        // netstandard2.0's ConcurrentBag has no Clear.
-        let mutable entry = Unchecked.defaultof<struct (int64 * int64 * StageTiming)>
-        while entries.TryTake &entry do ()
+    let clear (stageTimings: StageTimings) =
+        let mutable stageTiming = Unchecked.defaultof<struct(int64 * int64 * StageTiming)>
+        while stageTimings.entries.TryTake &stageTiming do ()
 
     /// <summary>Every recorded stage in pre-order, each sub-stage under the stage containing it.</summary>
     /// <remarks>Siblings read in start order, which <c>parallel'</c> makes nondeterministic.</remarks>
-    member _.Ordered =
+    let ordered (stageTimings: StageTimings) =
         let children =
-            entries
+            stageTimings.entries
             |> List.ofSeq
             |> List.groupBy (fun struct (parent, _, _) -> parent)
             |> List.map (fun (parent, siblings) -> parent, siblings |> List.sortBy (fun struct (_, order, _) -> order))
@@ -166,17 +182,21 @@ type ProducerId = ProducerId of id: int64
 /// back as <c>ValueSome None</c> or <c>ValueSome ValueNone</c>: intentional absence is a result a consumer
 /// handles.
 /// </remarks>
-[<Sealed>]
-type ProducerValues private (values: Map<ProducerId, struct (Type * obj)>) =
-    static member Empty = ProducerValues Map.empty
-    member _.Add(id: ProducerId, value: 'T) = ProducerValues(Map.add id (struct (typeof<'T>, box value)) values)
-    /// <summary>The same values, with <paramref name="value"/> recorded for <paramref name="id"/> as a value of
-    /// type <paramref name="produced"/>.</summary>
-    /// <remarks>The erased counterpart of <c>Add</c>, for a value boxed before it reaches publication.</remarks>
-    member _.AddBoxed(id: ProducerId, produced: Type, value: obj) = ProducerValues(Map.add id (struct (produced, value)) values)
-    member _.Contains(id: ProducerId) = Map.containsKey id values
-    member _.TryGet<'T>(id: ProducerId): 'T voption =
-        match Map.tryFind id values with
+[<Struct>]
+type ProducerValues = private ProducerValues of Map<ProducerId, struct(Type * obj)>
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module ProducerValues =
+    let private create = ProducerValues
+    let inline private itemise<^T> (value: ^T) = struct (typeof<^T>, box value)
+    let empty = create Map.empty
+    let add<'T> (id: ProducerId) (value: 'T) (ProducerValues map) =
+        map |> Map.add id (itemise value) |> create
+    let addBoxed (id: ProducerId) (produced: Type) (value: obj) (ProducerValues map) =
+        map |> Map.add id struct (produced, value) |> create
+    let contains (id: ProducerId) (ProducerValues map) = Map.containsKey id map
+    let tryGet<'T>(id: ProducerId) (ProducerValues map): 'T voption =
+        match Map.tryFind id map with
         | Some(struct (produced, value)) when typeof<'T>.IsAssignableFrom produced -> ValueSome(unbox<'T> value)
         | _ -> ValueNone
 
@@ -200,27 +220,29 @@ type ProducerRef = {
 /// sits outside every <c>parallel'</c> and <c>shuffleExecuteSequence</c> scope. Consumers running in parallel
 /// read values completed before their scope began.</para>
 /// </remarks>
-[<Sealed>]
-type ExecutionState() =
-    let sync = obj ()
-    let mutable values = ProducerValues.Empty
+type ExecutionState = private {
+    sync: obj
+    mutable values: ProducerValues
+}
 
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module ExecutionState =
+    let create() = { sync = obj(); values = ProducerValues.empty }
     /// The values available to the work running now.
-    member _.Values = values
-
-    member _.Contains(id: ProducerId) = values.Contains id
-
-    /// <summary>Publishes <paramref name="value"/> as the result of <paramref name="producer"/>.</summary>
-    member _.Publish(producer: ProducerRef, value: obj) =
-        lock sync (fun () -> values <- values.AddBoxed(producer.Id, producer.ResultType, value))
-
-    /// <summary>Restores the values as <paramref name="snapshot"/> held them.</summary>
+    let values { values = values } = values
+    let contains id { values = values } = ProducerValues.contains id values
+    let inline private withSync (fn: ExecutionState -> 'T) (executionState: ExecutionState) =
+        lock executionState.sync (fun () -> fn executionState)
+    /// <summary>Publishes value as the result of producer.</summary>
+    let publish (producerRef: ProducerRef) (value: obj) =
+        withSync (fun executionState -> executionState.values <- ProducerValues.addBoxed producerRef.Id producerRef.ResultType value executionState.values)
+    /// <summary>Restores the values as snapshot held them.</summary>
     /// <remarks>An attempt boundary: a scope that snapshots before its first attempt discards, on every further
     /// attempt, what the previous attempt published.</remarks>
-    member _.ResetTo(snapshot: ProducerValues) = lock sync (fun () -> values <- snapshot)
-
+    let resetTo (snapshot: ProducerValues) =
+        withSync (fun values -> values.values <- snapshot)
     /// Discards every published value. An invocation starts from here.
-    member _.Clear() = lock sync (fun () -> values <- ProducerValues.Empty)
+    let clear = resetTo ProducerValues.empty
 
 [<Struct>]
 type InputSpec<'T> = { Inputs: ActionInput list; Read: CommandLine.ParseResult -> 'T }
@@ -595,15 +617,16 @@ module StageContext =
     /// the console whatever the stage says, because nothing routes it.
     /// </remarks>
     let writeLine (ctx: StageContext) (stream: StdStream) (line: string) =
-        match getStepBuffer ctx with
-        | ValueSome buffer -> buffer.Add (stream, line)
-        | ValueNone ->
+        getStepBuffer ctx
+        |> ValueOption.map (OutputCapture.add stream line)
+        |> ValueOption.defaultWith (fun () ->
             match getOutput ctx with
             // Both streams merged onto stdout, as they were before there was anywhere else to put them.
             | ValueNone | ValueSome StageOutput.Console -> Console.WriteLine line
             | ValueSome StageOutput.Silent -> ()
-            | ValueSome(StageOutput.Captured capture) -> capture.Add (stream, line)
+            | ValueSome(StageOutput.Captured capture) -> OutputCapture.add stream line capture
             | ValueSome(StageOutput.Redirect write) -> write stream line
+            )
 
     let rec buildEnvVars (ctx: StageContext) =
         mapParentContext Map.empty _.EnvVars buildEnvVars ctx
@@ -706,8 +729,8 @@ module PipelineContext =
             PostStages = []
             RunBeforeEachStage = noStageHook
             RunAfterEachStage = noStageHook
-            Timings = StageTimings()
-            Producers = ExecutionState()
+            Timings = StageTimings.create()
+            Producers = ExecutionState.create()
         }
 
     /// <summary>Fills in the settings a pipeline left alone with those a command supplies as defaults.</summary>
@@ -757,15 +780,6 @@ module PipelineContext =
                 Verify = if obj.ReferenceEquals(ctx.Verify, alwaysVerify) then defaulted.Verify else ctx.Verify
         }
 
-    let findStageByName (ctx: PipelineContext) (name: string) =
-        ctx.PostStages
-        |> List.append ctx.Stages
-        |> List.tryFind _.Name.Equals(name, StringComparison.OrdinalIgnoreCase)
-        |> Option.toValueOption
-
-    let makeVerificationStage (ctx: PipelineContext) =
-        { StageContext.create "" with ParentContext = ValueSome(StageParent.Pipeline ctx) }
-
     let printError (ctx: PipelineContext) (msg: string) =
         if
             ctx.EnvVars
@@ -776,14 +790,6 @@ module PipelineContext =
             |> AnsiConsole.WriteLine
         else
             AnsiConsole.MarkupLineInterpolated $"[red]Error: {msg}[/]"
-
-    // let inline buildPipelineVerification ([<InlineIfLambda>] build: BuildPipeline) ([<InlineIfLambda>] conditionFn: BuildStageIsActive): BuildPipeline = fun ctx ->
-    //     let newCtx = build ctx
-    //     // TODO
-    //     {
-    //         newCtx with
-    //             Verify = fun ctx -> false
-    //     }
 
 module SpectreConsoleExt =
     open Spectre.Console
@@ -888,11 +894,14 @@ module StageContext =
     /// The values of the invocation running the pipeline that contains the stage, wherever the stage sits under
     /// it. Empty for a stage run outside a pipeline, and ahead of the first producer of a run.
     /// </remarks>
+    /// <param name="stage" />
     let publishedValues (stage: StageContext) =
         match StageContext.getParentPipeline stage with
-        | Some pipeline -> pipeline.Producers.Values
-        | None -> ProducerValues.Empty
+        | Some pipeline -> ExecutionState.values pipeline.Producers
+        | None -> ProducerValues.empty
 
+    /// TODO - unused, remove?
+    [<System.Obsolete>]
     let rec getStageLevel (ctx: StageContext) = StageContext.mapStageParentContext 0 (getStageLevel >> (+) 1) ctx
 
     let rec getWorkingDir (ctx: StageContext) =
@@ -925,10 +934,14 @@ module StageContext =
             )
         |> ValueOption.defaultValue -1
 
+    /// TODO - unused, remove?
+    [<System.Obsolete>]
     let rec getAllEnvVars (ctx: StageContext) =
         StageContext.mapParentContext Map.empty _.EnvVars getAllEnvVars ctx
         |> fun envVars -> Map.fold (fun s k v -> Map.add k v s) envVars ctx.EnvVars
 
+    /// TODO - unused, remove?
+    [<System.Obsolete>]
     let rec tryGetEnvVar (ctx: StageContext) (key: string) =
         ctx.EnvVars
         |> Map.tryFind key
@@ -941,18 +954,23 @@ module StageContext =
                    (tryGetEnvVar >> fun fn -> fn key)
             )
 
+    /// TODO - unused, remove?
+    [<System.Obsolete>]
     let inline getEnvVar (ctx: StageContext) (key: string) = tryGetEnvVar ctx key |> ValueOption.defaultValue ""
 
+    /// TODO - unused, remove?
+    [<System.Obsolete>]
     let softCancelStep (_: StageContext) =
         "Step is soft cancelled."
         |> StepSoftCancelledException
         |> raise
 
+    /// TODO - unused, remove?
+    [<System.Obsolete>]
     let softCancelStage (_: StageContext) =
         "Stage is soft cancelled."
         |> StageSoftCancelledException
         |> raise
-
 
     let runHttpHealthCheckCancelableWithConfigRequest
         (ctx: StageContext)
@@ -1095,7 +1113,7 @@ module Runners =
             let timings =
                 match index, pipeline, getParentTimingOrder stage with
                 | StageIndex.Condition, _, _ -> None
-                | _, Some pipeline, ValueSome parent -> Some(pipeline.Timings, parent, pipeline.Timings.Start())
+                | _, Some pipeline, ValueSome parent -> Some(pipeline.Timings, parent, StageTimings.start pipeline.Timings)
                 | _ -> None
 
             // Sub-stages read their parent's ordinal off the value given to them as `ParentContext`.
@@ -1127,7 +1145,7 @@ module Runners =
                     // Only a capture this stage declared itself: one it inherited belongs to an ancestor that is
                     // still running, and clearing that would throw away what its earlier stages wrote.
                     match stage.Output with
-                    | ValueSome(StageOutput.Captured capture) -> capture.Clear()
+                    | ValueSome(StageOutput.Captured capture) -> OutputCapture.clear capture
                     | _ -> ()
 
                     // The length of the capture this stage writes into, as the stage found it. Each attempt trims
@@ -1136,12 +1154,12 @@ module Runners =
                     // length that separates the two, and keeps every attempt.
                     let capturedBefore =
                         tryGetOwnCapture stage
-                        |> ValueOption.map (fun capture -> capture, capture.Count)
+                        |> ValueOption.map (fun capture -> capture, OutputCapture.count capture)
 
                     // The producer values as the stage found them. Each attempt restores them: a producer this
                     // scope owns runs again inside the attempt that needs it, while one published before the
                     // stage started belongs to an enclosing scope and stays.
-                    let producedBefore = pipeline |> Option.map (fun pipeline -> pipeline.Producers, pipeline.Producers.Values)
+                    let producedBefore = pipeline |> Option.map (fun pipeline -> pipeline.Producers, ExecutionState.values pipeline.Producers)
 
                     let parallelism = stage.IsParallel stage
                     let timeoutForStep: int = getTimeoutForStep stage
@@ -1180,11 +1198,11 @@ module Runners =
                         stepExns.Clear()
 
                         match capturedBefore with
-                        | ValueSome(capture, count) -> capture.TrimTo count
+                        | ValueSome(capture, count) -> OutputCapture.trimTo count capture
                         | ValueNone -> ()
 
                         match producedBefore with
-                        | Some(producers, values) -> producers.ResetTo values
+                        | Some(producers, values) -> ExecutionState.resetTo values producers
                         | None -> ()
 
                         let mutable isStageSoftCancelled = false
@@ -1224,7 +1242,7 @@ module Runners =
 
                                 // A step's own transport buffer, ahead of `stage`'s `Output`, holding every line
                                 // this one step writes until its flush.
-                                let buffer = if canOverlap then ValueSome(OutputCapture()) else ValueNone
+                                let buffer = if canOverlap then ValueSome(OutputCapture.create()) else ValueNone
                                 let stepStage =
                                     match buffer with
                                     | ValueSome capture -> { stage with StepBuffer = ValueSome capture }
@@ -1234,7 +1252,7 @@ module Runners =
                                     match buffer with
                                     | ValueSome capture ->
                                         lock flushLock (fun () ->
-                                            for struct (stream, line) in capture.Entries do
+                                            for struct (stream, line) in OutputCapture.entries capture do
                                                 writeLine stage stream line)
                                     | ValueNone -> ()
 
@@ -1465,7 +1483,7 @@ module Runners =
                         elif not isActive then StageOutcome.Skipped
                         else StageOutcome.Succeeded
 
-                    timings.Add (parent, order, { Name = stage.Name; Depth = getDepth stage; Elapsed = stageSw.Elapsed; Outcome = outcome }))
+                    StageTimings.add parent order { Name = stage.Name; Depth = getDepth stage; Elapsed = stageSw.Elapsed; Outcome = outcome } timings)
 
             stage.ContinueStageOnFailure || isSuccess, stepExns
 
@@ -1493,10 +1511,10 @@ module Runners =
         let rec run (this: PipelineContext) =
             Console.InputEncoding <- Encoding.UTF8
             Console.OutputEncoding <- Encoding.UTF8
-            this.Timings.Clear()
+            StageTimings.clear this.Timings
             // Execution state is invocation-local: a second run of the same pipeline value executes its
             // producers again rather than reading what the first one published.
-            this.Producers.Clear()
+            ExecutionState.clear this.Producers
 
             if not(String.IsNullOrEmpty this.Name) then
                 let title = FigletText this.Name

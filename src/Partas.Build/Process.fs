@@ -105,9 +105,9 @@ module CmdRunner =
                         // from the buffer when there is one keeps the annotation to this step's own output.
                         let failureText =
                             match stepBuffer with
-                            | ValueSome buffer when not buffer.IsEmpty -> ValueSome buffer.FailureText
+                            | ValueSome buffer when not (OutputCapture.isEmpty buffer) -> ValueSome (OutputCapture.failureText buffer)
                             | ValueSome _ -> ValueNone
-                            | ValueNone when not capture.IsEmpty -> ValueSome capture.FailureText
+                            | ValueNone when not (OutputCapture.isEmpty capture) -> ValueSome (OutputCapture.failureText capture)
                             | ValueNone -> ValueNone
                         match failureText with
                         | ValueSome text -> Error $"%s{message}%s{Environment.NewLine}%s{text}"

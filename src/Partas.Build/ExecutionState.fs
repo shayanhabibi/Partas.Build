@@ -20,11 +20,14 @@ module ExecutionState =
     let private production (parseResult: ParseResult) (state: ExecutionState) (producer: ProducerRef) =
         let publishing = {
             Execute = fun context -> async {
-                match ProducerExecution.prepare producer parseResult state.Values with
+                match
+                    ExecutionState.values state
+                    |> ProducerExecution.prepare producer parseResult
+                with
                 | Error unavailable -> return Operation.fail (FailureCause.Reported unavailable)
                 | Ok operation ->
                     let! value = operation.Execute context
-                    state.Publish(producer, value)
+                    ExecutionState.publish producer value state
             }
         }
 
@@ -39,7 +42,7 @@ module ExecutionState =
                 stage
                 |> StageContext.addPredicateBecause
                     (ValueSome $"requires '%s{required.Name}', which published no value")
-                    (fun _ -> state.Contains required.Id))
+                    (fun _ -> ExecutionState.contains required.Id state))
             stage
 
     /// <summary>The stages of <paramref name="pipeline"/> as declared, each carrying the parents the runner

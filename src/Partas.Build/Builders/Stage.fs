@@ -376,7 +376,7 @@ and [<EB(advanced)>]
     [<CustomOperation>] member inline _.
         captureOutput
         ([<InlineIfLambda>] build: BuildStage, ?capture: OutputCapture): BuildStage
-        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture()))) }
+        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture.create()))) }
 
     /// <summary>Hands each line of this stage's step output to write as it arrives.</summary>
     /// <remarks>Called from the reader threads of both streams, so write must tolerate that.</remarks>

@@ -49,7 +49,7 @@ module ProcessExecutor =
         /// reads back the string that went in. An empty argument becomes <c>""</c> and survives as one argument.
         /// </remarks>
         let quote (value: string) =
-            let isDelimiter ch = ch = ' ' || ch = '\t' || ch = '\n' || ch = '' || ch = '"'
+            let isDelimiter ch = Char.IsWhiteSpace ch || ch = '"'
 
             if not (String.IsNullOrEmpty value) && not (Seq.exists isDelimiter value) then value
             else

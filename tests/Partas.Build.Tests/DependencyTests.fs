@@ -289,4 +289,115 @@ let tests =
             Expect.equal (built.Parse("").Invoke()) 0 "intentional absence is a successful result"
             Expect.sequenceEqual seen [ None ] "the consumer reads the absence the producer published"
         }
+
+        test "a producer publishing ValueNone publishes a value its consumer reads" {
+            let seen = ResizeArray<string voption>()
+            let source: Producer<string voption> =
+                Producer.define "lookup" (InputSpec.ret ()) DependencySpec.empty (fun _ _ -> Operation.ofAsync (async { return ValueNone }))
+            let built = command "build" {
+                pipeline "work" {
+                    quiet
+                    Stage.consuming "use" (DependencySpec.require source) (fun value -> Operation.ofAsync (async { seen.Add value }))
+                }
+            }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "intentional absence is a successful result"
+            Expect.sequenceEqual seen [ ValueNone ] "the consumer reads the absence the producer published"
+        }
+
+        test "an implicit producer stays unrun while its only consumer is inactive" {
+            let log = ResizeArray()
+            let source = logging log "compile" 42
+            let built = command "build" {
+                pipeline "work" {
+                    quiet
+
+                    stage "use" {
+                        when' false
+                        consumes (DependencySpec.require source) (fun value -> Operation.ofAsync (async { log.Add $"use:%i{value}" }))
+                    }
+                }
+            }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "an inactive consumer fails nothing"
+            Expect.isEmpty log "the producer of an inactive consumer holds its side effects back"
+        }
+
+        test "an implicit producer runs once for two consumers while one of them is inactive" {
+            let log = ResizeArray()
+            let source = logging log "compile" 42
+            let built = command "build" {
+                pipeline "work" {
+                    quiet
+
+                    stage "skipped" {
+                        when' false
+                        consumes (DependencySpec.require source) (fun value -> Operation.ofAsync (async { log.Add $"skipped:%i{value}" }))
+                    }
+
+                    reading log "active" source
+                }
+            }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "the invocation succeeds"
+            Expect.sequenceEqual log [ "compile"; "active:42" ] "the active consumer keeps the one execution the inactive one placed"
+        }
+
+        test "a producer and its consumer run among the post stages" {
+            let log = ResizeArray()
+            let source = logging log "compile" 5
+            let built = command "build" {
+                pipeline "work" {
+                    quiet
+                    noting log "main"
+                    post [ reading log "report" source ]
+                }
+            }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "the invocation succeeds"
+            Expect.sequenceEqual log [ "main"; "compile"; "report:5" ] "the producer runs among the post stages, before its consumer"
+        }
+
+        test "a producer's prerequisites run before it, each reading the one before" {
+            let log = ResizeArray()
+            let restore =
+                Producer.define "restore" (InputSpec.ret ()) DependencySpec.empty (fun _ _ ->
+                    Operation.ofAsync (async {
+                        log.Add "restore"
+                        return 1
+                    }))
+            let compile =
+                Producer.define "compile" (InputSpec.ret ()) (DependencySpec.require restore) (fun _ restored ->
+                    Operation.ofAsync (async {
+                        log.Add $"compile:%i{restored}"
+                        return restored + 1
+                    }))
+            let pack =
+                Producer.define "pack" (InputSpec.ret ()) (DependencySpec.require compile) (fun _ compiled ->
+                    Operation.ofAsync (async {
+                        log.Add $"pack:%i{compiled}"
+                        return compiled + 1
+                    }))
+            let built = command "build" { pipeline "work" { quiet; reading log "publish" pack } }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "the invocation succeeds"
+            Expect.sequenceEqual log [ "restore"; "compile:1"; "pack:2"; "publish:3" ]
+                "each producer runs after the prerequisite it reads"
+        }
+
+        test "a placement addressing no stage fails the invocation instead of running without it" {
+            let source = producer "compile"
+            let built = pipeline "work" { consumer "use" source }
+
+            match DependencyPlan.validate [ built ] with
+            | Error message -> failtest message
+            | Ok plan ->
+                let elsewhere =
+                    { plan with
+                        Placements = plan.Placements |> List.map (fun placement -> { placement with Before = { placement.Before with Path = [ 7 ] } }) }
+
+                Expect.throwsT<PipelineFailedException>
+                    (fun () -> ExecutionState.schedule (Helpers.parse [] "") elsewhere [ built ] |> ignore)
+                    "an unplaceable producer stops the invocation"
+        }
     ]

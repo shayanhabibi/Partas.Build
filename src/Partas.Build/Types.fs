@@ -162,8 +162,9 @@ type ProducerId = ProducerId of id: int64
 
 /// <summary>Values published during one invocation or attempt scope.</summary>
 /// <remarks>
-/// A value is held alongside the type it was produced as, so a published <c>None</c> — which boxes to
-/// <c>null</c> — reads back as <c>ValueSome None</c>. Intentional absence is a result a consumer handles.
+/// A value is held alongside the type it was produced as. A published <c>None</c> or <c>ValueNone</c> reads
+/// back as <c>ValueSome None</c> or <c>ValueSome ValueNone</c>: intentional absence is a result a consumer
+/// handles.
 /// </remarks>
 [<Sealed>]
 type ProducerValues private (values: Map<ProducerId, struct (Type * obj)>) =
@@ -173,7 +174,6 @@ type ProducerValues private (values: Map<ProducerId, struct (Type * obj)>) =
     /// type <paramref name="produced"/>.</summary>
     /// <remarks>The erased counterpart of <c>Add</c>, for a value boxed before it reaches publication.</remarks>
     member _.AddBoxed(id: ProducerId, produced: Type, value: obj) = ProducerValues(Map.add id (struct (produced, value)) values)
-    /// Whether a value is available for <paramref name="id"/>.
     member _.Contains(id: ProducerId) = Map.containsKey id values
     member _.TryGet<'T>(id: ProducerId): 'T voption =
         match Map.tryFind id values with
@@ -194,11 +194,11 @@ type ProducerRef = {
 
 /// <summary>What one pipeline invocation has published, and the boundary at which a scope discards it.</summary>
 /// <remarks>
-/// Invocation-local: a run empties the state before its first stage, so a second invocation of the same
-/// pipeline value executes its producers again. Nothing is retained above the invocation.
-/// <para>Publication is sequential. A producer stage sits outside every <c>parallel'</c> and
-/// <c>shuffleExecuteSequence</c> scope — <c>DependencyPlan.validate</c> rejects the arrangements where it would
-/// not — so consumers running in parallel read values completed before their scope began.</para>
+/// Invocation-local: a run empties the state before its first stage, and a second invocation of the same
+/// pipeline value executes its producers again.
+/// <para>Publication is sequential, within the scopes <c>DependencyPlan.validate</c> admits: a producer stage
+/// sits outside every <c>parallel'</c> and <c>shuffleExecuteSequence</c> scope. Consumers running in parallel
+/// read values completed before their scope began.</para>
 /// </remarks>
 [<Sealed>]
 type ExecutionState() =
@@ -208,7 +208,6 @@ type ExecutionState() =
     /// The values available to the work running now.
     member _.Values = values
 
-    /// Whether a value is available for <paramref name="id"/>.
     member _.Contains(id: ProducerId) = values.Contains id
 
     /// <summary>Publishes <paramref name="value"/> as the result of <paramref name="producer"/>.</summary>
@@ -887,7 +886,7 @@ module StageContext =
     /// <summary>The producer values available to <paramref name="stage"/>.</summary>
     /// <remarks>
     /// The values of the invocation running the pipeline that contains the stage, wherever the stage sits under
-    /// it. Empty for a stage run outside a pipeline, and for one whose producers have not run.
+    /// it. Empty for a stage run outside a pipeline, and ahead of the first producer of a run.
     /// </remarks>
     let publishedValues (stage: StageContext) =
         match StageContext.getParentPipeline stage with

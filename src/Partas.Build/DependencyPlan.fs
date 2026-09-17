@@ -1,4 +1,4 @@
-namespace Partas.Build
+﻿namespace Partas.Build
 
 open System
 open Partas.Build.Internal
@@ -20,59 +20,95 @@ type ProducerPlacement = {
     IsExplicit: bool
 }
 
+/// Where one stage sits in a pipeline.
+type StageAddress = {
+    Location: ProducerLocation
+    /// Declaration order, a stage ahead of the stages nested in it.
+    Ordinal: int
+    /// The stages enclosing this one, innermost first, with their addresses.
+    Ancestors: (StageContext * ProducerLocation) list
+}
+
 /// The static producer graph for all pipelines a command will invoke.
 type DependencyPlan = { Placements: ProducerPlacement list }
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module StageAddress =
+    /// <summary>The pipeline with each of its stages rebuilt from that stage's address.</summary>
+    /// <remarks>
+    /// <paramref name="rebuild"/> receives a stage whose own sub-stages have already been rebuilt, and answers
+    /// the stages standing in its place. Addresses are allocated in declaration order, a stage ahead of the
+    /// stages nested in it.
+    /// <para>The one traversal that gives a stage a <see cref="T:Partas.Build.ProducerLocation"/>: validation
+    /// and scheduling address stages through it.</para>
+    /// </remarks>
+    let rebuildPipeline
+        (rebuild: StageAddress -> StageContext -> StageContext list)
+        (pipelineIndex: int)
+        (pipeline: PipelineContext)
+        : PipelineContext =
+        let mutable allocated = -1
+
+        let rec walk isPost ancestors path (stage: StageContext) =
+            allocated <- allocated + 1
+            let address = {
+                Location = { PipelineIndex = pipelineIndex; IsPostStage = isPost; Path = path }
+                Ordinal = allocated
+                Ancestors = ancestors
+            }
+            let nested = (stage, address.Location) :: ancestors
+
+            let steps =
+                stage.Steps
+                |> List.indexed
+                |> List.collect (fun (index, step) ->
+                    match step with
+                    | Step.StepOfStage child -> walk isPost nested (path @ [ index ]) child |> List.map Step.StepOfStage
+                    | step -> [ step ])
+
+            rebuild address { stage with Steps = steps }
+
+        let walkAll isPost stages =
+            stages |> List.indexed |> List.collect (fun (index, stage) -> walk isPost [] [ index ] stage)
+
+        { pipeline with
+            Stages = walkAll false pipeline.Stages
+            PostStages = walkAll true pipeline.PostStages }
 
 module DependencyPlan =
     type private Entry = {
         Stage: StageContext
-        Location: ProducerLocation
-        Ordinal: int
-        Ancestors: (StageContext * ProducerLocation) list
+        Address: StageAddress
     }
 
     exception private InvalidDependency of string
 
-    let private location pipelineIndex isPost path = {
-        PipelineIndex = pipelineIndex
-        IsPostStage = isPost
-        Path = path
-    }
-
     let private entries pipelineIndex (pipeline: PipelineContext) =
         let found = ResizeArray<Entry>()
 
-        let rec walk isPost ancestors path (stage: StageContext) =
-            let parent =
-                match ancestors with
-                | (parent, _) :: _ -> StageParent.Stage parent
-                | [] -> StageParent.Pipeline pipeline
-            let stage = { stage with ParentContext = ValueSome parent }
-            let here = location pipelineIndex isPost path
-            found.Add {
-                Stage = stage
-                Location = here
-                Ordinal = found.Count
-                Ancestors = ancestors
-            }
+        StageAddress.rebuildPipeline
+            (fun address stage ->
+                let parent =
+                    match address.Ancestors with
+                    | (parent, _) :: _ -> StageParent.Stage parent
+                    | [] -> StageParent.Pipeline pipeline
+                found.Add { Stage = { stage with ParentContext = ValueSome parent }; Address = address }
+                [ stage ])
+            pipelineIndex
+            pipeline
+        |> ignore
 
-            stage.Steps
-            |> List.iteri (fun index step ->
-                match step with
-                | Step.StepOfStage child -> walk isPost ((stage, here) :: ancestors) (path @ [ index ]) child
-                | _ -> ())
-
-        pipeline.Stages |> List.iteri (fun index stage -> walk false [] [ index ] stage)
-        pipeline.PostStages |> List.iteri (fun index stage -> walk true [] [ index ] stage)
-        List.ofSeq found
+        // The rebuild reaches a stage after the stages nested in it; the ordinal is the declaration order the
+        // placement rules read.
+        found |> Seq.sortBy _.Address.Ordinal |> List.ofSeq
 
     let private owner (entry: Entry) =
-        match entry.Ancestors with
+        match entry.Address.Ancestors with
         | (_, location) :: _ -> ValueSome location
         | [] -> ValueNone
 
     let private unsafeScope (entry: Entry) =
-        entry.Ancestors
+        entry.Address.Ancestors
         |> List.tryFind (fun (scope, _) -> scope.ShuffleExecuteSequence || (scope.IsParallel scope).IsSome)
         |> Option.map (fun (scope, _) -> scope.Name)
 
@@ -115,17 +151,17 @@ module DependencyPlan =
                     else
                       match Map.tryFind producer.Id placed with
                       | Some earlier ->
-                        if not (isWithin earlier.Owner demand.Location) && earlier.Before <> demand.Location then
+                        if not (isWithin earlier.Owner demand.Address.Location) && earlier.Before <> demand.Address.Location then
                             raise (InvalidDependency $"Producer '%s{producer.Name}' belongs to a scope unavailable to consumer '%s{demand.Stage.Name}'.")
                       | None ->
                         let explicitEntry = Map.tryFind producer.Id explicit
                         let position = explicitEntry |> Option.defaultValue demand
                         let isExplicit = explicitEntry.IsSome
 
-                        if isExplicit && position.Ordinal > demand.Ordinal then
+                        if isExplicit && position.Address.Ordinal > demand.Address.Ordinal then
                             raise (InvalidDependency $"Consumer '%s{demand.Stage.Name}' precedes explicitly placed producer '%s{producer.Name}'.")
 
-                        if isExplicit && not (isWithin (owner position) demand.Location) && position.Location <> demand.Location then
+                        if isExplicit && not (isWithin (owner position) demand.Address.Location) && position.Address.Location <> demand.Address.Location then
                             raise (InvalidDependency $"Producer '%s{producer.Name}' is placed in a scope unavailable to consumer '%s{demand.Stage.Name}'.")
 
                         match unsafeScope position with
@@ -141,7 +177,7 @@ module DependencyPlan =
                         let placement = {
                             Producer = producer
                             Owner = owner position
-                            Before = position.Location
+                            Before = position.Address.Location
                             IsExplicit = isExplicit
                         }
                         placements.Add placement

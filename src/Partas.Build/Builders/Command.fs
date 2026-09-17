@@ -22,32 +22,23 @@ let private injectCommandInfo (cmd: CommandSpec) (spec: InputSpec<PipelineContex
 let inline private addPipeline (spec: InputSpec<PipelineContext>): BuildCommand =
     fun cmd -> { cmd with Pipelines = cmd.Pipelines @ [ spec ] }
 
-let rec private declaredStageInputs (stage: StageContext) =
-    InputSpec.union [
-        yield stage.DeclaredInputs
-        for step in stage.Steps do
-            match step with
-            | Step.StepOfStage child -> yield declaredStageInputs child
-            | _ -> ()
-    ]
-
 let private ofPipeline (pipeline: PipelineContext): InputSpec<PipelineContext> = {
     Inputs =
         InputSpec.union [
             for stage in pipeline.Stages @ pipeline.PostStages do
-                yield declaredStageInputs stage
+                yield StageContext.declaredInputs stage
         ]
     Read = fun _ -> pipeline
 }
 
 let private ofStage (stage: StageContext): InputSpec<StageContext list> = {
-    Inputs = declaredStageInputs stage
+    Inputs = StageContext.declaredInputs stage
     Read = fun _ -> [ stage ]
 }
 
 let private ofStages (stages: StageContext seq): InputSpec<StageContext list> =
     let stages = List.ofSeq stages
-    { Inputs = InputSpec.union [ for stage in stages -> declaredStageInputs stage ]; Read = fun _ -> stages }
+    { Inputs = InputSpec.union [ for stage in stages -> StageContext.declaredInputs stage ]; Read = fun _ -> stages }
 
 /// <summary>The stages a command yields directly, before they are folded into its implicit pipeline.</summary>
 /// <remarks>

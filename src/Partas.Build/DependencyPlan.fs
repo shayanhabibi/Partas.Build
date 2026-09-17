@@ -85,8 +85,16 @@ module DependencyPlan =
             && List.length owner.Path < List.length consumer.Path
             && (consumer.Path |> List.take owner.Path.Length) = owner.Path
 
-    /// Validates and locates producer work before any producer callback is invoked.
+    /// <summary>Validates and locates producer work before any producer callback is invoked.</summary>
+    /// <remarks>
     /// Each pipeline receives its own placement set; a second invocation validates afresh.
+    /// <para>The supported scopes are sequential: a producer stage, whether listed explicitly or placed before
+    /// its first consumer, must sit in a scope that is neither <c>parallel'</c> nor
+    /// <c>shuffleExecuteSequence</c>, at any nesting depth. Both arrangements are rejected here, naming the
+    /// producer and the scope. An author who needs a parallel scope to consume a producer lists that producer
+    /// explicitly ahead of the scope; a consumer inside the scope then reads the value the enclosing sequential
+    /// scope published.</para>
+    /// </remarks>
     let validate (pipelines: PipelineContext list): Result<DependencyPlan, string> =
         try
             let placements = ResizeArray<ProducerPlacement>()

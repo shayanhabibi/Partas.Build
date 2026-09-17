@@ -136,20 +136,27 @@ module Stage =
         | [] -> "operation"
         | required -> required |> List.map _.Name |> String.concat ", " |> sprintf "needs %s"
 
-    /// <summary>The step running a consumer's operation over the values its scope has published.</summary>
-    /// <remarks>The step runs the operation over the published values, or fails naming the first unavailable
-    /// prerequisite.</remarks>
-    let private consumer (name: string) (dependencies: DependencySpec<'D>) (execute: 'D -> Operation<unit>): StageContext =
+    /// <summary>The stage with <paramref name="dependencies"/> added to what it requires, and
+    /// <paramref name="execute"/> added as one more step over the values its scope has published.</summary>
+    /// <remarks>
+    /// The step runs the operation over the published values, or fails naming the first unavailable prerequisite.
+    /// <para>Every setting already on the stage is kept, so a consumer written through the <c>consumes</c>
+    /// operation of a stage builder carries that builder's <c>retry</c> and conditions.</para>
+    /// </remarks>
+    let consumes (dependencies: DependencySpec<'D>) (execute: 'D -> Operation<unit>) (stage: StageContext): StageContext =
         let step (context: RuntimeContext) = async {
             match dependencies.Read ProducerValues.Empty with
             | Error unavailable -> return StepOutcome.Failed (FailureCause.Reported unavailable)
             | Ok values -> return! Operation.toStepOutcome (execute values) context
         }
 
-        { StageContext.create name with
-            DeclaredInputs = dependencies.Inputs
-            Requires = dependencies.Requires }
+        { stage with
+            DeclaredInputs = InputSpec.union [ stage.DeclaredInputs; dependencies.Inputs ]
+            Requires = stage.Requires @ dependencies.Requires }
         |> StageContext.addOperation (ValueSome(label dependencies.Requires)) step
+
+    let private consumer (name: string) (dependencies: DependencySpec<'D>) (execute: 'D -> Operation<unit>): StageContext =
+        StageContext.create name |> consumes dependencies execute
 
     /// <summary>A stage whose work consumes producer results and returns unit.</summary>
     let consuming (name: string) (dependencies: DependencySpec<'D>) (execute: 'D -> Operation<unit>): StageContext =

@@ -12,23 +12,14 @@ let inline private addStage (stage: StageContext): BuildPipeline = fun ctx -> { 
 /// Appends several stages to the pipeline being built, in order.
 let inline private addStages (stages: StageContext seq): BuildPipeline = fun ctx -> { ctx with Stages = ctx.Stages @ List.ofSeq stages }
 
-let rec private stageInputs (stage: StageContext) =
-    InputSpec.union [
-        yield stage.DeclaredInputs
-        for step in stage.Steps do
-            match step with
-            | Step.StepOfStage child -> yield stageInputs child
-            | _ -> ()
-    ]
-
 let private withStageInputs (stage: StageContext) (spec: InputSpec<'T>): InputSpec<'T> =
-    { spec with Inputs = InputSpec.union [ stageInputs stage; spec.Inputs ] }
+    { spec with Inputs = InputSpec.union [ StageContext.declaredInputs stage; spec.Inputs ] }
 
 /// A plain BuildPipeline contains no parsed values. Traverse its declarations on an empty context
 /// so a later InputSpec branch still sees producer inputs before the command parses anything.
 let private buildInputs name (build: BuildPipeline) =
     let declared = PipelineContext.create name |> build
-    InputSpec.union [ for stage in declared.Stages @ declared.PostStages -> stageInputs stage ]
+    InputSpec.union [ for stage in declared.Stages @ declared.PostStages -> StageContext.declaredInputs stage ]
 
 let private withBuildInputs name (build: BuildPipeline) (spec: InputSpec<'T>): InputSpec<'T> =
     { spec with Inputs = InputSpec.union [ buildInputs name build; spec.Inputs ] }
@@ -104,8 +95,8 @@ type PipelineBuilder(name: string) =
         InputSpec.map (fun build -> addStage stage >> build) spec |> withStageInputs stage
     member _.Combine(build: BuildPipeline, rest: InputSpec<BuildPipeline>): InputSpec<BuildPipeline> =
         InputSpec.map (fun rest -> build >> rest) rest |> withBuildInputs name build
-    member inline _.Combine(spec: InputSpec<StageContext>, [<InlineIfLambda>] build: BuildPipeline): InputSpec<BuildPipeline> =
-        InputSpec.map (fun stage -> addStage stage >> build) spec
+    member _.Combine(spec: InputSpec<StageContext>, build: BuildPipeline): InputSpec<BuildPipeline> =
+        InputSpec.map (fun stage -> addStage stage >> build) spec |> withBuildInputs name build
     member inline _.Combine(spec: InputSpec<StageContext>, rest: InputSpec<BuildPipeline>): InputSpec<BuildPipeline> =
         InputSpec.map2 (fun stage build -> addStage stage >> build) spec rest
     member inline _.Combine(build: InputSpec<BuildPipeline>, rest: InputSpec<BuildPipeline>): InputSpec<BuildPipeline> =
@@ -131,8 +122,8 @@ type PipelineBuilder(name: string) =
         InputSpec.map (fun builds ctx -> builds |> List.fold (fun ctx build -> build ctx) ctx) (InputSpec.traverse fn collection)
     member inline _.For([<InlineIfLambda>] build: BuildPipeline, [<InlineIfLambda>] fn: unit -> BuildPipeline): BuildPipeline = build >> fn()
     member inline _.For([<InlineIfLambda>] build: BuildPipeline, [<InlineIfLambda>] fn: unit -> StageContext): BuildPipeline = build >> addStage (fn())
-    member inline _.For([<InlineIfLambda>] build: BuildPipeline, [<InlineIfLambda>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildPipeline> =
-        InputSpec.map (fun stage -> build >> addStage stage) (fn())
+    member _.For(build: BuildPipeline, fn: unit -> InputSpec<StageContext>): InputSpec<BuildPipeline> =
+        InputSpec.map (fun stage -> build >> addStage stage) (fn()) |> withBuildInputs name build
     member _.For(spec: InputSpec<BuildPipeline>, fn: unit -> BuildPipeline): InputSpec<BuildPipeline> =
         let rest = fn()
         InputSpec.map (fun build -> build >> rest) spec |> withBuildInputs name rest
@@ -141,8 +132,8 @@ type PipelineBuilder(name: string) =
         InputSpec.map (fun build -> build >> addStage stage) spec |> withStageInputs stage
     member inline _.For(spec: InputSpec<BuildPipeline>, [<InlineIfLambda>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildPipeline> =
         InputSpec.map2 (fun build stage -> build >> addStage stage) spec (fn())
-    member inline _.For([<InlineIfLambda>] build: BuildPipeline, [<InlineIfLambda>] fn: unit -> InputSpec<BuildPipeline>): InputSpec<BuildPipeline> =
-        InputSpec.map (fun rest -> build >> rest) (fn())
+    member _.For(build: BuildPipeline, fn: unit -> InputSpec<BuildPipeline>): InputSpec<BuildPipeline> =
+        InputSpec.map (fun rest -> build >> rest) (fn()) |> withBuildInputs name build
     member inline _.For(spec: InputSpec<BuildPipeline>, [<InlineIfLambda>] fn: unit -> InputSpec<BuildPipeline>): InputSpec<BuildPipeline> =
         InputSpec.map2 (>>) spec (fn())
 

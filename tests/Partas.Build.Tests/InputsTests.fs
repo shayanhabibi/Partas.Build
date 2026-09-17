@@ -86,6 +86,51 @@ let tests =
             Expect.contains [ for option in built.Options -> option.Name ] "--direct-producer"
                 "command stage list carries producer inputs"
         }
+        test "a custom operation between branches keeps a plain consumer's producer option in a stage" {
+            let option = Input.option<string> "--stage-op-between" |> Input.def "default"
+            let source = Producer.define "between" (InputSpec.ofInput option) DependencySpec.empty (fun _ _ -> Operation.ret 1)
+            let other = Input.option<bool> "--stage-op-between-other" |> Input.def false
+            let inputful = InputSpec.map (fun _ -> stage "other" { run (fun (_: StageContext) -> ()) }) (InputSpec.ofInput other)
+            let parent = stage "parent" {
+                inputful
+                when' true
+                Stage.consuming "use" (DependencySpec.require source) (fun _ -> Operation.ret ())
+            }
+            let built = command "build" { pipeline "work" { parent } }
+
+            Expect.contains [ for option in built.Options -> option.Name ] "--stage-op-between"
+                "a plain consumer behind a custom operation is still harvested"
+        }
+        test "a plain consumer ahead of a custom operation keeps its producer option in a stage" {
+            let option = Input.option<string> "--stage-op-ahead" |> Input.def "default"
+            let source = Producer.define "ahead" (InputSpec.ofInput option) DependencySpec.empty (fun _ _ -> Operation.ret 1)
+            let other = Input.option<bool> "--stage-op-ahead-other" |> Input.def false
+            let inputful = InputSpec.map (fun _ -> stage "other" { run (fun (_: StageContext) -> ()) }) (InputSpec.ofInput other)
+            let parent = stage "parent" {
+                Stage.consuming "use" (DependencySpec.require source) (fun _ -> Operation.ret ())
+                when' true
+                inputful
+            }
+            let built = command "build" { pipeline "work" { parent } }
+
+            Expect.contains [ for option in built.Options -> option.Name ] "--stage-op-ahead"
+                "a plain consumer ahead of a custom operation is still harvested"
+        }
+        test "a plain consumer ahead of a custom operation keeps its producer option in a pipeline" {
+            let option = Input.option<string> "--pipeline-op-ahead" |> Input.def "default"
+            let source = Producer.define "ahead" (InputSpec.ofInput option) DependencySpec.empty (fun _ _ -> Operation.ret 1)
+            let other = Input.option<bool> "--pipeline-op-ahead-other" |> Input.def false
+            let inputful = InputSpec.map (fun _ -> stage "other" { run (fun (_: StageContext) -> ()) }) (InputSpec.ofInput other)
+            let work = pipeline "work" {
+                Stage.consuming "use" (DependencySpec.require source) (fun _ -> Operation.ret ())
+                description "mixed"
+                inputful
+            }
+            let built = command "build" { work }
+
+            Expect.contains [ for option in built.Options -> option.Name ] "--pipeline-op-ahead"
+                "a plain consumer ahead of a custom operation is still harvested"
+        }
         test "collects one input per distinct option, before any parsing" {
             let config, quick, watch = options ()
 

@@ -823,6 +823,20 @@ module CommandSpec =
     let inputs (spec: CommandSpec) = InputSpec.union (spec.ExtraInputs :: [ for pipeline in spec.Pipelines -> pipeline.Inputs ])
 
 module StageContext =
+    /// <summary>The inputs <paramref name="stage"/> and the stages nested under it declare, deduplicated.</summary>
+    /// <remarks>
+    /// This is the one traversal every builder harvests through, so a producer's options reach the command
+    /// whichever of the stage, pipeline or command builders a consumer was written in.
+    /// </remarks>
+    let rec declaredInputs (stage: StageContext) =
+        InputSpec.union [
+            yield stage.DeclaredInputs
+            for step in stage.Steps do
+                match step with
+                | Step.StepOfStage child -> yield declaredInputs child
+                | _ -> ()
+        ]
+
     let rec getStageLevel (ctx: StageContext) = StageContext.mapStageParentContext 0 (getStageLevel >> (+) 1) ctx
 
     let rec getWorkingDir (ctx: StageContext) =

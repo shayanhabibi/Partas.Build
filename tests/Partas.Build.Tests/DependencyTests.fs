@@ -60,6 +60,25 @@ let tests =
             Expect.stringContains explained "needs compile" "explain displays the declared dependency"
         }
 
+        test "a consumer written in a stage builder keeps its own retry and conditions" {
+            let option = Input.option<string> "--consumer-settings" |> Input.def "default"
+            let source =
+                Producer.define "compile" (InputSpec.ofInput option) DependencySpec.empty (fun _ _ -> Operation.ret 42)
+            let built = stage "use" {
+                retry 2
+                when' false
+                consumes (DependencySpec.require source) (fun _ -> Operation.ret ())
+            }
+            let registered = command "build" { pipeline "work" { built } }
+
+            Expect.equal built.Retry 2 "the retry sits on the consumer stage itself"
+            Expect.isNonEmpty built.Conditions "the condition sits on the consumer stage itself"
+            Expect.isFalse (built.IsActive built) "the consumer's own condition governs it"
+            Expect.equal (built.Requires |> List.map _.Id) [ source.Id ] "the consumer still requires the producer"
+            Expect.contains [ for option in registered.Options -> option.Name ] "--consumer-settings"
+                "the consumer still declares the producer's option"
+        }
+
         test "a consumer before its explicitly placed producer is rejected" {
             let source = producer "compile"
             let built = pipeline "work" { consumer "use" source; Producer.stage source }
@@ -106,6 +125,56 @@ let tests =
             | Error message ->
                 Expect.stringContains message "compile" "diagnostic names the producer"
                 Expect.stringContains message "mixed" "diagnostic names the scope"
+        }
+
+        test "an explicitly listed producer is placed at the stage that lists it" {
+            let source = producer "compile"
+            let built = pipeline "work" { Producer.stage source; consumer "use" source }
+
+            match DependencyPlan.validate [ built ] with
+            | Error message -> failtest message
+            | Ok plan ->
+                Expect.equal plan.Placements.Length 1 "listing a producer places it once"
+                let placement = plan.Placements.Head
+                Expect.isTrue placement.IsExplicit "the placement records that the author listed it"
+                Expect.equal placement.Before.Path [ 0 ] "the placement addresses the listed stage"
+                Expect.equal placement.Owner ValueNone "a producer listed at pipeline scope is owned by the pipeline"
+        }
+
+        test "listing the same handle twice still places it once" {
+            let source = producer "compile"
+            let built = pipeline "work" { Producer.stage source; Producer.stage source; consumer "use" source }
+
+            match DependencyPlan.validate [ built ] with
+            | Error message -> failtest message
+            | Ok plan -> Expect.equal plan.Placements.Length 1 "one identity has one placement however often it is listed"
+        }
+
+        test "a producer's prerequisites are placed before it" {
+            let upstream = producer "restore"
+            let downstream =
+                Producer.define "compile" (InputSpec.ret ()) (DependencySpec.require upstream) (fun _ _ -> Operation.ret 7)
+            let built = pipeline "work" { consumer "use" downstream }
+
+            match DependencyPlan.validate [ built ] with
+            | Error message -> failtest message
+            | Ok plan ->
+                Expect.equal (plan.Placements |> List.map _.Producer.Name) [ "restore"; "compile" ]
+                    "placements are emitted prerequisite first"
+        }
+
+        test "a producer listed before a parallel scope serves a consumer inside it" {
+            let source = producer "compile"
+            let built = pipeline "work" {
+                Producer.stage source
+                stage "workers" { parallel' 2; consumer "use" source }
+            }
+
+            match DependencyPlan.validate [ built ] with
+            | Error message -> failtest message
+            | Ok plan ->
+                Expect.equal plan.Placements.Length 1 "the listed producer is placed once"
+                Expect.isTrue plan.Placements.Head.IsExplicit "the placement stays where the author put it"
         }
 
         test "an implicit producer owned by a nested scope cannot serve an outer consumer" {

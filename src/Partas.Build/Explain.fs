@@ -13,7 +13,8 @@ open Partas.Build.Internal
 /// Rendering evaluates each stage's <c>IsActive</c>, and a condition may perform read-only IO to answer:
 /// <c>whenBranch</c> starts <c>git</c>, and <c>whenStage</c> runs its condition stage in full, side effects
 /// included. A skipped stage has its recorded conditions evaluated a second time to attribute the skip, so
-/// those conditions run twice. Step functions are never invoked.
+/// those conditions run twice. Step functions and producer callbacks are never invoked: a producer appears by
+/// name, read off the declaration.
 /// </para>
 /// </remarks>
 module Explain =
@@ -39,6 +40,22 @@ module Explain =
             | ValueSome reason when not (condition.Predicate stage) -> Some reason
             | _ -> None)
 
+    /// <summary>The producer a stage declares and the producers it requires, by name.</summary>
+    /// <remarks>Read off the declarations alone: a producer's callback stays uninvoked.</remarks>
+    let private dependencies (stage: StageContext) =
+        [
+            match stage.Producer with
+            | ValueSome producer -> $"produces %s{producer.Name}"
+            | ValueNone -> ()
+
+            match stage.Requires with
+            | [] -> ()
+            | required -> required |> List.map _.Name |> String.concat ", " |> sprintf "needs %s"
+        ]
+        |> function
+            | [] -> ""
+            | parts -> parts |> String.concat "; " |> sprintf "  (%s)"
+
     let private status (stage: StageContext) =
         if stage.IsActive stage then ""
         else
@@ -55,7 +72,7 @@ module Explain =
         let lines = ResizeArray<string>()
 
         let rec renderStage (prefix: string) (isLast: bool) (stage: StageContext) =
-            lines.Add $"""%s{prefix}%s{if isLast then lastBranch else branch}%s{stage.Name}%s{status stage}"""
+            lines.Add $"""%s{prefix}%s{if isLast then lastBranch else branch}%s{stage.Name}%s{dependencies stage}%s{status stage}"""
 
             let childPrefix = prefix + (if isLast then gap else trunk)
             let lastIndex = stage.Steps.Length - 1

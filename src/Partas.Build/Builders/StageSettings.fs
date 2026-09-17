@@ -48,3 +48,15 @@ type StageSettingsBuilder() =
     [<CustomOperation("retry")>]
     member inline _.retry(state: ^State, count: int): ^State =
         StageMap.mapStage (fun ctx -> { ctx with Retry = max 0 count }) state
+
+    /// <summary>Adds a step that runs <paramref name="execute"/> over the results of
+    /// <paramref name="dependencies"/>, and declares those producers as the stage's prerequisites.</summary>
+    /// <remarks>
+    /// The stage is the consumer, so the settings written beside this operation — <c>retry</c>, conditions,
+    /// timeouts — govern the consuming work itself rather than a wrapper around it.
+    /// <para>The producers' CLI inputs join the stage's declared inputs, and reach the command before it
+    /// parses.</para>
+    /// </remarks>
+    [<CustomOperation("consumes")>]
+    member inline _.consumes(state: ^State, dependencies: DependencySpec<'D>, execute: 'D -> Operation<unit>): ^State =
+        StageMap.mapStage (Stage.consumes dependencies execute) state

@@ -21,6 +21,7 @@
         <Compile Include="Operations.fs" />
         <Compile Include="Dependencies.fs" />
         <Compile Include="DependencyPlan.fs" />
+        <Compile Include="ExecutionState.fs" />
         <Compile Include="Builders\StageSettings.fs" />
         <Compile Include="Builders\Stage.fs" />
         <Compile Include="Builders\Conditions.fs" />

@@ -11,6 +11,18 @@ let private yes: BuildStageIsActive = fun _ -> true
 let private no: BuildStageIsActive = fun _ -> false
 let private noop (_: StageContext) = ()
 
+/// The reasons recorded against the conditions of <paramref name="stage"/> that are false as it is read.
+let private blockingReasons (stage: StageContext) = [
+    for condition in stage.Conditions do
+        match condition.Reason with
+        | ValueSome reason when not (condition.Predicate stage) -> reason
+        | _ -> ()
+]
+
+/// How the stage named <paramref name="name"/> ended in the last run of <paramref name="pipeline"/>.
+let private outcomeOf (pipeline: PipelineContext) name =
+    pipeline.Timings.Ordered |> List.tryPick (fun timing -> if timing.Name = name then Some timing.Outcome else None)
+
 let private stageNames (ctx: StageContext) = [
     for step in ctx.Steps do
         match step with
@@ -281,6 +293,125 @@ let tests =
 
             runStage built |> ignore
             Expect.equal attempts.Value 1 "the default is unchanged"
+        }
+
+        test "a skipped producer leaves its consumer skipped, naming the dependency" {
+            let log = ResizeArray<string>()
+            let source: Producer<int> =
+                Producer.define "compile" (InputSpec.ret ()) DependencySpec.empty (fun _ _ ->
+                    Operation.ofAsync (async {
+                        log.Add "compile"
+                        return 1
+                    }))
+
+            let mutable reasons = []
+            let work =
+                pipeline "work" {
+                    quiet
+                    runAfterEachStage (fun stage -> if stage.Name = "use" then reasons <- blockingReasons stage)
+                    Producer.stage source |> StageContext.addPredicate (fun _ -> false)
+                    Stage.consuming "use" (DependencySpec.require source) (fun _ -> Operation.ofAsync (async { log.Add "use" }))
+                }
+
+            let built = command "build" { work }
+            Expect.equal (built.Parse("").Invoke()) 0 "a skipped dependency fails nothing"
+            Expect.isEmpty log "an inactive producer publishes no value, and its consumer does not run"
+            Expect.equal (outcomeOf work "use") (Some StageOutcome.Skipped) "the blocked consumer is skipped rather than failed"
+            Expect.isTrue (reasons |> List.exists _.Contains("compile")) $"the consumer records which dependency blocked it: %A{reasons}"
+        }
+
+        test "a failed producer publishes no value, and suppressing the failure still blocks its consumer" {
+            let log = ResizeArray<string>()
+            let source: Producer<int> =
+                Producer.define "compile" (InputSpec.ret ()) DependencySpec.empty (fun _ _ ->
+                    Operation.ofAsync (async {
+                        log.Add "compile"
+                        return raise (Exception "the compiler failed")
+                    }))
+
+            let mutable reasons = []
+            let work =
+                pipeline "work" {
+                    quiet
+                    runAfterEachStage (fun stage -> if stage.Name = "use" then reasons <- blockingReasons stage)
+                    Producer.stage source |> StageContext.setContinueStageOnFailure true
+                    Stage.consuming "use" (DependencySpec.require source) (fun _ -> Operation.ofAsync (async { log.Add "use" }))
+                }
+
+            let built = command "build" { work }
+            Expect.equal (built.Parse("").Invoke()) 0 "suppression lets the rest of the pipeline continue"
+            Expect.sequenceEqual log [ "compile" ] "the producer ran and its consumer did not"
+            Expect.equal (outcomeOf work "use") (Some StageOutcome.Skipped) "a consumer of a failed producer stays blocked"
+            Expect.isTrue (reasons |> List.exists _.Contains("compile")) $"the consumer records which dependency blocked it: %A{reasons}"
+        }
+
+        test "a consumer's retry reuses a producer the enclosing scope owns" {
+            let executions = ref 0
+            let source: Producer<int> =
+                Producer.define "compile" (InputSpec.ret ()) DependencySpec.empty (fun _ _ ->
+                    Operation.ofAsync (async {
+                        incr executions
+                        return executions.Value
+                    }))
+
+            let seen = ResizeArray<int>()
+            let built =
+                command "build" {
+                    pipeline "work" {
+                        quiet
+
+                        stage "use" {
+                            retry 2
+                            consumes (DependencySpec.require source) (fun value ->
+                                Operation.ofAsync (async {
+                                    seen.Add value
+                                    if seen.Count < 3 then failwith "not yet"
+                                }))
+                        }
+                    }
+                }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "the last attempt succeeds"
+            Expect.equal executions.Value 1 "a dependency owned outside the retried stage runs once"
+            Expect.sequenceEqual seen [ 1; 1; 1 ] "every attempt reads the value published before the stage"
+        }
+
+        test "each attempt of the owning stage runs the producer it owns again" {
+            let executions = ref 0
+            let source: Producer<int> =
+                Producer.define "compile" (InputSpec.ret ()) DependencySpec.empty (fun _ _ ->
+                    Operation.ofAsync (async {
+                        incr executions
+                        return executions.Value
+                    }))
+
+            let seen = ResizeArray<int>()
+            let published = ResizeArray<bool>()
+            let attempts = ref 0
+            let built =
+                command "build" {
+                    pipeline "work" {
+                        quiet
+
+                        stage "attempt" {
+                            retry 1
+                            run (fun (ctx: StageContext) -> published.Add ((StageContext.publishedValues ctx).Contains source.Id))
+
+                            stage "use" {
+                                consumes (DependencySpec.require source) (fun value -> Operation.ofAsync (async { seen.Add value }))
+                            }
+
+                            run (fun (_: StageContext) ->
+                                incr attempts
+                                if attempts.Value = 1 then Error "the first attempt fails" else Ok ())
+                        }
+                    }
+                }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "the second attempt succeeds"
+            Expect.equal executions.Value 2 "the retried stage owns the producer, so each attempt runs it again"
+            Expect.sequenceEqual seen [ 1; 2 ] "each attempt's consumer reads that attempt's own value"
+            Expect.sequenceEqual published [ false; false ] "an attempt starts without the value the previous one published"
         }
     ]
 

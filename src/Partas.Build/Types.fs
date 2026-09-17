@@ -160,14 +160,24 @@ type StageTimings() =
 [<Struct>]
 type ProducerId = ProducerId of id: int64
 
-/// Values published during one invocation or attempt scope.
+/// <summary>Values published during one invocation or attempt scope.</summary>
+/// <remarks>
+/// A value is held alongside the type it was produced as, so a published <c>None</c> — which boxes to
+/// <c>null</c> — reads back as <c>ValueSome None</c>. Intentional absence is a result a consumer handles.
+/// </remarks>
 [<Sealed>]
-type ProducerValues private (values: Map<ProducerId, obj>) =
+type ProducerValues private (values: Map<ProducerId, struct (Type * obj)>) =
     static member Empty = ProducerValues Map.empty
-    member _.Add(id: ProducerId, value: 'T) = ProducerValues(Map.add id (box value) values)
+    member _.Add(id: ProducerId, value: 'T) = ProducerValues(Map.add id (struct (typeof<'T>, box value)) values)
+    /// <summary>The same values, with <paramref name="value"/> recorded for <paramref name="id"/> as a value of
+    /// type <paramref name="produced"/>.</summary>
+    /// <remarks>The erased counterpart of <c>Add</c>, for a value boxed before it reaches publication.</remarks>
+    member _.AddBoxed(id: ProducerId, produced: Type, value: obj) = ProducerValues(Map.add id (struct (produced, value)) values)
+    /// Whether a value is available for <paramref name="id"/>.
+    member _.Contains(id: ProducerId) = Map.containsKey id values
     member _.TryGet<'T>(id: ProducerId): 'T voption =
         match Map.tryFind id values with
-        | Some (:? 'T as value) -> ValueSome value
+        | Some(struct (produced, value)) when typeof<'T>.IsAssignableFrom produced -> ValueSome(unbox<'T> value)
         | _ -> ValueNone
 
 /// The executable-erased declaration shared by a typed handle and every stage using it.
@@ -177,8 +187,41 @@ type ProducerRef = {
     Name: string
     Requires: ProducerRef list
     Inputs: ActionInput list
+    /// The type of the value this producer publishes.
+    ResultType: Type
     Prepare: CommandLine.ParseResult -> ProducerValues -> Result<obj, string>
 }
+
+/// <summary>What one pipeline invocation has published, and the boundary at which a scope discards it.</summary>
+/// <remarks>
+/// Invocation-local: a run empties the state before its first stage, so a second invocation of the same
+/// pipeline value executes its producers again. Nothing is retained above the invocation.
+/// <para>Publication is sequential. A producer stage sits outside every <c>parallel'</c> and
+/// <c>shuffleExecuteSequence</c> scope — <c>DependencyPlan.validate</c> rejects the arrangements where it would
+/// not — so consumers running in parallel read values completed before their scope began.</para>
+/// </remarks>
+[<Sealed>]
+type ExecutionState() =
+    let sync = obj ()
+    let mutable values = ProducerValues.Empty
+
+    /// The values available to the work running now.
+    member _.Values = values
+
+    /// Whether a value is available for <paramref name="id"/>.
+    member _.Contains(id: ProducerId) = values.Contains id
+
+    /// <summary>Publishes <paramref name="value"/> as the result of <paramref name="producer"/>.</summary>
+    member _.Publish(producer: ProducerRef, value: obj) =
+        lock sync (fun () -> values <- values.AddBoxed(producer.Id, producer.ResultType, value))
+
+    /// <summary>Restores the values as <paramref name="snapshot"/> held them.</summary>
+    /// <remarks>An attempt boundary: a scope that snapshots before its first attempt discards, on every further
+    /// attempt, what the previous attempt published.</remarks>
+    member _.ResetTo(snapshot: ProducerValues) = lock sync (fun () -> values <- snapshot)
+
+    /// Discards every published value. An invocation starts from here.
+    member _.Clear() = lock sync (fun () -> values <- ProducerValues.Empty)
 
 [<Struct>]
 type InputSpec<'T> = { Inputs: ActionInput list; Read: CommandLine.ParseResult -> 'T }
@@ -384,6 +427,9 @@ and PipelineContext = {
     /// stage belongs to the condition that runs it, and the summary covers the stages of the run itself.
     /// </remarks>
     Timings: StageTimings
+    /// <summary>What the pipeline's producers have published, for the invocation running now.</summary>
+    /// <remarks>Emptied when a run starts, and reset to what a stage found when that stage retries.</remarks>
+    Producers: ExecutionState
 }
 
 type BuildPipeline = PipelineContext -> PipelineContext
@@ -662,6 +708,7 @@ module PipelineContext =
             RunBeforeEachStage = noStageHook
             RunAfterEachStage = noStageHook
             Timings = StageTimings()
+            Producers = ExecutionState()
         }
 
     /// <summary>Fills in the settings a pipeline left alone with those a command supplies as defaults.</summary>
@@ -836,6 +883,16 @@ module StageContext =
                 | Step.StepOfStage child -> yield declaredInputs child
                 | _ -> ()
         ]
+
+    /// <summary>The producer values available to <paramref name="stage"/>.</summary>
+    /// <remarks>
+    /// The values of the invocation running the pipeline that contains the stage, wherever the stage sits under
+    /// it. Empty for a stage run outside a pipeline, and for one whose producers have not run.
+    /// </remarks>
+    let publishedValues (stage: StageContext) =
+        match StageContext.getParentPipeline stage with
+        | Some pipeline -> pipeline.Producers.Values
+        | None -> ProducerValues.Empty
 
     let rec getStageLevel (ctx: StageContext) = StageContext.mapStageParentContext 0 (getStageLevel >> (+) 1) ctx
 
@@ -1082,6 +1139,11 @@ module Runners =
                         tryGetOwnCapture stage
                         |> ValueOption.map (fun capture -> capture, capture.Count)
 
+                    // The producer values as the stage found them. Each attempt restores them: a producer this
+                    // scope owns runs again inside the attempt that needs it, while one published before the
+                    // stage started belongs to an enclosing scope and stays.
+                    let producedBefore = pipeline |> Option.map (fun pipeline -> pipeline.Producers, pipeline.Producers.Values)
+
                     let parallelism = stage.IsParallel stage
                     let timeoutForStep: int = getTimeoutForStep stage
                     let timeoutForStage: int = getTimeoutForStage stage
@@ -1121,6 +1183,10 @@ module Runners =
                         match capturedBefore with
                         | ValueSome(capture, count) -> capture.TrimTo count
                         | ValueNone -> ()
+
+                        match producedBefore with
+                        | Some(producers, values) -> producers.ResetTo values
+                        | None -> ()
 
                         let mutable isStageSoftCancelled = false
 
@@ -1429,6 +1495,9 @@ module Runners =
             Console.InputEncoding <- Encoding.UTF8
             Console.OutputEncoding <- Encoding.UTF8
             this.Timings.Clear()
+            // Execution state is invocation-local: a second run of the same pipeline value executes its
+            // producers again rather than reading what the first one published.
+            this.Producers.Clear()
 
             if not(String.IsNullOrEmpty this.Name) then
                 let title = FigletText this.Name

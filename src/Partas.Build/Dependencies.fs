@@ -27,12 +27,13 @@ type Producer<'T> = {
     Prepare: ParseResult -> ProducerValues -> Result<Operation<'T>, string>
 }
 with
-    /// <summary>This declaration seen without its result type.</summary>
+    /// <summary>This declaration with its result type erased from the signature and carried as a value.</summary>
     member this.Ref: ProducerRef = {
         Id = this.Id
         Name = this.Name
         Requires = this.Requires
         Inputs = this.Inputs
+        ResultType = typeof<'T>
         Prepare = fun parseResult values ->
             this.Prepare parseResult values
             |> Result.map (Operation.map box >> box)
@@ -139,13 +140,14 @@ module Stage =
     /// <summary>The stage with <paramref name="dependencies"/> added to what it requires, and
     /// <paramref name="execute"/> added as one more step over the values its scope has published.</summary>
     /// <remarks>
-    /// The step runs the operation over the published values, or fails naming the first unavailable prerequisite.
+    /// The step runs the operation over the values the invocation has published, or fails naming the first
+    /// unavailable prerequisite.
     /// <para>Every setting already on the stage is kept, so a consumer written through the <c>consumes</c>
     /// operation of a stage builder carries that builder's <c>retry</c> and conditions.</para>
     /// </remarks>
     let consumes (dependencies: DependencySpec<'D>) (execute: 'D -> Operation<unit>) (stage: StageContext): StageContext =
         let step (context: RuntimeContext) = async {
-            match dependencies.Read ProducerValues.Empty with
+            match dependencies.Read (StageContext.publishedValues context.Stage) with
             | Error unavailable -> return StepOutcome.Failed (FailureCause.Reported unavailable)
             | Ok values -> return! Operation.toStepOutcome (execute values) context
         }

@@ -10,6 +10,22 @@ let private producer name =
 let private consumer name source =
     Stage.consuming name (DependencySpec.require source) (fun _ -> Operation.ret ())
 
+/// A producer of <paramref name="value"/> that appends its name to <paramref name="log"/> when it executes.
+let private logging (log: ResizeArray<string>) name value =
+    Producer.define name (InputSpec.ret ()) DependencySpec.empty (fun _ _ ->
+        Operation.ofAsync (async {
+            log.Add name
+            return value
+        }))
+
+/// A consumer of <paramref name="source"/> that appends its name and the value it read to <paramref name="log"/>.
+let private reading (log: ResizeArray<string>) name (source: Producer<int>) =
+    Stage.consuming name (DependencySpec.require source) (fun value -> Operation.ofAsync (async { log.Add $"%s{name}:%i{value}" }))
+
+/// A stage appending its name to <paramref name="log"/>, consuming nothing.
+let private noting (log: ResizeArray<string>) name =
+    stage name { run (fun (_: StageContext) -> log.Add name) }
+
 [<Tests>]
 let tests =
     testList "dependencies" [
@@ -199,5 +215,78 @@ let tests =
             match DependencyPlan.validate [ built ] with
             | Ok _ -> failtest "cycle must fail validation"
             | Error message -> Expect.stringContains message "cycle" "diagnostic identifies a cycle"
+        }
+
+        test "two sequential consumers share one execution, and the next invocation executes again" {
+            let log = ResizeArray()
+            let source = logging log "compile" 42
+            let built = command "build" { pipeline "work" { quiet; reading log "test" source; reading log "pack" source } }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "the invocation succeeds"
+            Expect.sequenceEqual log [ "compile"; "test:42"; "pack:42" ] "one execution serves both consumers"
+
+            log.Clear()
+            Expect.equal (built.Parse("").Invoke()) 0 "the second invocation succeeds"
+            Expect.sequenceEqual log [ "compile"; "test:42"; "pack:42" ] "a second invocation of the same command executes the producer again"
+        }
+
+        test "an explicitly listed producer a consumer also requires executes once, where it is listed" {
+            let log = ResizeArray()
+            let source = logging log "compile" 7
+            let built = command "build" {
+                pipeline "work" {
+                    quiet
+                    noting log "restore"
+                    Producer.stage source
+                    noting log "package"
+                    reading log "publish" source
+                }
+            }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "the invocation succeeds"
+            Expect.sequenceEqual log [ "restore"; "compile"; "package"; "publish:7" ]
+                "the listed producer runs once, in the place the author listed it"
+        }
+
+        test "an unlisted producer runs immediately before its first consumer" {
+            let log = ResizeArray()
+            let source = logging log "compile" 3
+            let built = command "build" {
+                pipeline "work" {
+                    quiet
+                    noting log "restore"
+                    noting log "lint"
+                    reading log "test" source
+                    noting log "package"
+                }
+            }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "the invocation succeeds"
+            Expect.sequenceEqual log [ "restore"; "lint"; "compile"; "test:3"; "package" ]
+                "the producer runs before its first consumer, leaving the preceding stages where they were"
+        }
+
+        test "explain places no producer work and runs none" {
+            let log = ResizeArray()
+            let source = logging log "compile" 1
+            let built = command "build" { pipeline "work" { quiet; reading log "test" source } }
+
+            Expect.equal (built.Parse("--explain").Invoke()) 0 "explain succeeds"
+            Expect.isEmpty log "the explained invocation executes neither the producer nor its consumer"
+        }
+
+        test "a producer publishing None publishes a value its consumer reads" {
+            let seen = ResizeArray<string option>()
+            let source: Producer<string option> =
+                Producer.define "lookup" (InputSpec.ret ()) DependencySpec.empty (fun _ _ -> Operation.ofAsync (async { return None }))
+            let built = command "build" {
+                pipeline "work" {
+                    quiet
+                    Stage.consuming "use" (DependencySpec.require source) (fun value -> Operation.ofAsync (async { seen.Add value }))
+                }
+            }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "intentional absence is a successful result"
+            Expect.sequenceEqual seen [ None ] "the consumer reads the absence the producer published"
         }
     ]

@@ -86,7 +86,8 @@ let private runReportingTimings (pipeline: PipelineContext) =
         | _ when verbosity.IsQuiet -> ()
         | timings -> Summary.render timings |> Console.Out.WriteLine
 
-/// Reads each pipeline out of the parse result and runs it, in declaration order.
+/// Reads each pipeline out of the parse result and runs it, in declaration order. Producer work is placed into
+/// the pipelines that run, after the whole invocation validates and never on the way to <c>--explain</c>.
 /// The runner has already reported the failure by the time it raises, so this only maps it to an exit code.
 let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseResult) =
     let pipelines = spec.Pipelines |> List.map (fun pipeline -> pipeline.Read parseResult)
@@ -95,9 +96,9 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
         Console.Error.WriteLine message
         1
     | Ok _ when Explain.option.GetValue parseResult -> explain command pipelines
-    | Ok _ ->
+    | Ok plan ->
         try
-            for pipeline in pipelines do
+            for pipeline in ExecutionState.schedule parseResult plan pipelines do
                 runReportingTimings pipeline
 
             0

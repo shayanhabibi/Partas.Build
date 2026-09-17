@@ -666,8 +666,9 @@ module Operations =
 
 - `Operation<'T>` and the `Operation` module moved here from `Dependencies.fs`; `ret` and `ofAsync` keep the
   bodies T1 compiled. Two modules of the same name cannot merge across files, which is what moves them.
-- All three adapters read the executing stage for their working directory, environment, acceptable exit codes
-  and output routing, by walking `ParentContext` upward through the existing lookups.
+- All three adapters read the executing stage for their working directory, environment and acceptable exit codes,
+  by walking `ParentContext` upward through the existing lookups. Output routing is `execute`'s alone; the two
+  capture adapters answer the raw text instead.
 - Only `ProcessExecutor.stream`/`capture` are used, never `streamToExit`/`captureToExit`: a cancelled command
   raises out of the executor, so a `CommandResult` is only ever a normally completed process.
 - `execute` streams through `CmdRunner.outputPolicy`, so a step keeps its prefix, its silencing and its capture.
@@ -754,8 +755,14 @@ had, and its behaviour is unchanged.
   - Producer registration, ownership, retry reset, publication, or dependency validation diagnostics.
   - `FailureCause.TimedOut` for a `timeoutForStep` expiry, which `Async.StartChild` reports as a
     `TimeoutException` to the waiter while the step runs on. Only the stage's own `timeout` is classified.
-  - Which of several concurrently running operation steps a stage timeout ended: the attempt records one step
-    prefix, so a `parallel'` stage names the last operation to start rather than each of them.
+  - Which of several concurrently running operation steps a stage timeout ended: the attempt holds a single
+    `ref`, written by every `Step.Operation` as it starts and cleared as it completes. A `parallel'` stage
+    therefore names the last operation to start at best, and where a sibling completed after that operation
+    started the `ref` is empty and the stage reports `FailureCause.TimedOut` for none of them. The stage still
+    fails and still prints the yellow "cancelled or timed-out" line; T7 owns the stage-level cause.
+  - An operation inside a sub-stage whose *parent's* `timeout` expires is classified nowhere: the parent's step
+    is a `StepOfStage`, which leaves the `ref` empty, and the sub-stage reads the expiry off `ct` — an
+    ancestor's token — which keeps it a cancellation.
   - Process behaviour on Linux: every T2 and T3 run was on Windows. The tree kill on `netstandard2.0` is
     unexercised on every platform, since only the `net10.0` build runs the process tests.
 

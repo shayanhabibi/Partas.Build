@@ -3,7 +3,6 @@ namespace Partas.Build
 open System
 open System.ComponentModel
 open System.Runtime.ExceptionServices
-open System.Threading
 open System.Threading.Tasks
 open Partas.Build.Internal
 
@@ -70,9 +69,8 @@ module Operation =
     /// <remarks>
     /// A reported cause, and an exception the operation let through, both become
     /// <see cref="T:Partas.Build.Internal.StepOutcome"/>.<c>Failed</c>; a parsing failure arrives that way,
-    /// holding the exception itself. Cancellation propagates as cancellation, and a cancellation whose
-    /// <c>OwnTimeout</c> fired is this scope's own timeout, so it becomes <c>Failed FailureCause.TimedOut</c>.
-    /// The pipeline and soft-cancellation exceptions propagate to the runner that reads them.
+    /// holding the exception itself. Cancellation propagates, along with the pipeline and soft-cancellation
+    /// exceptions, to the runner that classifies it: only the runner holds the tokens that say whose it was.
     /// </remarks>
     let toStepOutcome (operation: Operation<unit>) (context: RuntimeContext) = async {
         try
@@ -81,8 +79,6 @@ module Operation =
         with error ->
             match Awaited.unwrap error with
             | :? OperationFailedException as failed -> return StepOutcome.Failed failed.Cause
-            | :? OperationCanceledException when context.OwnTimeout.IsCancellationRequested ->
-                return StepOutcome.Failed FailureCause.TimedOut
             | :? OperationCanceledException
             | :? PipelineCancelledException
             | :? PipelineFailedException
@@ -126,10 +122,9 @@ module Operations =
             CmdRunner.logCommand stage escapedPrefix command
 
             let! token = Async.CancellationToken
-            use linked = CancellationTokenSource.CreateLinkedTokenSource(token, context.OwnTimeout)
 
             let! exitCode =
-                ProcessExecutor.stream (startInfo context command) (CmdRunner.outputPolicy stage escapedPrefix) linked.Token
+                ProcessExecutor.stream (startInfo context command) (CmdRunner.outputPolicy stage escapedPrefix) token
                     (CmdRunner.announceKill escapedPrefix)
                 |> Async.AwaitTask
                 |> overStart command
@@ -150,10 +145,9 @@ module Operations =
             CmdRunner.logCommand stage "" command
 
             let! token = Async.CancellationToken
-            use linked = CancellationTokenSource.CreateLinkedTokenSource(token, context.OwnTimeout)
 
             let! result =
-                ProcessExecutor.capture (startInfo context command) linked.Token
+                ProcessExecutor.capture (startInfo context command) token
                     (CmdRunner.announceKill (CmdRunner.stepPrefix stage context.StepIndex))
                 |> Async.AwaitTask
                 |> overStart command
@@ -176,10 +170,9 @@ module Operations =
             CmdRunner.logCommand stage "" command
 
             let! token = Async.CancellationToken
-            use linked = CancellationTokenSource.CreateLinkedTokenSource(token, context.OwnTimeout)
 
             return!
-                ProcessExecutor.capture (startInfo context command) linked.Token
+                ProcessExecutor.capture (startInfo context command) token
                     (CmdRunner.announceKill (CmdRunner.stepPrefix stage context.StepIndex))
                 |> Async.AwaitTask
                 |> overStart command

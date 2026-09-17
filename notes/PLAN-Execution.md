@@ -615,11 +615,7 @@ type [<Struct; RequireQualifiedAccess>] Step =
     | Operation of operationLabel: string voption * operation: (RuntimeContext -> Async<StepOutcome>)
     | StepOfStage of stage: StageContext
 
-and [<Struct>] RuntimeContext = {
-    Stage: StageContext
-    StepIndex: StepIndex
-    OwnTimeout: CancellationToken
-}
+and [<Struct>] RuntimeContext = { Stage: StageContext; StepIndex: StepIndex }
 
 module StageContext =
     val inline addOperation: label: string voption -> operation: (RuntimeContext -> Async<StepOutcome>) -> stage: StageContext -> StageContext
@@ -632,8 +628,16 @@ module StageContext =
   string to the same `printError` the `StepFn` branch uses. A failed operation therefore fails its step and its
   stage exactly as a `StepFn` returning `Error` does, GitHub Actions annotation included.
 - `RuntimeContext` moved from `Dependencies.fs` into `Types.fs`, and from namespace `Partas.Build` into
-  `Partas.Build.Internal`: `Step.Operation`'s payload names it, and `Step` is declared in `Types.fs`. It gained
-  `OwnTimeout`, which T1 left for T3 to settle.
+  `Partas.Build.Internal`: `Step.Operation`'s payload names it, and `Step` is declared in `Types.fs`. Its fields
+  are the two T1 compiled. T1 left cancellation for T3 to settle, and the answer is that an operation reads the
+  ambient token and the runner classifies what it did: only the runner holds the stage's own timeout source, the
+  ancestor token and the stage-policy source together.
+- A stage's own `timeout` expiring while an operation step is running reports `FailureCause.TimedOut`: the line
+  reaches `printError` and the exception list the stage returns, so a caller reads it without the console.
+  `StageContext.run` records the running operation's step prefix and classifies once the attempt has unwound,
+  because an `async` under a cancelled token runs neither its `with` handler nor its continuation — a value
+  returned from inside it is dropped. A cancellation from an ancestor or from stage policy stays a cancellation
+  and reports as it did before.
 - `--explain` renders an operation's label the way it renders a `StepFn`'s, and its index where there is none.
 
 ### Operations
@@ -674,11 +678,11 @@ module Operations =
 - `attemptCapture` answers every normally completed process, unacceptable exit codes included.
 - A process that never started becomes `FailureCause.Start(executable, Win32Exception)` from all three, never a
   `CommandResult`.
-- `Operation.toStepOutcome` classifies what escapes: `OperationFailedException` to its cause, cancellation
-  through where `OwnTimeout` did not fire, `FailureCause.TimedOut` where it did, the pipeline and soft
-  cancellation exceptions through untouched, and anything else — a parsing failure among them — to
-  `FailureCause.Raised`, holding the exception itself. The aggregate an `Async.AwaitTask` wraps a task's
-  exception in is removed first, and a propagated exception keeps its original stack trace.
+- `Operation.toStepOutcome` classifies what escapes: `OperationFailedException` to its cause, and anything else
+  — a parsing failure among them — to `FailureCause.Raised`, holding the exception itself. Cancellation, the
+  pipeline exceptions and the soft-cancellation exceptions propagate to the runner, which is where a timeout is
+  told apart from a cancellation. The aggregate an `Async.AwaitTask` wraps a task's exception in is removed
+  first, and a propagated exception keeps its original stack trace.
 - `Operation.ofTaskFactory` applies the factory inside the async it answers, so a definition holds no started
   task.
 
@@ -737,8 +741,10 @@ had, and its behaviour is unchanged.
     streamed command failing with no capture; a stage's acceptable set letting both checked forms succeed; a
     parsing failure retaining its `FormatException`; a start failure naming the executable from all three
     adapters; cancellation of an attempt surfacing as cancellation and firing no fallback; a cancelled step
-    staying a cancellation; `OwnTimeout` producing `FailureCause.TimedOut`; a successful capture printing
-    nothing into the stage's own capture; working directory and environment inherited; declaration and
+    staying a cancellation; a real `stage { timeout 2.0; runOperation (execute …) }` reporting
+    `FailureCause.TimedOut` and leaving no process of the tree alive, against a cancellation from above
+    reporting no timeout and leaving none alive either; a successful capture printing nothing into the stage's
+    own capture; working directory and environment inherited; declaration and
     materialization starting neither an async nor a task factory; a stage consuming clean data and branching on
     an attempted exit; a failing operation failing its stage; `--explain` rendering a label and an index.
   - `tests/Partas.Build.Tests/StageTests.fs` and `CompositionTests.fs` name the new step case, and the T1
@@ -746,11 +752,10 @@ had, and its behaviour is unchanged.
 - Not yet verified:
   - XML documentation rendering and IntelliSense presentation of the inherited operation.
   - Producer registration, ownership, retry reset, publication, or dependency validation diagnostics.
-  - `FailureCause.TimedOut` reaching a report from a real stage `timeout`. The runner passes the stage's own
-    timeout token as `RuntimeContext.OwnTimeout`, and `Operation.toStepOutcome` classifies on it, but that token
-    is also inside the ambient one, so F# `async` cancels the continuation before the outcome is returned and
-    the stage reports the timeout through the path it already had. A separate own-timeout token is T7's, with
-    `onFailure`.
+  - `FailureCause.TimedOut` for a `timeoutForStep` expiry, which `Async.StartChild` reports as a
+    `TimeoutException` to the waiter while the step runs on. Only the stage's own `timeout` is classified.
+  - Which of several concurrently running operation steps a stage timeout ended: the attempt records one step
+    prefix, so a `parallel'` stage names the last operation to start rather than each of them.
   - Process behaviour on Linux: every T2 and T3 run was on Windows. The tree kill on `netstandard2.0` is
     unexercised on every platform, since only the `net10.0` build runs the process tests.
 

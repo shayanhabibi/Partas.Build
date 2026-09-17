@@ -313,7 +313,7 @@ rtk dotnet run --project Build.fsproj -- test --configuration Release
   - Not run: anything on Linux, and the `netstandard2.0` tree kill on any platform.
 - T3 (2026-09-17, worktree `Partas.Build-execution-commands`, branch `execution/commands`):
   - Model: `Types.fs` gains `FailureCause`, `StepOutcome`, `OperationFailedException`, `FailureCause.describe`,
-    `RuntimeContext` (moved from `Dependencies.fs`, now carrying `OwnTimeout`), the `Step.Operation` case and
+    `RuntimeContext` (moved from `Dependencies.fs`), the `Step.Operation` case and
     `StageContext.addOperation`. `StepFn` and all twelve `unifyResult` overloads are untouched; the failed
     outcome becomes a string only in `StageContext.run`'s new branch, which hands it to the same `printError`.
   - Operations: `src/Partas.Build/Operations.fs` holds `Operation<'T>`, the `Operation` module
@@ -335,4 +335,11 @@ rtk dotnet run --project Build.fsproj -- test --configuration Release
     failed, of which the new `operations` list is 16. `tests/Partas.Build.CompilerProbe -c Release` 5 passed.
     Library Debug and Release and `Build.fsproj` build with 0 errors; `Build.fsproj`'s two `NU1605` FSharp.Core
     downgrade warnings predate this task.
-  - Not reached: `FailureCause.TimedOut` from a real stage `timeout`; see the spec's *Evidence and limits*.
+  - Timeout classification belongs to `StageContext.run`, which holds the stage's own timeout source, the
+    ancestor token and the stage-policy source together. It records the running operation's step prefix and
+    classifies once the attempt has unwound, because an `async` under a cancelled token runs neither its `with`
+    handler nor its continuation. RED observed twice here: `got []` with no classification at all, then again
+    with the classification written as a `with` handler inside the step's `async`, which never ran.
+    `RuntimeContext.OwnTimeout` was removed once the runner owned the decision.
+  - Not reached: a `timeoutForStep` expiry (`Async.StartChild` reports it to the waiter as a `TimeoutException`),
+    and naming each of several concurrent operation steps a stage timeout ended.

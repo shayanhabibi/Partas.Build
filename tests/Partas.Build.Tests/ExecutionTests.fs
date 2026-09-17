@@ -155,11 +155,7 @@ open Partas.Build.Internal
 let private silent (configure: StageContext -> StageContext) =
     { StageContext.create "operations" with Output = ValueSome StageOutput.Silent } |> configure
 
-let private runtime (stage: StageContext) = {
-    Stage = stage
-    StepIndex = 0<stepIndex>
-    OwnTimeout = CancellationToken.None
-}
+let private runtime (stage: StageContext) = { Stage = stage; StepIndex = 0<stepIndex> }
 
 /// Runs an operation as a step of its own and answers the value it produced.
 let private perform (stage: StageContext) (operation: Operation<'T>) =
@@ -178,6 +174,18 @@ let private expectCancellation (token: CancellationToken) (work: Async<'T>) mess
         ()
 
 let private missing = Cmd.ofList "partas-build-no-such-executable" [ "argument" ]
+
+/// Long enough that finishing on its own would be indistinguishable from a hang, and a grandchild of the
+/// process the runner starts on Windows: `cmd` is what gets killed, `ping` is what has to die with it.
+let private sleeps =
+    if Runtime.InteropServices.RuntimeInformation.IsOSPlatform Runtime.InteropServices.OSPlatform.Windows
+    then Cmd.ofString "cmd /c ping -n 30 127.0.0.1"
+    else Cmd.ofList "sh" [ "-c"; "sleep 30" ]
+
+let private sleepProcessName =
+    if Runtime.InteropServices.RuntimeInformation.IsOSPlatform Runtime.InteropServices.OSPlatform.Windows then "PING" else "sleep"
+
+let private sleepsAlive () = Diagnostics.Process.GetProcessesByName sleepProcessName |> Array.length
 
 [<Tests>]
 let operations =
@@ -270,15 +278,41 @@ let operations =
             expectCancellation cancellation.Token (Operation.toStepOutcome work (runtime (silent id))) "a cancelled step"
         }
 
-        test "a step whose own timeout fired reports a timeout" {
-            use timeout = new CancellationTokenSource()
-            timeout.Cancel()
+        test "a stage's own timeout reports a timed-out operation and kills the process tree" {
+            let before = sleepsAlive ()
+            let watch = Diagnostics.Stopwatch.StartNew()
+            let outcome = runStage (stage "slow" { timeout 2.0; runOperation (execute sleeps) })
+            watch.Stop()
 
-            let context = { runtime (silent id) with OwnTimeout = timeout.Token }
-            let work = Operation.ofAsync (async { return raise (OperationCanceledException "the scope's own budget") })
+            match outcome with
+            | Ok () -> failtest "a stage that ran out of its own timeout should fail"
+            | Error failures ->
+                let timedOut = FailureCause.describe FailureCause.TimedOut
+                Expect.isTrue
+                    (failures |> List.exists (fun failure -> failure.Message.Contains timedOut))
+                    $"the stage's own timeout is a failure of that stage; got {failures |> List.map _.Message}"
 
-            Expect.equal (Async.RunSynchronously (Operation.toStepOutcome work context)) (StepOutcome.Failed FailureCause.TimedOut)
-                "which token fired separates a scope's own timeout from a cancellation reaching it"
+            Expect.isLessThan watch.ElapsedMilliseconds 20000L "the timeout should kill the process rather than wait it out"
+
+            // The kill is asynchronous, and it is the grandchild that used to survive it.
+            Thread.Sleep 1500
+            Expect.equal (sleepsAlive ()) before "the whole process tree should be gone"
+        }
+
+        test "a cancellation reaching a stage from above is no timeout of its own" {
+            let before = sleepsAlive ()
+            use cancellation = new CancellationTokenSource 500
+
+            match StageContext.run (stage "slow" { runOperation (execute sleeps) }) (StageIndex.Stage 0) cancellation.Token with
+            | true, _ -> failtest "a cancelled stage should not report success"
+            | false, failures ->
+                let timedOut = FailureCause.describe FailureCause.TimedOut
+                Expect.isFalse
+                    (failures |> Seq.exists (fun failure -> failure.Message.Contains timedOut))
+                    "the token that fired belongs to the caller, so the stage reports cancellation rather than a timeout"
+
+            Thread.Sleep 1500
+            Expect.equal (sleepsAlive ()) before "a cancelled stage still kills the whole process tree"
         }
 
         test "a successful capture is never printed by the operation that took it" {

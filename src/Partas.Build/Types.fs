@@ -251,14 +251,13 @@ type [<Struct; RequireQualifiedAccess>]
 
 /// <summary>What an operation can read about the step executing it.</summary>
 /// <remarks>
-/// Cancellation reaches an operation as the ambient token, through <c>Async.CancellationToken</c>.
-/// <c>OwnTimeout</c> is the token of the timeout budget the executing scope was given, which is what tells a
-/// timeout of this scope apart from a cancellation propagated into it.
+/// Cancellation reaches an operation as the ambient token, through <c>Async.CancellationToken</c>. Telling a
+/// timeout of the executing stage apart from a cancellation reaching it belongs to the runner, which holds both
+/// tokens.
 /// </remarks>
 and [<Struct>] RuntimeContext = {
     Stage: StageContext
     StepIndex: StepIndex
-    OwnTimeout: System.Threading.CancellationToken
 }
 
 /// <summary>
@@ -1078,6 +1077,10 @@ module Runners =
 
                         let mutable isStageSoftCancelled = false
 
+                        // The step prefix of the operation this attempt is inside, while it is inside one. A value
+                        // still here once the attempt has unwound belongs to an operation a token ended.
+                        let operationInFlight = ref ValueNone
+
                         use stepErrorCts = new System.Threading.CancellationTokenSource()
                         use linkedStepErrorCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cts.Token, stepErrorCts.Token)
                         use linkedCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(linkedStepErrorCts.Token, ct)
@@ -1146,18 +1149,25 @@ module Runners =
                                             // A structured outcome becomes a string here and nowhere earlier: the
                                             // print site is the only reader that needs one.
                                             | Step.Operation(_, operation) -> async {
-                                                let context = {
-                                                    Stage = stepStage
-                                                    StepIndex = LanguagePrimitives.Int32WithMeasure i
-                                                    OwnTimeout = cts.Token
-                                                }
-                                                match! operation context with
+                                                // A cancelled `async` runs neither a handler nor a continuation,
+                                                // so an operation ended by a token leaves its prefix behind here
+                                                // and the attempt classifies it once the run has unwound.
+                                                operationInFlight.Value <- ValueSome escapedPrefix
+                                                let! outcome =
+                                                    operation {
+                                                        Stage = stepStage
+                                                        StepIndex = LanguagePrimitives.Int32WithMeasure i
+                                                    }
+                                                operationInFlight.Value <- ValueNone
+
+                                                match outcome with
                                                 | StepOutcome.Completed -> return true
                                                 | StepOutcome.Failed cause ->
-                                                    let message = FailureCause.describe cause
-                                                    if parallelism.IsNone && getNoPrefixForStep stage
-                                                    then message
-                                                    else $"{escapedPrefix} {message}"
+                                                    FailureCause.describe cause
+                                                    |> fun message ->
+                                                        if parallelism.IsNone && getNoPrefixForStep stage
+                                                        then message
+                                                        else $"{escapedPrefix} {message}"
                                                     |> printError stage
                                                     return false
                                                 }
@@ -1257,6 +1267,23 @@ module Runners =
                                 |> Markup.red
                                 |> printn
                                 AnsiConsole.WriteException ex
+
+                        // Which token fired decides this, and only the runner holds both: `cts` is the budget this
+                        // stage was given, so its expiry is a failure of this stage and reports
+                        // `FailureCause.TimedOut`. `ct` belongs to an ancestor and `stepErrorCts` to stage policy;
+                        // an operation either of those ended stays a cancellation, reported as one above.
+                        match operationInFlight.Value with
+                        | ValueSome prefix when
+                            cts.IsCancellationRequested
+                            && not ct.IsCancellationRequested
+                            && not stepErrorCts.IsCancellationRequested
+                            ->
+                            let message = FailureCause.describe FailureCause.TimedOut
+                            let line = if parallelism.IsNone && getNoPrefixForStep stage then message else $"{prefix} {message}"
+                            fail()
+                            printError stage line
+                            if not stage.ContinueStageOnFailure then stepExns.Add(Exception line)
+                        | _ -> ()
 
                         if not isSuccess && retriesLeft > 0 && not cts.IsCancellationRequested && not ct.IsCancellationRequested then
                             $"%s{getNamePath stage |> Markup.escape} failed. Retrying, {retriesLeft} attempt(s) left."

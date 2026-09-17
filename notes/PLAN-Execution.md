@@ -38,9 +38,11 @@ reproduces its shape with local deterministic commands:
 - `InputSpec.map`, `map2`, and `sequence` do not memoize computed values.
 - `Builders/Command.fs` materializes each pipeline with `Read` before running it.
 - `--explain` materializes pipelines too; existing condition evaluation can itself perform effects.
-- `src/Partas.Build.Cmd/Program.fs` owns `Cmd`, argument construction, start-info construction, and a minimal capturing runner.
-- `src/Partas.Build/Process.fs` owns a separate stage-aware process runner.
-- Existing process capture is line-oriented, drops empty lines, and can include stage prefixes.
+- `src/Partas.Build.Cmd/Program.fs` owns `Cmd`, argument construction, and start-info construction. Process
+  mechanics moved to `Execution.fs` in T2; `Cmd.run` and `Process.fs` are adapters over it.
+- `src/Partas.Build/Process.fs` owns the stage adapter: prefixes, routing, exit-code policy and stage diagnostics.
+- Stage output capture is line-oriented, drops empty lines, and can include stage prefixes. Raw capture arrived
+  in T2 as a separate surface and keeps both.
 - `OutputCapture.Errors` identifies stderr lines, not execution failures.
 - `runAfterEachStage` receives a context without the completed outcome; timing is recorded after that hook.
 - `post` is not guaranteed cleanup: cancellation and escaping exceptions can bypass it.
@@ -59,9 +61,11 @@ reproduces its shape with local deterministic commands:
 Recorded here so T0 can separate them from implementation failures. Each is fixed by the task named.
 
 - `netstandard2.0` argument transport is broken, not limited: `Cmd.toStartInfo` joins arguments with spaces and no
-  quoting, so an argument containing whitespace is re-split by the child. Fixed in T2.
+  quoting, so an argument containing whitespace is re-split by the child. **Fixed in T2** by
+  `ProcessExecutor.Arguments.quote`.
 - A command cancelled through the caller-supplied token returns `Ok()` from `CmdRunner.run` ("a cancelled command
-  succeeds"). The new operations must not inherit this. Decided in C02; legacy `run` keeps its behaviour.
+  succeeds"). The new operations must not inherit this. Decided in C02; legacy `run` keeps its behaviour, pinned
+  by `CmdTests` "legacy run reports success when the caller's own token cancels the process".
 - `PipelineContext.runStagesWithFailFast` discards the exception list `StageContext.run` returns and always yields
   an empty `stageExns`, so `PipelineFailedException` never carries a cause. Fixed in T6.
 - A stage timeout is reported as a cancellation on the stage's own token and as a failure to its parent. F02
@@ -512,6 +516,71 @@ is not compatible with type
 - `RuntimeContext` carries the executing stage and the step index; cancellation reaches an operation as the
   ambient token. T3 settles it alongside `Step.Operation`.
 
+## Implemented surface (T2)
+
+### The shared executor
+
+`src/Partas.Build.Cmd/Execution.fs`, namespace `Partas.Build`:
+
+```fsharp
+type CommandResult = { ExitCode: int; Stdout: string; Stderr: string }
+
+[<RequireQualifiedAccess>]
+type OutputPolicy =
+    | Inherit
+    | Lines of onStdout: (string -> unit) * onStderr: (string -> unit)
+
+module ProcessExecutor =
+    module Arguments =
+        val quote: value: string -> string
+        val transport: startInfo: ProcessStartInfo -> arguments: string seq -> unit
+
+    val streamToExit: ProcessStartInfo -> OutputPolicy -> CancellationToken -> (unit -> unit) -> Task<int>
+    val captureToExit: ProcessStartInfo -> CancellationToken -> (unit -> unit) -> Task<CommandResult>
+    val stream: ProcessStartInfo -> OutputPolicy -> CancellationToken -> (unit -> unit) -> Task<int>
+    val capture: ProcessStartInfo -> CancellationToken -> (unit -> unit) -> Task<CommandResult>
+```
+
+- The executor takes a `ProcessStartInfo` and nothing else: working directory, environment, exit-code policy,
+  labels and routing stay with the caller. It modifies the start info only to add the redirection its policy
+  requires.
+- `stream`/`capture` raise `OperationCanceledException` when the supplied token cancelled the process, which is
+  the C02 behaviour T3's operations need. `streamToExit`/`captureToExit` report the killed process's exit code
+  instead, which is what the legacy stage adapter maps through `acceptExitCodes`.
+- The final parameter runs once, before the kill, for a caller with something to report; `ignore` for one with
+  nothing. The kill is issued from the token registration, never from a continuation, and kills the tree.
+- `OutputPolicy.Lines` hands over every line including empty ones and retains none of them: streaming returns
+  `Task<int>`, so there is nowhere for a hidden full-output buffer to live. Dropping an empty line is the
+  caller's policy, and `CmdRunner` keeps dropping it.
+- `Arguments.transport` uses `ArgumentList` on `net8.0`/`net10.0` and a `quote`d `Arguments` string on
+  `netstandard2.0`. `quote` applies the MSVCRT rules: a value free of whitespace and quotes passes through, an
+  empty value becomes `""`, and a backslash run is doubled only where a quote follows it.
+- Target-specific and documented at the call site: `WaitForExitAsync` (a `Task.Run` over `WaitForExit` on
+  `netstandard2.0`) and tree kill. The `netstandard2.0` build reaches `Process.Kill(bool)` by reflection, so it
+  kills the tree on any host of .NET Core 3.0 or later and the child alone on an older one.
+
+### Compile order
+
+`Execution.fs` → `Program.fs` in `Partas.Build.Cmd`. `Execution.fs` depends on `ProcessStartInfo` rather than on
+`Cmd`, which is what lets `Cmd.toStartInfo` and `Cmd.run` both call it without a file-order cycle.
+
+### Adapters
+
+- `Cmd.run` keeps its `struct {| exitCode; output; error |}` shape, splitting `ProcessExecutor.capture`'s raw text
+  on newlines and dropping empty lines.
+- `CmdRunner.run` keeps returning `Ok()` for a caller-token cancellation and `Error` for an unacceptable exit
+  code, lifting a capture's failure text as before. It links the ambient token and the caller's into one for the
+  executor and tells them apart afterwards, as it did with two registrations.
+
+### The process fixture
+
+`tests/Fixtures/ProcessFixture` is a C# console child taking its behaviour from its arguments: `text <exit>`
+(blank lines on both streams, no trailing newline on stderr), `args <value>...` (one `<length>:<value>` line per
+argument), `env <name>`, `flood <lines>` (that many lines on each stream, alternating, each flushed), and
+`sleep <ms>`. Every byte goes through a UTF-8 writer with the newlines spelled out, so the expected text is the
+same on every platform. It is referenced with `ReferenceOutputAssembly="false"` and run as
+`dotnet <path-to-dll>`; the tests find it by walking up to `Partas.Build.slnx` and into the fixture's own `bin`.
+
 ## Evidence and limits
 
 - Verified against the real library by T1, and reproducible from the repository:
@@ -525,10 +594,24 @@ is not compatible with type
     library's own suite, including the zero-read assertions and the single-`retry` reflection check.
   - Interaction with the complete overload set: `retry` is the only setting moved so far, and the `Build` CLI,
     which is written against the library, compiles unchanged.
+- Verified against the real library by T2, and reproducible from the repository:
+  - `tests/Partas.Build.Tests/ExecutionTests.fs`: raw capture of blank lines and a newline-free tail, 5000
+    simultaneous lines on each stream draining completely, awkward arguments delivered intact, `quote` against
+    the MSVCRT rules, explicit working directory and environment, a start failure raising `Win32Exception`,
+    cancellation raising from both `capture` and `stream`, `captureToExit` reporting a killed process's exit
+    code, and `stream`'s `Task<int>` return type.
+  - `tests/Partas.Build.Tests/OutputTests.fs`: a routed line carries the step prefix and a routed blank line is
+    dropped, where the same command captured raw keeps both.
+  - `tests/Partas.Build.Cmd.NetStandard.Tests`: the `Arguments` string quotes each argument, and a real child
+    reads back what went in.
+  - `tests/Partas.Build.Tests/CmdTests.fs`: the pre-existing tree kill on stage timeout and on caller-token
+    cancellation, and `Ok()` for the latter, all unchanged through the shared executor.
 - Not yet verified:
   - XML documentation rendering and IntelliSense presentation of the inherited operation.
   - Producer registration, ownership, retry reset, publication, or dependency validation diagnostics.
   - `Operation` sequencing, command adapters, and `Step.Operation`.
+  - Process behaviour on Linux: every T2 run was on Windows. The tree kill on `netstandard2.0` is unexercised on
+    every platform, since only the `net10.0` build runs the process tests.
 
 ## Deferred work
 

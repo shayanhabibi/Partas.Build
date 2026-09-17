@@ -107,15 +107,15 @@
   - `CommandResult = { ExitCode: int; Stdout: string; Stderr: string }` for explicitly captured completion.
   - One shared executor with stage-independent configuration and explicit capture/stream behavior.
   - Compatibility paths for existing `Cmd.run` and stage `run`.
-- [ ] Build a deterministic process fixture with independent stdout/stderr text, chosen exit code, and delayed-exit modes.
-- [ ] Add a failing test: stdout containing blank lines/newlines is returned exactly and contains no stage prefix.
-- [ ] Add a failing test: simultaneous large stdout/stderr both drain completely before completion.
-- [ ] Add start-failure and cancellation tests; retain existing process-tree regression coverage.
-- [ ] Add a failing test: an argument containing whitespace and quotes reaches the child intact on every target, including `netstandard2.0`, where the executor quotes into `ProcessStartInfo.Arguments` with the MSVCRT rules.
-- [ ] Add a pinning test: legacy `run` still returns `Ok()` when the caller-supplied token cancels the command.
-- [ ] Implement the shared executor; preserve argument transport, target-specific APIs, and command-log masking.
-- [ ] Adapt legacy entry points without changing their documented return shapes or ordinary output routing.
-- [ ] Verify an uncaptured command does not allocate/store a hidden full-output result.
+- [x] Build a deterministic process fixture with independent stdout/stderr text, chosen exit code, and delayed-exit modes.
+- [x] Add a failing test: stdout containing blank lines/newlines is returned exactly and contains no stage prefix.
+- [x] Add a failing test: simultaneous large stdout/stderr both drain completely before completion.
+- [x] Add start-failure and cancellation tests; retain existing process-tree regression coverage.
+- [x] Add a failing test: an argument containing whitespace and quotes reaches the child intact on every target, including `netstandard2.0`, where the executor quotes into `ProcessStartInfo.Arguments` with the MSVCRT rules.
+- [x] Add a pinning test: legacy `run` still returns `Ok()` when the caller-supplied token cancels the command.
+- [x] Implement the shared executor; preserve argument transport, target-specific APIs, and command-log masking.
+- [x] Adapt legacy entry points without changing their documented return shapes or ordinary output routing.
+- [x] Verify an uncaptured command does not allocate/store a hidden full-output result.
 - Completion: both existing execution paths use the same process mechanics; capture is raw and command-local; legacy regressions pass.
 
 ## T3 — Add deferred runtime operations and explicit command failure policy
@@ -293,3 +293,21 @@ rtk dotnet run --project Build.fsproj -- test --configuration Release
     exception is no longer read as a missing prerequisite; `Stage.consuming` rejects prerequisites declaring CLI
     inputs, naming `consumingWith`; `--explain` over consumer stages is pinned; the two recorded diagnostics are
     now verbatim.
+- T2 (2026-09-17, worktree `Partas.Build-execution-commands`, branch `execution/commands`):
+  - Shared executor: `src/Partas.Build.Cmd/Execution.fs`, compiled before `Program.fs`, holds `CommandResult`,
+    `OutputPolicy` and `ProcessExecutor` (`Arguments.quote`/`Arguments.transport`, `stream`/`capture` raising on
+    cancellation, `streamToExit`/`captureToExit` reporting a killed process's exit code). Signatures are in the
+    spec's *Implemented surface (T2)*.
+  - Adapters: `Cmd.run` captures and splits, keeping its `struct {| exitCode; output; error |}`; `CmdRunner.run`
+    links the ambient and caller tokens into one and keeps `Ok()` for a caller-token cancellation. Neither
+    routing nor masking moved.
+  - Fixture: `tests/Fixtures/ProcessFixture` (C#, `net10.0`, in `Partas.Build.slnx` under `/tests/fixtures/`),
+    referenced with `ReferenceOutputAssembly="false"` by `tests/Partas.Build.Tests` and
+    `tests/Partas.Build.Cmd.NetStandard.Tests`, and registered with no `Build/` CLI command.
+  - RED observed before implementing: raw stdout through the old line-oriented capture returned `alphabeta` for
+    `alpha\n\nbeta\n`; the un-pended `netstandard2.0` quoting test returned `a b plain say "hi"` where
+    `"a b" plain "say \"hi\""` was expected. Both green afterwards.
+  - Suites: `tests/Partas.Build.Tests` 186 passed, 1 ignored (the T0 pending pipeline test), 0 failed;
+    `tests/Partas.Build.Cmd.NetStandard.Tests` 3 passed; the two external-annotation suites unchanged at 65 and
+    74 passed. Library Debug and Release, `Partas.Build.Cmd` Release and `Build.fsproj` all build with 0 errors.
+  - Not run: anything on Linux, and the `netstandard2.0` tree kill on any platform.

@@ -35,5 +35,6 @@
   <Folder Name="/tests/fixtures/">
     <Project Path="tests/Fixtures/AnnotationsFixture.Cs/AnnotationsFixture.Cs.csproj" />
     <Project Path="tests/Fixtures/AnnotationsFixture.Fs/AnnotationsFixture.Fs.fsproj" />
+    <Project Path="tests/Fixtures/ProcessFixture/ProcessFixture.csproj" />
   </Folder>
 </Solution>

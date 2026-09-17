@@ -14,6 +14,7 @@ open Spectre.Console
 open Expecto
 open Partas.Build
 open Partas.Build.Internal
+open Partas.Build.Tests.Helpers
 
 /// Writes a line to stdout and exits zero, wherever the tests can run at all.
 let private quiet = Cmd.ofString "dotnet --version"
@@ -73,6 +74,25 @@ let tests =
 
             Expect.equal result (Ok()) "the command exits zero"
             Expect.isNonEmpty capture.Lines "the version it printed is still captured"
+        }
+
+        // The two capture surfaces exist for different readers. A stage's capture is a log: its lines carry the
+        // step prefix and a blank one says nothing worth keeping. `ProcessExecutor.capture` is data.
+        test "a routed line is prefixed and a routed blank line is dropped, where raw capture keeps both" {
+            let capture = OutputCapture()
+            let command = ProcessFixture.command [ "text"; "0" ]
+            let stage = { stageWith (StageOutput.Captured capture) with NoPrefixForStep = false }
+
+            Expect.equal (runStep stage command) (Ok()) "the child exits zero"
+            Expect.equal capture.Lines.Length 4 "the two blank lines the child wrote should not be routed"
+            Expect.all capture.Lines (fun line -> line.Contains "/step-0 ") "every routed line should carry the step prefix"
+            Expect.equal (capture.Errors |> List.map (fun line -> line.Substring (line.IndexOf "/step-0 " + 8))) [ "err-one"; "err-two" ] "stderr should still be tagged as such"
+
+            let raw =
+                ProcessExecutor.capture (CmdRunner.toStartInfo stage command) CancellationToken.None ignore
+                |> fun capturing -> capturing.GetAwaiter().GetResult()
+
+            Expect.equal raw.Stdout "alpha\n\nbeta\n" "the same command captured raw keeps the blank line and carries no prefix"
         }
 
         test "silent output is dropped, and a failure says only that it failed" {

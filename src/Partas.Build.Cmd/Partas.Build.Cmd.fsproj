@@ -13,6 +13,9 @@
     <Version>0.2.1</Version><AssemblyVersion>0.0.0.0</AssemblyVersion></PropertyGroup>
 
     <ItemGroup>
+        <!-- `Execution.fs` knows nothing of `Cmd`; it takes a `ProcessStartInfo`, which is what lets the command
+             module build one through it and run through it without a file-order cycle. -->
+        <Compile Include="Execution.fs" />
         <Compile Include="Program.fs" />
         <None Include="../../README.md" Pack="true" PackagePath="\" />
     </ItemGroup>

@@ -23,6 +23,8 @@
          use `ArgumentList` and never see it. -->
     <ItemGroup>
         <ProjectReference Include="..\..\src\Partas.Build.Cmd\Partas.Build.Cmd.fsproj" SetTargetFramework="TargetFramework=netstandard2.0"/>
+        <!-- Built, never referenced: the tests run it as a child process from its own output directory. -->
+        <ProjectReference Include="..\Fixtures\ProcessFixture\ProcessFixture.csproj" ReferenceOutputAssembly="false"/>
     </ItemGroup>
 
 </Project>

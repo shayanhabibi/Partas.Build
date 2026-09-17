@@ -122,10 +122,16 @@ let private tests = testList "compiler probe" [
 
         let both: DependencySpec<string * int> = DependencySpec.zip resolve generate
 
-        let publish: StageContext =
-            Stage.consuming "publish" both (fun (resolved, generated) ->
+        // A plain stage registers no option, so `consuming` takes prerequisites that read no command line.
+        let count =
+            Producer.define "count" (InputSpec.ret ()) DependencySpec.empty (fun () () ->
                 calls.Value <- calls.Value + 1
-                Operation.ret (printfn "%s %d" resolved generated))
+                Operation.ret 1)
+
+        let publish: StageContext =
+            Stage.consuming "publish" (DependencySpec.require count) (fun counted ->
+                calls.Value <- calls.Value + 1
+                Operation.ret (printfn "%d" counted))
 
         let publishTo: InputSpec<StageContext> =
             Stage.consumingWith "publishTo" (InputSpec.ofInput target) (DependencySpec.require resolve) (fun destination resolved ->
@@ -140,8 +146,8 @@ let private tests = testList "compiler probe" [
 
         let published = ProducerValues.Empty.Add(resolve.Id, "v1").Add(generate.Id, 2)
         let reshaped: DependencySpec<string> = both |> DependencySpec.map (fun (resolved, generated) -> $"%s{resolved}+%d{generated}")
-        Expect.equal (both.Read published) ("v1", 2) "the composed specification reads a typed tuple"
-        Expect.equal (reshaped.Read published) "v1+2" "a composed specification reshapes its value applicatively"
+        Expect.equal (both.Read published) (Ok("v1", 2)) "the composed specification reads a typed tuple"
+        Expect.equal (reshaped.Read published) (Ok "v1+2") "a composed specification reshapes its value applicatively"
         Expect.equal calls.Value 0 "reading published values invokes no callback"
     }
 ]

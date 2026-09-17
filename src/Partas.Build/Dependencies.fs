@@ -14,13 +14,13 @@ type RuntimeContext = {
 }
 
 /// <summary>Work deferred until a stage executes it.</summary>
-/// <remarks>Constructing an operation starts nothing: <c>Execute</c> runs when the step it belongs to runs.</remarks>
+/// <remarks><c>Execute</c> runs when the step it belongs to runs.</remarks>
 [<Struct>]
 type Operation<'T> = { Execute: RuntimeContext -> Async<'T> }
 
 /// <summary>The identity of one producer declaration.</summary>
-/// <remarks>Allocated by <c>Producer.define</c> and carried by every copy of the handle, so identity survives the
-/// runner's stage copies. Two declarations are distinct even when their names and arguments match.</remarks>
+/// <remarks>Identity survives the runner's stage copies: every copy of a handle carries the one its declaration
+/// allocated. Two declarations are distinct even when their names and arguments match.</remarks>
 [<Struct>]
 type ProducerId = ProducerId of id: int64
 
@@ -42,7 +42,7 @@ type ProducerRef = {
 /// type agree.</remarks>
 [<Sealed>]
 type ProducerValues private (values: Map<ProducerId, obj>) =
-    /// <summary>A scope in which no producer has published yet.</summary>
+    /// <summary>The state of a scope before its first publication.</summary>
     static member Empty = ProducerValues Map.empty
 
     /// <summary>The same values plus <paramref name="value"/> published under <paramref name="id"/>.</summary>
@@ -67,26 +67,30 @@ type Producer<'T> = {
     Inputs: ActionInput list
     /// <summary>The producers required before this one runs, in declaration order.</summary>
     Requires: ProducerRef list
-    /// <summary>Answers the operation yielding the value. Calling it starts no work.</summary>
-    Prepare: ParseResult -> ProducerValues -> Operation<'T>
+    /// <summary>Answers the operation yielding the value, once every prerequisite has published its own.</summary>
+    /// <remarks>Calling it applies the producer's callback; the operation it answers runs later.</remarks>
+    Prepare: ParseResult -> ProducerValues -> Result<Operation<'T>, string>
 }
 with
     /// <summary>This declaration seen without its result type.</summary>
     member this.Ref: ProducerRef = { Id = this.Id; Name = this.Name; Requires = this.Requires }
 
 /// <summary>The prerequisites of one piece of work, and the typed value their results read as.</summary>
-/// <remarks>Composition is applicative: <c>Read</c> receives the values a scope has published and never schedules
-/// a producer.</remarks>
+/// <remarks>
+/// Composition is applicative: <c>Read</c> receives the values a scope has published.
+/// <para><c>Read</c> answers <c>Error</c> naming the first prerequisite whose published value is unavailable or
+/// of another type. An exception out of <c>Read</c> comes from a function the caller supplied.</para>
+/// </remarks>
 type DependencySpec<'T> = {
     /// <summary>The producers required before the dependent work runs, in declaration order.</summary>
     Requires: ProducerRef list
     /// <summary>The CLI inputs the required producers declare.</summary>
     Inputs: ActionInput list
-    Read: ProducerValues -> 'T
+    Read: ProducerValues -> Result<'T, string>
 }
 
 module Operation =
-    /// <summary>An operation that executes nothing and answers <paramref name="value"/>.</summary>
+    /// <summary>An operation answering <paramref name="value"/> as it stands.</summary>
     let ret (value: 'T) = { Execute = fun _ -> async.Return value }
 
     /// <summary>An operation executing <paramref name="work"/> under the stage's runtime context.</summary>
@@ -102,13 +106,12 @@ module DependencySpec =
                 if kept |> List.exists (fun (other: ProducerRef) -> other.Id = required.Id) then kept else kept @ [ required ])
             []
 
-    let private read (producer: ProducerRef) (values: ProducerValues): 'T =
+    let private read (producer: ProducerRef) (values: ProducerValues): Result<'T, string> =
         match values.TryGet<'T> producer.Id with
-        | ValueSome value -> value
-        | ValueNone -> invalidOp $"The producer '%s{producer.Name}' has published no value of type %s{typeof<'T>.Name}."
+        | ValueSome value -> Ok value
+        | ValueNone -> Error $"The producer '%s{producer.Name}' has published no value of type %s{typeof<'T>.Name}."
 
-    /// <summary>A specification requiring nothing.</summary>
-    let empty: DependencySpec<unit> = { Requires = []; Inputs = []; Read = fun _ -> () }
+    let empty: DependencySpec<unit> = { Requires = []; Inputs = []; Read = fun _ -> Ok () }
 
     /// <summary>A specification requiring <paramref name="producer"/> and reading its result.</summary>
     let require (producer: Producer<'T>): DependencySpec<'T> = {
@@ -121,14 +124,19 @@ module DependencySpec =
     let map (fn: 'T -> 'U) (spec: DependencySpec<'T>): DependencySpec<'U> = {
         Requires = spec.Requires
         Inputs = spec.Inputs
-        Read = spec.Read >> fn
+        Read = spec.Read >> Result.map fn
     }
 
     /// <summary>The prerequisites and inputs of both specifications, read as <paramref name="fn"/> applied to both values.</summary>
+    /// <remarks>The first unavailable prerequisite, in declaration order, is the one reported.</remarks>
     let map2 (fn: 'T -> 'U -> 'V) (first: DependencySpec<'T>) (second: DependencySpec<'U>): DependencySpec<'V> = {
         Requires = union [ first.Requires; second.Requires ]
         Inputs = InputSpec.union [ first.Inputs; second.Inputs ]
-        Read = fun values -> fn (first.Read values) (second.Read values)
+        Read = fun values ->
+            match first.Read values, second.Read values with
+            | Ok left, Ok right -> Ok(fn left right)
+            | Error unavailable, _ -> Error unavailable
+            | _, Error unavailable -> Error unavailable
     }
 
     /// <summary>A specification requiring both producers and reading their results as a pair.</summary>
@@ -150,7 +158,7 @@ module Producer =
         Name = name
         Inputs = InputSpec.union [ inputs.Inputs; dependencies.Inputs ]
         Requires = dependencies.Requires
-        Prepare = fun parseResult values -> execute (inputs.Read parseResult) (dependencies.Read values)
+        Prepare = fun parseResult values -> dependencies.Read values |> Result.map (execute (inputs.Read parseResult))
     }
 
 /// <summary>Stages defined from what they consume.</summary>
@@ -158,21 +166,15 @@ module Stage =
     /// <summary>The label <c>--explain</c> renders for a consumer's step.</summary>
     let private label (requires': ProducerRef list) =
         match requires' with
-        | [] -> "needs nothing"
+        | [] -> "operation"
         | required -> required |> List.map _.Name |> String.concat ", " |> sprintf "needs %s"
 
     /// <summary>The step running a consumer's operation over the values its scope has published.</summary>
-    /// <remarks>
-    /// Producer scheduling publishes nothing yet, so a consumer declaring prerequisites fails when it runs,
-    /// naming the producer whose result is unavailable. A consumer declaring none executes its operation.
-    /// </remarks>
+    /// <remarks>The step runs the operation over the published values, or fails naming the first unavailable
+    /// prerequisite.</remarks>
     let private consumer (name: string) (dependencies: DependencySpec<'D>) (execute: 'D -> Operation<unit>): StageContext =
-        let resolve () =
-            try Ok(dependencies.Read ProducerValues.Empty)
-            with :? System.InvalidOperationException as unavailable -> Error unavailable.Message
-
         let step: BuildStep = fun stage index -> async {
-            match resolve () with
+            match dependencies.Read ProducerValues.Empty with
             | Error unavailable -> return Error unavailable
             | Ok values ->
                 do! (execute values).Execute { Stage = stage; StepIndex = index }
@@ -181,8 +183,20 @@ module Stage =
 
         StageContext.create name |> StageContext.addLabelledStepFn (label dependencies.Requires) step
 
-    /// <summary>A stage that consumes producer results and produces none of its own.</summary>
+    /// <summary>A stage whose work consumes producer results and returns unit.</summary>
+    /// <remarks>
+    /// Accepts prerequisites with an empty input set: a <c>StageContext</c> carries a stage's own inputs alone.
+    /// Use <c>consumingWith</c> for a consumer whose producers read the command line; it declares their inputs
+    /// alongside its own.
+    /// </remarks>
+    /// <exception cref="T:System.ArgumentException">A prerequisite declares a CLI input.</exception>
     let consuming (name: string) (dependencies: DependencySpec<'D>) (execute: 'D -> Operation<unit>): StageContext =
+        if not dependencies.Inputs.IsEmpty then
+            invalidArg
+                "dependencies"
+                $"The stage '%s{name}' consumes producers declaring CLI inputs, which a plain stage cannot register. \
+                  Declare it with Stage.consumingWith, which carries its prerequisites' inputs to the command."
+
         consumer name dependencies execute
 
     /// <summary>A stage that consumes CLI inputs of its own alongside producer results.</summary>

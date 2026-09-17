@@ -386,10 +386,14 @@ type Producer<'T> = {
     Name: string
     Inputs: ActionInput list
     Requires: ProducerRef list
-    Prepare: ParseResult -> ProducerValues -> Operation<'T>
+    Prepare: ParseResult -> ProducerValues -> Result<Operation<'T>, string>
 }
 
-type DependencySpec<'T> = { Requires: ProducerRef list; Inputs: ActionInput list; Read: ProducerValues -> 'T }
+type DependencySpec<'T> = {
+    Requires: ProducerRef list
+    Inputs: ActionInput list
+    Read: ProducerValues -> Result<'T, string>
+}
 
 module Operation =
     val ret: value: 'T -> Operation<'T>
@@ -426,12 +430,16 @@ let generate =
 
 let both: DependencySpec<string * int> = DependencySpec.zip resolve generate
 
-let publish: StageContext =
-    Stage.consuming "publish" both (fun (resolved, generated) -> Operation.ret (printfn "%s %d" resolved generated))
+// `resolve` reads `--release`, so a consumer of it declares its inputs. A plain stage registers none, and
+// `Stage.consuming` rejects prerequisites that read the command line.
+let publish: InputSpec<StageContext> =
+    Stage.consumingWith "publish" (InputSpec.ofInput target) both (fun destination (resolved, generated) ->
+        Operation.ret (printfn "%s %s %d" destination resolved generated))
 
-let publishTo: InputSpec<StageContext> =
-    Stage.consumingWith "publishTo" (InputSpec.ofInput target) (DependencySpec.require resolve) (fun destination resolved ->
-        Operation.ret (printfn "%s %s" destination resolved))
+let count = Producer.define "count" (InputSpec.ret ()) DependencySpec.empty (fun () () -> Operation.ret 1)
+
+let report: StageContext =
+    Stage.consuming "report" (DependencySpec.require count) (fun counted -> Operation.ret (printfn "%d" counted))
 ```
 
 - `Producer.define` allocates a `ProducerId` from an interlocked counter and harvests its own inputs together
@@ -442,15 +450,22 @@ let publishTo: InputSpec<StageContext> =
   a producer required twice is listed once.
 - `ProducerValues` stores results as `obj` behind `TryGet`, which answers a value only when the identity and the
   result type agree.
+- `DependencySpec.Read` and `Producer.Prepare` answer `Result<_, string>`: an unreadable prerequisite is an
+  `Error` naming that producer, and an exception out of either comes from a function the caller supplied — a
+  throwing `DependencySpec.map` reaches the caller rather than being reported as a missing prerequisite.
+- `Stage.consuming` rejects prerequisites declaring CLI inputs with an `ArgumentException` naming
+  `Stage.consumingWith`, since a plain `StageContext` registers a stage's own inputs alone.
+- `retry` is the only setting accepting an `InputSpec<StageContext>` state until T8 moves the others: `retry`
+  followed by `timeout` against the same value compiles the first and fails the second with `FS0001`.
 
 ### Diagnostics for T9's docs
 
-An unsupported state does not report a bare constraint failure: the compiler lists the supported states. Both
-paths — the helper and the custom operation — produce the same list, with `FS0001` for `StageMap.mapStage` and
-`FS0193` for `StageBuilder.retry`. Pinned by the `UnsupportedSettingState` fixture:
+An unsupported state makes the compiler list the supported ones. Both paths — the helper and the custom
+operation — produce the same list, with `FS0001` for `StageMap.mapStage` and `FS0193` for `StageBuilder.retry`.
+Verbatim from the `UnsupportedSettingState` fixture's build output:
 
 ```
-error FS0001: No overloads match method 'Map'.
+UnsupportedSettingState.fs(9,5): error FS0001: No overloads match for method 'Map'.
 
 Known return type: InputSpec<int>
 
@@ -462,9 +477,15 @@ Available overloads:
  - static member StageMap.Map: spec: InputSpec<StageContext> * update: (StageContext -> StageContext) -> InputSpec<StageContext> // Argument 'spec' doesn't match
 ```
 
-`InputSpec<InputSpec<_>>` stays unflattened: yielding an input-aware value inside a returned stage is
-`FS0193: Type mismatch. The type 'InputSpec<StageContext>' is not compatible with the type 'StageContext'`.
-Pinned by the `NestedInputSpec` fixture.
+`InputSpec<InputSpec<_>>` stays unflattened: yielding an input-aware value inside a returned stage is, verbatim
+from the `NestedInputSpec` fixture's build output,
+
+```
+NestedInputSpec.fs(10,16): error FS0193: Type constraint mismatch. The type
+    'InputSpec<StageContext>'
+is not compatible with type
+    'StageContext'
+```
 
 ### Rejected syntax
 
@@ -479,9 +500,12 @@ Pinned by the `NestedInputSpec` fixture.
 ### Limits of this surface
 
 - `Stage.consumingWith` declares its own inputs together with its prerequisites', so a command registers both.
-  `Stage.consuming` answers a plain `StageContext`, which has nowhere to record the producers it requires, so its
-  prerequisites' inputs reach no command. The step's `--explain` label names them; the model field that makes
-  them harvestable is T4's, and until then a consumer whose producers declare CLI inputs uses `consumingWith`.
+  `Stage.consuming` answers a plain `StageContext`, which has nowhere to record the producers it requires, so it
+  rejects prerequisites declaring CLI inputs rather than dropping them. The step's `--explain` label names the
+  producers either way; the model field that makes their inputs harvestable from a plain stage is T4's, and the
+  rejection lifts once it exists.
+- `Producer.Prepare` compiles but no caller invokes it: scheduling is T5's. The producer execution shape is
+  therefore type-checked and unexercised.
 - Nothing publishes producer values yet. A consumer declaring prerequisites therefore fails when it runs, naming
   the producer whose result is unavailable; a consumer declaring none executes its operation. T5 replaces the
   `ProducerValues.Empty` the consumer step reads with the owning scope's published values.

@@ -6,8 +6,8 @@ open Partas.Build
 /// <summary>Applies a state-preserving update to whichever representation a stage builder state currently holds.</summary>
 /// <remarks>
 /// The supported states are <c>BuildStage</c>, <c>InputSpec&lt;BuildStage></c> and <c>InputSpec&lt;StageContext></c>.
-/// Any other state is a constraint failure at the call site.
-/// <para>Public because the inline members dispatching through it resolve in consuming assemblies.</para>
+/// Any other state fails to resolve, and the compiler lists the three supported ones.
+/// <para>Public: the inline members dispatching through it resolve in consuming assemblies.</para>
 /// </remarks>
 [<EditorBrowsable(EditorBrowsableState.Never)>]
 type StageMap =
@@ -15,11 +15,11 @@ type StageMap =
     static member Map(build: BuildStage, update: StageContext -> StageContext): BuildStage =
         build >> update
 
-    /// <summary>Composes the update after the build function the specification yields, reading nothing.</summary>
+    /// <summary>Composes the update after the build function the specification yields, deferring the read.</summary>
     static member Map(spec: InputSpec<BuildStage>, update: StageContext -> StageContext): InputSpec<BuildStage> =
         InputSpec.map (fun (build: BuildStage) -> build >> update) spec
 
-    /// <summary>Applies the update to the stage the specification yields, reading nothing.</summary>
+    /// <summary>Applies the update to the stage the specification yields, deferring the read.</summary>
     static member Map(spec: InputSpec<StageContext>, update: StageContext -> StageContext): InputSpec<StageContext> =
         InputSpec.map update spec
 

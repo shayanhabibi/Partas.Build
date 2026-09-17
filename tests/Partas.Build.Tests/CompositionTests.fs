@@ -273,7 +273,25 @@ let tests =
                     .Add(resolve.Id, "v1")
                     .Add(generate.Id, 7)
 
-            Expect.equal (both.Read published) ("v1", 7) "the composed specification should read a typed tuple"
+            Expect.equal (both.Read published) (Ok("v1", 7)) "the composed specification should read a typed tuple"
+        }
+
+        test "a dependency read reports an unavailable prerequisite and lets its own failures through" {
+            let resolve = Producer.define "resolve" (InputSpec.ret ()) DependencySpec.empty (fun () () -> Operation.ret "v1")
+            let required = DependencySpec.require resolve
+            let reshaped = required |> DependencySpec.map (fun _ -> failwith "the caller's own function")
+
+            match required.Read ProducerValues.Empty with
+            | Ok value -> failtestf "an unpublished prerequisite should not read as %s" value
+            | Error unavailable -> Expect.stringContains unavailable "resolve" "the report should name the producer"
+
+            Expect.equal (required.Read (ProducerValues.Empty.Add(resolve.Id, "v1"))) (Ok "v1") "a published value should read back"
+
+            Expect.throwsC
+                (fun () -> reshaped.Read (ProducerValues.Empty.Add(resolve.Id, "v1")) |> ignore)
+                (fun raised ->
+                    Expect.stringContains raised.Message "the caller's own function"
+                        "a function the caller supplied should raise rather than read as a missing prerequisite")
         }
 
         test "a consuming stage keeps the representation its declarations imply" {
@@ -286,8 +304,13 @@ let tests =
                     calls.Value <- calls.Value + 1
                     Operation.ret "v1")
 
+            let count =
+                Producer.define "count" (InputSpec.ret ()) DependencySpec.empty (fun () () ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret 1)
+
             let publish: StageContext =
-                Stage.consuming "publish" (DependencySpec.require resolve) (fun _ ->
+                Stage.consuming "publish" (DependencySpec.require count) (fun _ ->
                     calls.Value <- calls.Value + 1
                     Operation.ret ())
 
@@ -322,10 +345,52 @@ let tests =
             Expect.equal ran.Value 1 "the operation should run exactly once"
             Expect.equal (runStage dependent) (Error []) "a consumer should fail while its prerequisite has published nothing"
             Expect.equal ran.Value 1 "the blocked consumer's operation should not have run"
+        }
+
+        test "a consumer of producers that read the command line must declare its inputs" {
+            let release = Input.option<string> "--release" |> Input.def "latest"
+            let resolve = Producer.define "resolve" (InputSpec.ofInput release) DependencySpec.empty (fun _ () -> Operation.ret "v1")
 
             Expect.throwsC
-                (fun () -> (DependencySpec.require resolve).Read ProducerValues.Empty |> ignore)
-                (fun unavailable ->
-                    Expect.stringContains unavailable.Message "resolve" "an unpublished prerequisite should name its producer")
+                (fun () -> Stage.consuming "publish" (DependencySpec.require resolve) (fun _ -> Operation.ret ()) |> ignore)
+                (fun rejected ->
+                    Expect.stringContains rejected.Message "consumingWith"
+                        "the rejection should name the form that carries a prerequisite's inputs to the command")
+
+            let declared = Stage.consumingWith "publish" (InputSpec.ret ()) (DependencySpec.require resolve) (fun () _ -> Operation.ret ())
+            Expect.equal (inputNames declared.Inputs) [ "--release" ] "the input-aware form should register the prerequisite's input"
+        }
+
+        test "explain describes a consumer's dependencies without running a producer" {
+            let calls = ref 0
+            let target = Input.option<string> "--target" |> Input.def "local"
+
+            let resolve =
+                Producer.define "resolve" (InputSpec.ret ()) DependencySpec.empty (fun () () ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret "v1")
+
+            let generate =
+                Producer.define "generate" (InputSpec.ret ()) DependencySpec.empty (fun () () ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret 7)
+
+            let publishTo =
+                Stage.consumingWith "publishTo" (InputSpec.ofInput target) (DependencySpec.require generate) (fun _ _ ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret ())
+
+            let built = pipeline "release" {
+                Stage.consuming "publish" (DependencySpec.zip resolve generate) (fun _ ->
+                    calls.Value <- calls.Value + 1
+                    Operation.ret ())
+                publishTo
+            }
+
+            let text = Explain.render [ built.Read (parse built.Inputs "") ]
+
+            Expect.stringContains text "needs resolve, generate" "a consumer's step should name what it requires"
+            Expect.stringContains text "needs generate" "an input-aware consumer should name its prerequisite too"
+            Expect.equal calls.Value 0 "rendering the tree should invoke no producer callback"
         }
     ]

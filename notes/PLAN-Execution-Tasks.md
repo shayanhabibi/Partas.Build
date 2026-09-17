@@ -288,4 +288,8 @@ rtk dotnet run --project Build.fsproj -- test --configuration Release
     respectively; the three builds take about 5s together.
   - CE sugar over two producers is rejected: the threaded state is `(unit * 'A) * 'B`, so a flat tuple pattern is
     `FS0001`. Recorded in the spec under *Rejected syntax*.
-  - Suite after T1: 171 passed, 1 ignored (the T0 pending pipeline test), 0 failed.
+  - Suite after T1: 175 passed, 1 ignored (the T0 pending pipeline test), 0 failed.
+  - Review fix round 1: `DependencySpec.Read` and `Producer.Prepare` answer `Result<_, string>` so a caller's own
+    exception is no longer read as a missing prerequisite; `Stage.consuming` rejects prerequisites declaring CLI
+    inputs, naming `consumingWith`; `--explain` over consumer stages is pinned; the two recorded diagnostics are
+    now verbatim.

@@ -10,6 +10,8 @@
     <File Path=".config/dotnet-tools.json" />
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
+    <File Path=".mcp.json" />
+    <File Path="CLAUDE.md" />
     <File Path="Directory.Build.props" />
     <File Path="Directory.Build.targets" />
   </Folder>

@@ -569,6 +569,18 @@ and [<EB(advanced)>]
         = build >> fun ctx -> {
             ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, ((^T or SRTPStageBuilderRunner):(static member unifyResult: ^T -> StepFnSignature) step)) ]
         }
+    /// <summary>Adds a step running deferred work.</summary>
+    /// <remarks>
+    /// The operation runs under the stage's working directory, environment, acceptable exit codes and output
+    /// routing, and reports a structured failure the runner renders at the print site.
+    /// <c>label</c> is what <c>--explain</c> shows for the step; without one it shows the step's index.
+    /// </remarks>
+    [<CustomOperation>] member _.
+        runOperation
+        (build: BuildStage, operation: Operation<unit>, ?label: string): BuildStage
+        = build >> fun ctx ->
+        { ctx with Steps = ctx.Steps @ [ Step.Operation(ValueOption.ofOption label, Operation.toStepOutcome operation) ] }
+
     /// <summary>Adds a step that polls an HTTP endpoint for health.</summary>
     /// <remarks>The step repeatedly polls the given URL until it succeeds or the stage is cancelled. Useful for waiting for services to become available.</remarks>
     [<CustomOperation>] member _.
@@ -1001,5 +1013,12 @@ and [<EB(advanced)>]
         echo
         (spec: InputSpec<BuildStage>, msg: string): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.echo(build, msg)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("runOperation")>] member inline this.
+        runOperation
+        (spec: InputSpec<BuildStage>, operation: Operation<unit>, ?label: string): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.runOperation(build, operation, ?label = label)) spec
 
 let inline stage name = StageBuilder(name)

@@ -1,4 +1,4 @@
-﻿module Partas.Build.Tests.CompositionTests
+module Partas.Build.Tests.CompositionTests
 
 open System.CommandLine
 open Expecto
@@ -14,6 +14,7 @@ let private stepNames (ctx: StageContext) = [
         match step with
         | Step.StepOfStage nested -> nested.Name
         | Step.StepFn _ -> "fn"
+        | Step.Operation _ -> "operation"
 ]
 
 let private stageNames (ctx: PipelineContext) = [ for stage in ctx.Stages -> stage.Name ]

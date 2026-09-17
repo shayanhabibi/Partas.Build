@@ -4,20 +4,6 @@ open System.CommandLine
 open System.Threading
 open Partas.Build.Internal
 
-/// <summary>What an operation can read about the stage executing it.</summary>
-/// <remarks>The cancellation token is the ambient one of the running step, reachable through
-/// <c>Async.CancellationToken</c>.</remarks>
-[<Struct>]
-type RuntimeContext = {
-    Stage: StageContext
-    StepIndex: StepIndex
-}
-
-/// <summary>Work deferred until a stage executes it.</summary>
-/// <remarks><c>Execute</c> runs when the step it belongs to runs.</remarks>
-[<Struct>]
-type Operation<'T> = { Execute: RuntimeContext -> Async<'T> }
-
 /// <summary>The identity of one producer declaration.</summary>
 /// <remarks>Identity survives the runner's stage copies: every copy of a handle carries the one its declaration
 /// allocated. Two declarations are distinct even when their names and arguments match.</remarks>
@@ -88,13 +74,6 @@ type DependencySpec<'T> = {
     Inputs: ActionInput list
     Read: ProducerValues -> Result<'T, string>
 }
-
-module Operation =
-    /// <summary>An operation answering <paramref name="value"/> as it stands.</summary>
-    let ret (value: 'T) = { Execute = fun _ -> async.Return value }
-
-    /// <summary>An operation executing <paramref name="work"/> under the stage's runtime context.</summary>
-    let ofAsync (work: Async<'T>) = { Execute = fun _ -> work }
 
 module DependencySpec =
     /// Concatenates prerequisite lists, keeping the first occurrence of each identity.
@@ -173,15 +152,13 @@ module Stage =
     /// <remarks>The step runs the operation over the published values, or fails naming the first unavailable
     /// prerequisite.</remarks>
     let private consumer (name: string) (dependencies: DependencySpec<'D>) (execute: 'D -> Operation<unit>): StageContext =
-        let step: BuildStep = fun stage index -> async {
+        let step (context: RuntimeContext) = async {
             match dependencies.Read ProducerValues.Empty with
-            | Error unavailable -> return Error unavailable
-            | Ok values ->
-                do! (execute values).Execute { Stage = stage; StepIndex = index }
-                return Ok ()
+            | Error unavailable -> return StepOutcome.Failed (FailureCause.Reported unavailable)
+            | Ok values -> return! Operation.toStepOutcome (execute values) context
         }
 
-        StageContext.create name |> StageContext.addLabelledStepFn (label dependencies.Requires) step
+        StageContext.create name |> StageContext.addOperation (ValueSome(label dependencies.Requires)) step
 
     /// <summary>A stage whose work consumes producer results and returns unit.</summary>
     /// <remarks>

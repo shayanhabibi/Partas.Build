@@ -16,6 +16,7 @@ let private stageNames (ctx: StageContext) = [
         match step with
         | Step.StepOfStage nested -> "stage:" + nested.Name
         | Step.StepFn _ -> "fn"
+        | Step.Operation _ -> "operation"
 ]
 
 [<Tests>]

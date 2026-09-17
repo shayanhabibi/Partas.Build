@@ -21,42 +21,62 @@ module CmdRunner =
             cmd
 
     open SpectreConsoleExt
-    /// <summary>Runs cmd and maps its exit code through the stage's acceptable exit codes.</summary>
-    /// <remarks>A cancelled command succeeds: the runner that cancelled it is the one reporting why.</remarks>
-    let run (ctx: StageContext) (index: StepIndex) (cancellationToken: CancellationToken) (cmd: Cmd) = async {
-        let noPrefix = StageContext.getNoPrefixForStep ctx
-        let escapedPrefix = if noPrefix then "" else StageContext.buildStepPrefix ctx index |> Markup.escape
 
-        if not noPrefix then escapedPrefix |> Markup.green |> print
-        Cmd.toLogString cmd
-        |> vprintn ctx
+    /// <summary>The prefix a step's lines carry, escaped for Spectre, and empty where the stage prints none.</summary>
+    let stepPrefix (ctx: StageContext) (index: StepIndex) =
+        if StageContext.getNoPrefixForStep ctx then "" else StageContext.buildStepPrefix ctx index |> Markup.escape
 
-        let output = StageContext.getOutput ctx
-        let stepBuffer = StageContext.getStepBuffer ctx
+    /// <summary>Announces the step and logs the command line it is about to run.</summary>
+    /// <remarks>The command line is the log form, with secrets masked, and reaches a verbose stage alone.</remarks>
+    let logCommand (ctx: StageContext) (escapedPrefix: string) (cmd: Cmd) =
+        if not (String.IsNullOrEmpty escapedPrefix) then escapedPrefix |> Markup.green |> print
+        Cmd.toLogString cmd |> vprintn ctx
 
+    /// <summary>Where a streamed step's lines go, given the stage's output settings.</summary>
+    /// <remarks>
+    /// Redirection costs the child's colours, so it is only worth it when the output has to be prefixed —
+    /// or when the stage has said it goes somewhere that is not the console, which cannot be done without it —
+    /// or when a step buffer is in play, since buffering a line is impossible without first receiving it here.
+    /// <c>noStdRedirectForStep</c> is the explicit opt out and wins over all three: it makes capture impossible, by
+    /// design.
+    /// </remarks>
+    let outputPolicy (ctx: StageContext) (escapedPrefix: string) =
         let toConsole =
-            match output with
+            match StageContext.getOutput ctx with
             | ValueNone | ValueSome StageOutput.Console -> true
             | _ -> false
 
-        // Redirection costs the child's colours, so it is only worth it when the output has to be prefixed --
-        // or when the stage has said it goes somewhere that is not the console, which cannot be done without it --
-        // or when a step buffer is in play, since buffering a line is impossible without first receiving it here.
-        // `noStdRedirectForStep` is the explicit opt out and wins over all three: it makes capture impossible, by
-        // design.
+        let noPrefix = String.IsNullOrEmpty escapedPrefix
         let redirect =
-            (not noPrefix || not toConsole || stepBuffer.IsSome) && not (StageContext.getNoStdRedirectForStep ctx)
-        let startInfo = toStartInfo ctx cmd
+            (not noPrefix || not toConsole || (StageContext.getStepBuffer ctx).IsSome)
+            && not (StageContext.getNoStdRedirectForStep ctx)
 
-        let policy =
-            if not redirect then OutputPolicy.Inherit
-            else
-                // An empty line adds nothing to a prefixed log. `ProcessExecutor.capture` is where the raw
-                // text, blank lines and all, is available.
-                let write (stream: StdStream) (line: string) =
-                    if not (String.IsNullOrEmpty line) then
-                        StageContext.writeLine ctx stream (if noPrefix then line else escapedPrefix + " " + line)
-                OutputPolicy.Lines(write StdStream.Out, write StdStream.Err)
+        if not redirect then OutputPolicy.Inherit
+        else
+            // An empty line adds nothing to a prefixed log. `ProcessExecutor.capture` is where the raw
+            // text, blank lines and all, is available.
+            let write (stream: StdStream) (line: string) =
+                if not (String.IsNullOrEmpty line) then
+                    StageContext.writeLine ctx stream (if noPrefix then line else escapedPrefix + " " + line)
+            OutputPolicy.Lines(write StdStream.Out, write StdStream.Err)
+
+    /// <summary>Says that the step's process is about to be killed.</summary>
+    /// <remarks>Passed to the executor, which runs it once, before the kill.</remarks>
+    let announceKill (escapedPrefix: string) () =
+        $"{escapedPrefix} is cancelled or timed out; the process will be killed."
+        |> Markup.yellow
+        |> printn
+
+    /// <summary>Runs cmd and maps its exit code through the stage's acceptable exit codes.</summary>
+    /// <remarks>A cancelled command succeeds: the runner that cancelled it is the one reporting why.</remarks>
+    let run (ctx: StageContext) (index: StepIndex) (cancellationToken: CancellationToken) (cmd: Cmd) = async {
+        let escapedPrefix = stepPrefix ctx index
+        logCommand ctx escapedPrefix cmd
+
+        let output = StageContext.getOutput ctx
+        let stepBuffer = StageContext.getStepBuffer ctx
+        let startInfo = toStartInfo ctx cmd
+        let policy = outputPolicy ctx escapedPrefix
 
         // Killing the process is what ends the wait, whichever token asked for it: the ambient one carries the
         // stage's timeout, the parameter one belongs to whoever wrote the step. Linking them gives the executor
@@ -64,10 +84,7 @@ module CmdRunner =
         let! ambientToken = Async.CancellationToken
         use linked = CancellationTokenSource.CreateLinkedTokenSource(ambientToken, cancellationToken)
 
-        let announce () =
-            $"{escapedPrefix} is cancelled or timed out; the process will be killed."
-            |> Markup.yellow
-            |> printn
+        let announce = announceKill escapedPrefix
 
         // A completed run rather than a raised cancellation: a stage timeout has to reach
         // `mapExitCodeToResult` as the exit code of the kill, and a caller-token cancellation the `Ok()` below.

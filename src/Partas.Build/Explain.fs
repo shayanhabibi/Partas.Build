@@ -66,7 +66,8 @@ module Explain =
                 match step with
                 | Step.StepOfStage subStage ->
                     renderStage childPrefix isLast { subStage with ParentContext = ValueSome(StageParent.Stage stage) }
-                | Step.StepFn(label, _) ->
+                | Step.StepFn(label, _)
+                | Step.Operation(label, _) ->
                     let text =
                         match label with
                         | ValueSome label -> $"$ %s{label}"

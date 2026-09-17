@@ -170,6 +170,69 @@ type StageSoftCancelledException(msg: string) = inherit Exception(msg)
 [<Measure>] type stepIndex
 type StepIndex = int<stepIndex>
 
+/// <summary>Why a step failed, with the evidence the failure carries.</summary>
+/// <remarks>
+/// A cause stays structured up to the print site, where
+/// <see cref="M:Partas.Build.Internal.FailureCause.describe"/> renders it.
+/// </remarks>
+[<RequireQualifiedAccess>]
+type FailureCause =
+    /// <summary>A command completed with an exit code the stage rejects.</summary>
+    /// <remarks>
+    /// <c>command</c> is the log form, with secrets masked. <c>captured</c> holds the child's raw output where
+    /// the operation asked for capture.
+    /// </remarks>
+    | Command of command: string * exitCode: int * captured: CommandResult voption
+    /// <summary>A command failed to start.</summary>
+    /// <remarks>The executable name and the platform's exception are the whole of the evidence a process that
+    /// never ran leaves behind.</remarks>
+    | Start of executable: string * error: exn
+    /// <summary>An exception escaped the operation, a parsing failure among them.</summary>
+    | Raised of error: exn
+    /// The executing scope's own timeout expired.
+    | TimedOut
+    /// A failure the operation reported itself.
+    | Reported of message: string
+
+/// <summary>How a step of deferred work ended.</summary>
+[<Struct; RequireQualifiedAccess>]
+type StepOutcome =
+    | Completed
+    | Failed of cause: FailureCause
+
+/// <summary>Carries a <see cref="T:Partas.Build.Internal.FailureCause"/> out of the operation that produced it.</summary>
+type OperationFailedException(cause: FailureCause) =
+    inherit Exception(
+        match cause with
+        | FailureCause.Command(command, exitCode, _) -> $"'%s{command}' exited with %i{exitCode}."
+        | FailureCause.Start(executable, error) -> $"'%s{executable}' could not be started. %s{error.Message}"
+        | FailureCause.Raised error -> error.Message
+        | FailureCause.TimedOut -> "The step timed out."
+        | FailureCause.Reported message -> message)
+
+    member _.Cause = cause
+
+module FailureCause =
+    /// <summary>The line a failed step prints and annotates with.</summary>
+    /// <remarks>
+    /// A captured failure appends the child's own text — stderr where the command used it, stdout otherwise —
+    /// on a line of its own, the way a stage's capture is lifted.
+    /// </remarks>
+    let describe (cause: FailureCause) =
+        match cause with
+        | FailureCause.Command(command, exitCode, captured) ->
+            let headline = $"Exit code not acceptable. '%s{command}' exited with %i{exitCode}."
+
+            match captured with
+            | ValueSome result ->
+                let evidence = if String.IsNullOrWhiteSpace result.Stderr then result.Stdout else result.Stderr
+                if String.IsNullOrWhiteSpace evidence then headline else $"%s{headline}%s{Environment.NewLine}%s{evidence.TrimEnd()}"
+            | ValueNone -> headline
+        | FailureCause.Start(executable, error) -> $"The command '%s{executable}' could not be started. %s{error.Message}"
+        | FailureCause.Raised error -> $"%s{error.GetType().Name}: %s{error.Message}"
+        | FailureCause.TimedOut -> "The step timed out."
+        | FailureCause.Reported message -> message
+
 type [<Struct; RequireQualifiedAccess>]
     Step =
     /// <summary>A step, and the command line it prints as when there is one.</summary>
@@ -181,7 +244,22 @@ type [<Struct; RequireQualifiedAccess>]
     /// <para>Labels come from <c>Cmd.toLogString</c>: secrets are masked.</para>
     /// </remarks>
     | StepFn of label: string voption * fn: (StageContext -> StepIndex -> Async<Result<unit, string>>)
+    /// <summary>A step of deferred work, and the label <c>--explain</c> renders for it.</summary>
+    /// <remarks>The outcome is structured: the runner renders a failure to a string at the print site.</remarks>
+    | Operation of operationLabel: string voption * operation: (RuntimeContext -> Async<StepOutcome>)
     | StepOfStage of stage: StageContext
+
+/// <summary>What an operation can read about the step executing it.</summary>
+/// <remarks>
+/// Cancellation reaches an operation as the ambient token, through <c>Async.CancellationToken</c>.
+/// <c>OwnTimeout</c> is the token of the timeout budget the executing scope was given, which is what tells a
+/// timeout of this scope apart from a cancellation propagated into it.
+/// </remarks>
+and [<Struct>] RuntimeContext = {
+    Stage: StageContext
+    StepIndex: StepIndex
+    OwnTimeout: System.Threading.CancellationToken
+}
 
 /// <summary>
 /// Stage can nest in a pipeline or another stage.
@@ -846,6 +924,8 @@ module StageContext =
     let inline addBuildSteps (steps: BuildStep seq) stage = addSteps (steps |> Seq.map (fun step -> Step.StepFn(ValueNone, step))) stage
     let addStepFn = addBuildStep
     let inline addLabelledStepFn (label: string) ([<InlineIfLambda>] step: BuildStep) stage = addStep (Step.StepFn(ValueSome label, step)) stage
+    let inline addOperation (label: string voption) ([<InlineIfLambda>] operation: RuntimeContext -> Async<StepOutcome>) stage =
+        addStep (Step.Operation(label, operation)) stage
     /// Conjoins a condition onto a stage. <c>--explain</c> reports a skip caused by it without a reason.
     let inline addPredicate ([<InlineIfLambda>] condition: BuildStageIsActive) stage = addPredicateBecause ValueNone condition stage
     let inline addEnvVars (kvs: seq<string * string>) (stage: StageContext) = { stage with EnvVars = kvs |> Seq.fold (fun state (k, v) -> Map.add k v state) stage.EnvVars }
@@ -1019,7 +1099,8 @@ module Runners =
                             |> Seq.map (fun (i, step) -> async {
                                 let escapedPrefix =
                                     match step with
-                                    | Step.StepFn _ -> buildStepPrefix stage (LanguagePrimitives.Int32WithMeasure i)
+                                    | Step.StepFn _
+                                    | Step.Operation _ -> buildStepPrefix stage (LanguagePrimitives.Int32WithMeasure i)
                                     | Step.StepOfStage subStage ->
                                         { subStage with ParentContext = ValueSome(StageParent.Stage stage) }
                                         |> buildCurrentStepPrefix
@@ -1061,6 +1142,24 @@ module Runners =
                                                     return false
                                                 | Ok _ -> return true
                                                 | _ -> return false
+                                                }
+                                            // A structured outcome becomes a string here and nowhere earlier: the
+                                            // print site is the only reader that needs one.
+                                            | Step.Operation(_, operation) -> async {
+                                                let context = {
+                                                    Stage = stepStage
+                                                    StepIndex = LanguagePrimitives.Int32WithMeasure i
+                                                    OwnTimeout = cts.Token
+                                                }
+                                                match! operation context with
+                                                | StepOutcome.Completed -> return true
+                                                | StepOutcome.Failed cause ->
+                                                    let message = FailureCause.describe cause
+                                                    if parallelism.IsNone && getNoPrefixForStep stage
+                                                    then message
+                                                    else $"{escapedPrefix} {message}"
+                                                    |> printError stage
+                                                    return false
                                                 }
                                             | Step.StepOfStage subStage -> async {
                                                 let subStage = { subStage with ParentContext = ValueSome(StageParent.Stage stepStage) }

@@ -581,6 +581,131 @@ argument), `env <name>`, `flood <lines>` (that many lines on each stream, altern
 same on every platform. It is referenced with `ReferenceOutputAssembly="false"` and run as
 `dotnet <path-to-dll>`; the tests find it by walking up to `Partas.Build.slnx` and into the fixture's own `bin`.
 
+## Implemented surface (T3)
+
+### The step model
+
+`src/Partas.Build/Types.fs`, namespace `Partas.Build.Internal`, declared before `Step` and inside its recursive
+group:
+
+```fsharp
+[<RequireQualifiedAccess>]
+type FailureCause =
+    | Command of command: string * exitCode: int * captured: CommandResult voption
+    | Start of executable: string * error: exn
+    | Raised of error: exn
+    | TimedOut
+    | Reported of message: string
+
+[<Struct; RequireQualifiedAccess>]
+type StepOutcome =
+    | Completed
+    | Failed of cause: FailureCause
+
+type OperationFailedException =
+    inherit Exception
+    new: cause: FailureCause -> OperationFailedException
+    member Cause: FailureCause
+
+module FailureCause =
+    val describe: cause: FailureCause -> string
+
+type [<Struct; RequireQualifiedAccess>] Step =
+    | StepFn of label: string voption * fn: (StageContext -> StepIndex -> Async<Result<unit, string>>)
+    | Operation of operationLabel: string voption * operation: (RuntimeContext -> Async<StepOutcome>)
+    | StepOfStage of stage: StageContext
+
+and [<Struct>] RuntimeContext = {
+    Stage: StageContext
+    StepIndex: StepIndex
+    OwnTimeout: CancellationToken
+}
+
+module StageContext =
+    val inline addOperation: label: string voption -> operation: (RuntimeContext -> Async<StepOutcome>) -> stage: StageContext -> StageContext
+```
+
+- `Step` is a struct union, so its case fields share one name space: the new case is spelled
+  `operationLabel`/`operation` because `label`/`fn` are `StepFn`'s.
+- `StepFn` and the twelve `SRTPStageBuilderRunner.unifyResult` overloads are untouched.
+- `FailureCause.describe` is applied at one site, `StageContext.run`'s `Step.Operation` branch, which hands the
+  string to the same `printError` the `StepFn` branch uses. A failed operation therefore fails its step and its
+  stage exactly as a `StepFn` returning `Error` does, GitHub Actions annotation included.
+- `RuntimeContext` moved from `Dependencies.fs` into `Types.fs`, and from namespace `Partas.Build` into
+  `Partas.Build.Internal`: `Step.Operation`'s payload names it, and `Step` is declared in `Types.fs`. It gained
+  `OwnTimeout`, which T1 left for T3 to settle.
+- `--explain` renders an operation's label the way it renders a `StepFn`'s, and its index where there is none.
+
+### Operations
+
+`src/Partas.Build/Operations.fs`, namespace `Partas.Build`:
+
+```fsharp
+[<Struct>]
+type Operation<'T> = { Execute: RuntimeContext -> Async<'T> }
+
+module Operation =
+    val ret: value: 'T -> Operation<'T>
+    val ofAsync: work: Async<'T> -> Operation<'T>
+    val ofTaskFactory: factory: (unit -> Task<'T>) -> Operation<'T>
+    val map: fn: ('T -> 'U) -> operation: Operation<'T> -> Operation<'U>
+    val bind: fn: ('T -> Operation<'U>) -> operation: Operation<'T> -> Operation<'U>
+    val fail: cause: FailureCause -> 'T
+    val toStepOutcome: operation: Operation<unit> -> context: RuntimeContext -> Async<StepOutcome>
+
+[<AutoOpen>]
+module Operations =
+    val execute: command: Cmd -> Operation<unit>
+    val executeCapture: command: Cmd -> Operation<CommandResult>
+    val attemptCapture: command: Cmd -> Operation<CommandResult>
+```
+
+- `Operation<'T>` and the `Operation` module moved here from `Dependencies.fs`; `ret` and `ofAsync` keep the
+  bodies T1 compiled. Two modules of the same name cannot merge across files, which is what moves them.
+- All three adapters read the executing stage for their working directory, environment, acceptable exit codes
+  and output routing, by walking `ParentContext` upward through the existing lookups.
+- Only `ProcessExecutor.stream`/`capture` are used, never `streamToExit`/`captureToExit`: a cancelled command
+  raises out of the executor, so a `CommandResult` is only ever a normally completed process.
+- `execute` streams through `CmdRunner.outputPolicy`, so a step keeps its prefix, its silencing and its capture.
+  An unacceptable exit code fails it with `FailureCause.Command(log string, code, ValueNone)` — streaming retains
+  no text, so the failure carries none.
+- `executeCapture` fails the same way with `ValueSome result`, and `FailureCause.describe` lifts the child's
+  stderr, or its stdout where stderr is empty, onto a line of its own.
+- `attemptCapture` answers every normally completed process, unacceptable exit codes included.
+- A process that never started becomes `FailureCause.Start(executable, Win32Exception)` from all three, never a
+  `CommandResult`.
+- `Operation.toStepOutcome` classifies what escapes: `OperationFailedException` to its cause, cancellation
+  through where `OwnTimeout` did not fire, `FailureCause.TimedOut` where it did, the pipeline and soft
+  cancellation exceptions through untouched, and anything else — a parsing failure among them — to
+  `FailureCause.Raised`, holding the exception itself. The aggregate an `Async.AwaitTask` wraps a task's
+  exception in is removed first, and a propagated exception keeps its original stack trace.
+- `Operation.ofTaskFactory` applies the factory inside the async it answers, so a definition holds no started
+  task.
+
+### Stage syntax
+
+`Builders/Stage.fs` gains one custom operation and its `InputSpec` mirror:
+
+```fsharp
+[<CustomOperation>] member runOperation: build: BuildStage * operation: Operation<unit> * ?label: string -> BuildStage
+[<CustomOperation>] member runOperation: spec: InputSpec<BuildStage> * operation: Operation<unit> * ?label: string -> InputSpec<BuildStage>
+```
+
+Written as `stage "release" { runOperation work "release data" }`. The name is deliberately outside the `run`
+family: `run`'s catch-all SRTP overload resolves against the shape of its argument, and an extra overload there
+changes what infers. `Stage.consuming`/`consumingWith` now build a `Step.Operation` too, and an unpublished
+prerequisite reaches the step as `FailureCause.Reported`.
+
+### Compile order
+
+`Types.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `Builders/StageSettings.fs` →
+`Builders/Stage.fs`, the rest unchanged. `Dependencies.fs` moved after `Process.fs` because its consumer step
+now runs an `Operation`, and `Operations.fs` needs `Cmd` and `CmdRunner`.
+
+`Process.fs` exposes what both command paths share: `CmdRunner.stepPrefix`, `CmdRunner.logCommand`,
+`CmdRunner.outputPolicy` and `CmdRunner.announceKill`. `CmdRunner.run` is those four plus the code it already
+had, and its behaviour is unchanged.
+
 ## Evidence and limits
 
 - Verified against the real library by T1, and reproducible from the repository:
@@ -606,12 +731,28 @@ same on every platform. It is referenced with `ReferenceOutputAssembly="false"` 
     reads back what went in.
   - `tests/Partas.Build.Tests/CmdTests.fs`: the pre-existing tree kill on stage timeout and on caller-token
     cancellation, and `Ok()` for the latter, all unchanged through the shared executor.
+- Verified against the real library by T3, and reproducible from the repository:
+  - `tests/Partas.Build.Tests/ExecutionTests.fs`, the `operations` list (16 tests): an attempted capture
+    answering a rejected exit code with its raw text; a checked capture failing with that text as evidence; a
+    streamed command failing with no capture; a stage's acceptable set letting both checked forms succeed; a
+    parsing failure retaining its `FormatException`; a start failure naming the executable from all three
+    adapters; cancellation of an attempt surfacing as cancellation and firing no fallback; a cancelled step
+    staying a cancellation; `OwnTimeout` producing `FailureCause.TimedOut`; a successful capture printing
+    nothing into the stage's own capture; working directory and environment inherited; declaration and
+    materialization starting neither an async nor a task factory; a stage consuming clean data and branching on
+    an attempted exit; a failing operation failing its stage; `--explain` rendering a label and an index.
+  - `tests/Partas.Build.Tests/StageTests.fs` and `CompositionTests.fs` name the new step case, and the T1
+    consumer tests pass unchanged through `Step.Operation`.
 - Not yet verified:
   - XML documentation rendering and IntelliSense presentation of the inherited operation.
   - Producer registration, ownership, retry reset, publication, or dependency validation diagnostics.
-  - `Operation` sequencing, command adapters, and `Step.Operation`.
-  - Process behaviour on Linux: every T2 run was on Windows. The tree kill on `netstandard2.0` is unexercised on
-    every platform, since only the `net10.0` build runs the process tests.
+  - `FailureCause.TimedOut` reaching a report from a real stage `timeout`. The runner passes the stage's own
+    timeout token as `RuntimeContext.OwnTimeout`, and `Operation.toStepOutcome` classifies on it, but that token
+    is also inside the ambient one, so F# `async` cancels the continuation before the outcome is returned and
+    the stage reports the timeout through the path it already had. A separate own-timeout token is T7's, with
+    `onFailure`.
+  - Process behaviour on Linux: every T2 and T3 run was on Windows. The tree kill on `netstandard2.0` is
+    unexercised on every platform, since only the `net10.0` build runs the process tests.
 
 ## Deferred work
 

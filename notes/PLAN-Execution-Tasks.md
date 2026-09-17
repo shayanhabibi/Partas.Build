@@ -129,12 +129,12 @@
   - `attemptCapture: Cmd -> Operation<CommandResult>`.
   - `Operation.ofAsync: Async<'T> -> Operation<'T>`.
   - `Operation.ofTaskFactory: (unit -> Task<'T>) -> Operation<'T>`.
-- [ ] Add failing tests for nonzero checked capture, nonzero attempted capture, accepted nonzero exit, parse failure, and startup failure.
-- [ ] Add a cancellation test proving an attempted capture cannot trigger fallback by treating cancellation as a process exit.
-- [ ] Add a failing test: cancelling an `attemptCapture` from the caller token surfaces as cancellation, not `Ok` and not a `CommandResult`.
-- [ ] Implement deferred execution and sequencing with inherited working directory/environment and acceptable exit codes.
-- [ ] Add `Step.Operation` to the `Step` union and run it in `StageContext.run` beside `StepFn`; leave `StepFn` and every `unifyResult` overload unchanged. Render a failed `StepOutcome` to the legacy string at the print site only.
-- [ ] Verify declaration/materialization invokes no operation or task factory.
+- [x] Add failing tests for nonzero checked capture, nonzero attempted capture, accepted nonzero exit, parse failure, and startup failure.
+- [x] Add a cancellation test proving an attempted capture cannot trigger fallback by treating cancellation as a process exit.
+- [x] Add a failing test: cancelling an `attemptCapture` from the caller token surfaces as cancellation, not `Ok` and not a `CommandResult`.
+- [x] Implement deferred execution and sequencing with inherited working directory/environment and acceptable exit codes.
+- [x] Add `Step.Operation` to the `Step` union and run it in `StageContext.run` beside `StepFn`; leave `StepFn` and every `unifyResult` overload unchanged. Render a failed `StepOutcome` to the legacy string at the print site only.
+- [x] Verify declaration/materialization invokes no operation or task factory.
 - Completion: one executing stage can consume clean command data, branch on an attempted exit, and report structured failure.
 
 ## T4 — Declare and validate producer dependencies
@@ -311,3 +311,28 @@ rtk dotnet run --project Build.fsproj -- test --configuration Release
     `tests/Partas.Build.Cmd.NetStandard.Tests` 3 passed; the two external-annotation suites unchanged at 65 and
     74 passed. Library Debug and Release, `Partas.Build.Cmd` Release and `Build.fsproj` all build with 0 errors.
   - Not run: anything on Linux, and the `netstandard2.0` tree kill on any platform.
+- T3 (2026-09-17, worktree `Partas.Build-execution-commands`, branch `execution/commands`):
+  - Model: `Types.fs` gains `FailureCause`, `StepOutcome`, `OperationFailedException`, `FailureCause.describe`,
+    `RuntimeContext` (moved from `Dependencies.fs`, now carrying `OwnTimeout`), the `Step.Operation` case and
+    `StageContext.addOperation`. `StepFn` and all twelve `unifyResult` overloads are untouched; the failed
+    outcome becomes a string only in `StageContext.run`'s new branch, which hands it to the same `printError`.
+  - Operations: `src/Partas.Build/Operations.fs` holds `Operation<'T>`, the `Operation` module
+    (`ret`/`ofAsync`/`ofTaskFactory`/`map`/`bind`/`fail`/`toStepOutcome`) and the auto-opened
+    `execute`/`executeCapture`/`attemptCapture`. Only `ProcessExecutor.stream`/`capture` are used, so a
+    cancelled command never arrives as a `CommandResult`. Signatures are in the spec's
+    *Implemented surface (T3)*.
+  - Compile order: `Types.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `Builders/StageSettings.fs`
+    → `Builders/Stage.fs`. `Process.fs` now exposes `CmdRunner.stepPrefix`/`logCommand`/`outputPolicy`/
+    `announceKill`, which `CmdRunner.run` and the new adapters share; `run`'s behaviour is unchanged.
+  - Stage syntax: `runOperation <operation> [<label>]`, plus its `InputSpec` mirror, outside the `run` family so
+    that `run`'s SRTP catch-all keeps resolving as it did. `Stage.consuming`/`consumingWith` build a
+    `Step.Operation` too.
+  - RED observed before fixing: the start-failure test reported an `AggregateException` where a
+    `FailureCause.Start` was expected, because `Async.AwaitTask` wraps a task's exception; `Awaited.unwrap` is
+    the fix, and `toStepOutcome` unwraps as well so a parse failure keeps its own exception. The model and the
+    adapters were written before their tests rather than after, which is a deviation from the task's TDD order.
+  - Suites: `tests/Partas.Build.Tests --sequenced` 202 passed, 1 ignored (the T0 pending pipeline test), 0
+    failed, of which the new `operations` list is 16. `tests/Partas.Build.CompilerProbe -c Release` 5 passed.
+    Library Debug and Release and `Build.fsproj` build with 0 errors; `Build.fsproj`'s two `NU1605` FSharp.Core
+    downgrade warnings predate this task.
+  - Not reached: `FailureCause.TimedOut` from a real stage `timeout`; see the spec's *Evidence and limits*.

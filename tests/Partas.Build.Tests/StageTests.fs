@@ -21,7 +21,7 @@ let private blockingReasons (stage: StageContext) = [
 
 /// How the stage named <paramref name="name"/> ended in the last run of <paramref name="pipeline"/>.
 let private outcomeOf (pipeline: PipelineContext) name =
-    pipeline.Timings.Ordered |> List.tryPick (fun timing -> if timing.Name = name then Some timing.Outcome else None)
+    StageTimings.ordered pipeline.Timings |> List.tryPick (fun timing -> if timing.Name = name then Some timing.Outcome else None)
 
 let private stageNames (ctx: StageContext) = [
     for step in ctx.Steps do
@@ -213,7 +213,7 @@ let tests =
         }
 
         test "a retrying sub-stage discards only its own lines from an inherited capture" {
-            let capture = OutputCapture ()
+            let capture = OutputCapture.create()
             let attempts = ref 0
 
             let built =
@@ -232,11 +232,11 @@ let tests =
 
             runStage built |> ignore
             Expect.equal attempts.Value 2 "one attempt plus one retry"
-            Expect.equal capture.Lines [ "from the parent"; "from the attempt" ] "a retry keeps what ran before the stage and one attempt's own"
+            Expect.equal (OutputCapture.lines capture) [ "from the parent"; "from the attempt" ] "a retry keeps what ran before the stage and one attempt's own"
         }
 
         test "a retry under parallel' leaves a concurrent sibling's lines in the shared capture" {
-            let capture = OutputCapture ()
+            let capture = OutputCapture.create()
             let attempts = ref 0
             use wrote = new ManualResetEventSlim (false)
 
@@ -265,10 +265,10 @@ let tests =
                 }
 
             runStage built |> ignore
-            let siblingLines = capture.Lines |> List.filter _.StartsWith("sibling")
+            let siblingLines = OutputCapture.lines capture |> List.filter _.StartsWith("sibling")
             Expect.equal attempts.Value 4 "one attempt plus three retries"
-            Expect.equal siblingLines.Length 5 $"a retry must not take a concurrent sibling's lines: {capture.Lines}"
-            Expect.equal capture.Lines.Length 9 $"a shared capture keeps every attempt: {capture.Lines}"
+            Expect.equal siblingLines.Length 5 $"a retry must not take a concurrent sibling's lines: {OutputCapture.lines capture}"
+            Expect.equal (OutputCapture.lines capture).Length 9 $"a shared capture keeps every attempt: {OutputCapture.lines capture}"
         }
 
         test "a sub-stage runs once inside each attempt of a retrying parent" {
@@ -395,7 +395,7 @@ let tests =
 
                         stage "attempt" {
                             retry 1
-                            run (fun (ctx: StageContext) -> published.Add ((StageContext.publishedValues ctx).Contains source.Id))
+                            run (fun (ctx: StageContext) -> published.Add (StageContext.publishedValues ctx |> ProducerValues.contains source.Id))
 
                             stage "use" {
                                 consumes (DependencySpec.require source) (fun value -> Operation.ofAsync (async { seen.Add value }))

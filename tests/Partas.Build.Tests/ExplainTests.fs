@@ -121,7 +121,7 @@ let tests =
     
 
         test "explain renders a stage whose output sink is not the console" {
-            let capture = OutputCapture()
+            let capture = OutputCapture.create()
 
             let built =
                 pipeline "p" {
@@ -136,7 +136,7 @@ let tests =
             Expect.stringContains text "held" "a captured stage is still described"
             Expect.stringContains text "dotnet --info" "and so is its step"
             Expect.equal printed "" "render prints nothing of its own"
-            Expect.isTrue capture.IsEmpty "and diverts nothing into a stage's sink"
+            Expect.isTrue (OutputCapture.isEmpty capture) "and diverts nothing into a stage's sink"
         }
 
         test "a command explains a silenced stage in full" {

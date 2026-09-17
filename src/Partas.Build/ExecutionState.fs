@@ -11,8 +11,7 @@ open Partas.Build.Internal
 /// <c>ProducerExecution.prepare</c> and <c>DependencyPlan</c>, which the scheduling reads and the runner does
 /// not.
 /// </remarks>
-[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
-module ExecutionState =
+module ExecutionSchedule =
     /// <summary>The step that runs <paramref name="producer"/> and publishes the value it answers.</summary>
     /// <remarks>The value reaches the scope once the operation completes; an operation that raises, times out or
     /// is cancelled leaves the scope's values as they were. A prerequisite unavailable at this point fails the

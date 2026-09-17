@@ -520,7 +520,7 @@ error — so a failing stage still says why, on the console and in the GitHub Ac
 Pass an `OutputCapture` to keep a handle on the lines whatever the outcome:
 
 ```fsharp
-let log = OutputCapture()
+let log = OutputCapture.create()
 
 let audited =
     pipeline "audit" {
@@ -529,12 +529,13 @@ let audited =
             run "dotnet list package --vulnerable"
         }
 
-        post [ stage "report" { run (fun _ -> File.WriteAllText ("scan.log", log.Text)) } ]
+        post [ stage "report" { run (fun _ -> File.WriteAllText ("scan.log", OutputCapture.text log)) } ]
     }
 ```
 
-`Lines` is both streams in the order they arrived, `Errors` only stderr, `Text`/`ErrorText` the same joined,
-and `FailureText` is what a failure lifts.
+`OutputCapture.lines` returns both streams in the order they arrived, `OutputCapture.errors` only stderr,
+`OutputCapture.text`/`OutputCapture.errorText` the same joined,
+and `OutputCapture.failureText` is what a failure lifts.
 
 Three things it does not cover:
 

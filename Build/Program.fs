@@ -187,7 +187,7 @@ module Tests =
         and! ci = Baked.Common.isCI
         return stage "test" {
             when' (not skipTests)
-            outputTo (if ci then StageOutput.Captured(OutputCapture()) else StageOutput.Console)
+            outputTo (if ci then StageOutput.Captured(OutputCapture.create()) else StageOutput.Console)
             for project in [
                 Repo.Project.``Partas.Build.Cmd.NetStandard.Tests``.Path
                 Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Path

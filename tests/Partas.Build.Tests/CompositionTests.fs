@@ -270,9 +270,9 @@ let tests =
             Expect.equal [ for required in both.Requires -> required.Name ] [ "resolve"; "generate" ] "both producers should be required, in order"
 
             let published =
-                ProducerValues.Empty
-                    .Add(resolve.Id, "v1")
-                    .Add(generate.Id, 7)
+                ProducerValues.empty
+                |> ProducerValues.add resolve.Id "v1"
+                |> ProducerValues.add generate.Id 7
 
             Expect.equal (both.Read published) (Ok("v1", 7)) "the composed specification should read a typed tuple"
         }
@@ -282,14 +282,14 @@ let tests =
             let required = DependencySpec.require resolve
             let reshaped = required |> DependencySpec.map (fun _ -> failwith "the caller's own function")
 
-            match required.Read ProducerValues.Empty with
+            match required.Read ProducerValues.empty with
             | Ok value -> failtestf "an unpublished prerequisite should not read as %s" value
             | Error unavailable -> Expect.stringContains unavailable "resolve" "the report should name the producer"
 
-            Expect.equal (required.Read (ProducerValues.Empty.Add(resolve.Id, "v1"))) (Ok "v1") "a published value should read back"
+            Expect.equal (required.Read (ProducerValues.empty |> ProducerValues.add resolve.Id "v1")) (Ok "v1") "a published value should read back"
 
             Expect.throwsC
-                (fun () -> reshaped.Read (ProducerValues.Empty.Add(resolve.Id, "v1")) |> ignore)
+                (fun () -> reshaped.Read (ProducerValues.empty |> ProducerValues.add resolve.Id "v1") |> ignore)
                 (fun raised ->
                     Expect.stringContains raised.Message "the caller's own function"
                         "a function the caller supplied should raise rather than read as a missing prerequisite")

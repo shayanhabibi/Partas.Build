@@ -397,7 +397,7 @@ let tests =
                         Placements = plan.Placements |> List.map (fun placement -> { placement with Before = { placement.Before with Path = [ 7 ] } }) }
 
                 Expect.throwsT<PipelineFailedException>
-                    (fun () -> ExecutionState.schedule (Helpers.parse [] "") elsewhere [ built ] |> ignore)
+                    (fun () -> ExecutionSchedule.schedule (Helpers.parse [] "") elsewhere [ built ] |> ignore)
                     "an unplaceable producer stops the invocation"
         }
     ]

@@ -316,13 +316,13 @@ let operations =
         }
 
         test "a successful capture is never printed by the operation that took it" {
-            let capture = OutputCapture()
+            let capture = OutputCapture.create()
             let stage = { StageContext.create "operations" with Output = ValueSome (StageOutput.Captured capture) }
             let result = perform stage (attemptCapture (ProcessFixture.command [ "text"; "0" ]))
 
             Expect.equal result.Stdout "alpha\n\nbeta\n" "the caller receives the text"
-            Expect.isEmpty capture.Lines "captured output is application data and can hold secrets; printing it is the caller's decision"
-            Expect.isEmpty capture.Errors "the same holds for what the command wrote to stderr"
+            Expect.isEmpty (OutputCapture.lines capture) "captured output is application data and can hold secrets; printing it is the caller's decision"
+            Expect.isEmpty (OutputCapture.errors capture) "the same holds for what the command wrote to stderr"
         }
 
         test "an operation runs under the stage's working directory and environment" {

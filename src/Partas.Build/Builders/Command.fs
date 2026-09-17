@@ -98,7 +98,7 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
     | Ok _ when Explain.option.GetValue parseResult -> explain command pipelines
     | Ok plan ->
         try
-            for pipeline in ExecutionState.schedule parseResult plan pipelines do
+            for pipeline in ExecutionSchedule.schedule parseResult plan pipelines do
                 runReportingTimings pipeline
 
             0

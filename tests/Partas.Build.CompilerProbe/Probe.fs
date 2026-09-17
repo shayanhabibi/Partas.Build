@@ -144,7 +144,7 @@ let private tests = testList "compiler probe" [
         Expect.equal (requiresSpec publishTo |> List.length) 2
             "an input-aware consumer is an InputSpec<StageContext> declaring its own input and its prerequisite's"
 
-        let published = ProducerValues.Empty.Add(resolve.Id, "v1").Add(generate.Id, 2)
+        let published = ProducerValues.empty |> ProducerValues.add resolve.Id "v1" |> ProducerValues.add generate.Id 2
         let reshaped: DependencySpec<string> = both |> DependencySpec.map (fun (resolved, generated) -> $"%s{resolved}+%d{generated}")
         Expect.equal (both.Read published) (Ok("v1", 2)) "the composed specification reads a typed tuple"
         Expect.equal (reshaped.Read published) (Ok "v1+2") "a composed specification reshapes its value applicatively"

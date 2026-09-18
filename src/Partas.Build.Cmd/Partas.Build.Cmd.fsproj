@@ -10,7 +10,7 @@
         <Title>Partas.Build.Cmd</Title>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <Description>Cmd line arg builder with masking for sensitive values.</Description>
-    <Version>0.2.1</Version><AssemblyVersion>0.0.0.0</AssemblyVersion></PropertyGroup>
+    <Version>0.3.1-alpha.1</Version><AssemblyVersion>0.0.0.0</AssemblyVersion></PropertyGroup>
 
     <ItemGroup>
         <!-- `Execution.fs` knows nothing of `Cmd`; it takes a `ProcessStartInfo`, which is what lets the command

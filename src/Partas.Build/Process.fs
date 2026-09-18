@@ -4,11 +4,8 @@
 namespace Partas.Build.Internal
 
 open System
-open System.IO
 open System.Net.Http
-open System.Runtime.InteropServices
 open System.Threading
-open Spectre.Console
 open Partas.Build
 
 /// Runs a <see cref="T:Partas.Build.Cmd"/> as a step of a stage.
@@ -20,7 +17,7 @@ module CmdRunner =
             (StageContext.buildEnvVars ctx)
             cmd
 
-    open SpectreConsoleExt
+    open Output
 
     /// <summary>The prefix a step's lines carry, escaped for Spectre, and empty where the stage prints none.</summary>
     let stepPrefix (ctx: StageContext) (index: StepIndex) =

@@ -8,6 +8,7 @@ open System.CommandLine.Help
 open System.CommandLine.Invocation
 open Partas.Build
 open Partas.Build.Internal
+
 /// Names an unnamed pipeline after the command that runs it, and fills its unset settings from the command's
 /// defaults. Applied once the whole command is built, not as each pipeline is yielded, so that a setting written
 /// below a pipeline reaches it just as one written above it does.

@@ -16,6 +16,9 @@ module ExecutionSchedule =
     /// <remarks>The value reaches the scope once the operation completes; an operation that raises, times out or
     /// is cancelled leaves the scope's values as they were. A prerequisite unavailable at this point fails the
     /// step, naming it.</remarks>
+    /// <param name="parseResult" />
+    /// <param name="state" />
+    /// <param name="producer" />
     let private production (parseResult: ParseResult) (state: ExecutionState) (producer: ProducerRef) =
         let publishing = {
             Execute = fun context -> async {
@@ -34,6 +37,9 @@ module ExecutionSchedule =
 
     /// <summary>The stage, skipped while one of <paramref name="required"/> has published no value, with that
     /// producer named as the reason.</summary>
+    /// <param name="required" />
+    /// <param name="state" />
+    /// <param name="stage" />
     let private blockedWhileUnpublished (state: ExecutionState) (required: ProducerRef list) (stage: StageContext) =
         required
         |> List.fold
@@ -52,6 +58,7 @@ module ExecutionSchedule =
     /// <para>Addressing is <c>StageAddress.rebuildPipeline</c>'s alone: these stages carry their declarations,
     /// not their positions.</para>
     /// </remarks>
+    /// <param name="pipeline" />
     let private declaredStages (pipeline: PipelineContext) =
         let rec walk parent (stage: StageContext) = [
             let stage = { stage with ParentContext = ValueSome parent }
@@ -135,6 +142,9 @@ module ExecutionSchedule =
     /// <para>The pipelines answered are copies. They publish into the <c>ExecutionState</c> the originals carry,
     /// which the run empties before its first stage.</para>
     /// </remarks>
+    /// <param name="parseResult" />
+    /// <param name="plan" />
+    /// <param name="pipelines" />
     let schedule (parseResult: ParseResult) (plan: DependencyPlan) (pipelines: PipelineContext list) =
         pipelines
         |> List.mapi (fun pipelineIndex pipeline ->

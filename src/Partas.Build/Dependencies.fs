@@ -59,30 +59,19 @@ type DependencySpec<'T> = {
 }
 
 module DependencySpec =
-    /// Concatenates prerequisite lists, keeping the first occurrence of each identity.
-    let private union (requires': ProducerRef list list) =
-        requires'
-        |> List.concat
-        |> List.fold
-            (fun kept (required: ProducerRef) ->
-                if kept |> List.exists (fun (other: ProducerRef) -> other.Id = required.Id) then kept else kept @ [ required ])
-            []
-
-    let private read (producer: ProducerRef) (values: ProducerValues): Result<'T, string> =
-        match ProducerValues.tryGet<'T> producer.Id values with
-        | ValueSome value -> Ok value
-        | ValueNone -> Error $"The producer '%s{producer.Name}' has published no value of type %s{typeof<'T>.Name}."
-
     let empty: DependencySpec<unit> = { Requires = []; Inputs = []; Read = fun _ -> Ok () }
 
     /// <summary>A specification requiring <paramref name="producer"/> and reading its result.</summary>
+    /// <param name="producer"/>
     let require (producer: Producer<'T>): DependencySpec<'T> = {
         Requires = [ producer.Ref ]
         Inputs = producer.Inputs
-        Read = read producer.Ref
+        Read = ProducerRef.read producer.Ref
     }
 
     /// <summary>The same prerequisites, read as <paramref name="fn"/> applied to their value.</summary>
+    /// <param name="fn"/>
+    /// <param name="spec"/>
     let map (fn: 'T -> 'U) (spec: DependencySpec<'T>): DependencySpec<'U> = {
         Requires = spec.Requires
         Inputs = spec.Inputs
@@ -91,8 +80,11 @@ module DependencySpec =
 
     /// <summary>The prerequisites and inputs of both specifications, read as <paramref name="fn"/> applied to both values.</summary>
     /// <remarks>The first unavailable prerequisite, in declaration order, is the one reported.</remarks>
+    /// <param name="fn" />
+    /// <param name="first" />
+    /// <param name="second" />
     let map2 (fn: 'T -> 'U -> 'V) (first: DependencySpec<'T>) (second: DependencySpec<'U>): DependencySpec<'V> = {
-        Requires = union [ first.Requires; second.Requires ]
+        Requires = ProducerRef.union [ first.Requires; second.Requires ]
         Inputs = InputSpec.union [ first.Inputs; second.Inputs ]
         Read = fun values ->
             match first.Read values, second.Read values with
@@ -116,6 +108,10 @@ module Producer =
     /// computes the value.</summary>
     /// <remarks>Declaration allocates an identity and harvests inputs; <paramref name="execute"/> is called when
     /// a consumer schedules the producer, and the operation it answers runs after that.</remarks>
+    /// <param name="name" />
+    /// <param name="inputs" />
+    /// <param name="dependencies" />
+    /// <param name="execute" />
     let define
         (name: string)
         (inputs: InputSpec<'I>)
@@ -145,6 +141,9 @@ module Stage =
     /// <para>Every setting already on the stage is kept, so a consumer written through the <c>consumes</c>
     /// operation of a stage builder carries that builder's <c>retry</c> and conditions.</para>
     /// </remarks>
+    /// <param name="dependencies" />
+    /// <param name="execute" />
+    /// <param name="stage" />
     let consumes (dependencies: DependencySpec<'D>) (execute: 'D -> Operation<unit>) (stage: StageContext): StageContext =
         let step (context: RuntimeContext) = async {
             match dependencies.Read (StageContext.publishedValues context.Stage) with

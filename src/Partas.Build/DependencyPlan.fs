@@ -42,6 +42,9 @@ module StageAddress =
     /// <para>The one traversal that gives a stage a <see cref="T:Partas.Build.ProducerLocation"/>: validation
     /// and scheduling address stages through it.</para>
     /// </remarks>
+    /// <param name="rebuild" />
+    /// <param name="pipelineIndex" />
+    /// <param name="pipeline" />
     let rebuildPipeline
         (rebuild: StageAddress -> StageContext -> StageContext list)
         (pipelineIndex: int)

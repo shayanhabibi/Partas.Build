@@ -16,8 +16,19 @@
     <ItemGroup>
         <Compile Include="System.CommandLine\Aliases.fs" />
         <Compile Include="System.CommandLine\Inputs.fs" />
-        <Compile Include="Types.fs" />
+        <Compile Include="Exceptions.fs" />
+        <Compile Include="Output.fs" />
+        <Compile Include="Environment.fs" />
+        <Compile Include="Timing.fs" />
+        <Compile Include="Producer.fs" />
+        <Compile Include="Conductors.fs" />
+        <Compile Include="Conductors.Runners.fs" />
         <Compile Include="Process.fs" />
+        <Compile Include="Operations.fs" />
+        <Compile Include="Dependencies.fs" />
+        <Compile Include="DependencyPlan.fs" />
+        <Compile Include="ExecutionState.fs" />
+        <Compile Include="Builders\StageSettings.fs" />
         <Compile Include="Builders\Stage.fs" />
         <Compile Include="Builders\Conditions.fs" />
         <Compile Include="Builders\Pipeline.fs" />

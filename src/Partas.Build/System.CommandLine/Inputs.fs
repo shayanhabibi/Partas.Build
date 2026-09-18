@@ -101,6 +101,29 @@ type ActionInput<'T>(inputType: ActionInputSource) =
         | Context -> parseResult |> unbox<'T>
         | Injection i -> i |> unbox<'T>
 
+/// <summary>
+/// Tracks the CLI inputs for a dependency.
+/// </summary>
+[<Struct>]
+type InputSpec<'T> = { Inputs: ActionInput list; Read: ParseResult -> 'T }
+
+module InputSpec =
+    /// Concatenates input sets, keeping the first occurrence of each input.
+    /// <c>ActionInput</c> has no custom equality, so this compares by reference: the same <c>let</c>-bound
+    /// option declared by two specs collapses to one, while two separately created options do not.
+    let union (inputs: ActionInput list list) = inputs |> List.concat |> List.distinct
+    let inline ret v = { Inputs = []; Read = fun _ -> v }
+    let map f s = { Inputs = s.Inputs; Read = s.Read >> f }
+    let map2 f a b = { Inputs = union [ a.Inputs; b.Inputs ]; Read = fun pr -> f (a.Read pr) (b.Read pr) }
+    let ofInput (input: ActionInput<'T>) = { Inputs = [ input :> ActionInput ]; Read = input.GetValue }
+    /// Collapses a sequence of specs into one spec of a list, unioning their inputs.
+    /// This is what lets a collection of ready-made blocks - a stage per project, say - be yielded as a unit.
+    let sequence (specs: InputSpec<'T> seq) =
+        let specs = List.ofSeq specs
+        { Inputs = union [ for spec in specs -> spec.Inputs ]; Read = fun pr -> specs |> List.map (fun spec -> spec.Read pr) }
+    /// <c>sequence</c> over the results of mapping <c>fn</c>, for <c>for x in xs do</c> over an input-declaring body.
+    let traverse (fn: 'T -> InputSpec<'U>) (items: 'T seq) = items |> Seq.map fn |> sequence
+
 type Arity =
     | ArgumentArity of min: int * max: int
     | ExactlyOne

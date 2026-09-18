@@ -14,6 +14,7 @@ open Spectre.Console
 open Expecto
 open Partas.Build
 open Partas.Build.Internal
+open Partas.Build.Tests.Helpers
 
 /// Writes a line to stdout and exits zero, wherever the tests can run at all.
 let private quiet = Cmd.ofString "dotnet --version"
@@ -41,17 +42,17 @@ let private runs (built: PipelineContext) =
 let tests =
     testList "output" [
         test "a capture holds what the command wrote, tagged with the stream it came from" {
-            let capture = OutputCapture()
+            let capture = OutputCapture.create()
             let result = runStep (stageWith (StageOutput.Captured capture)) loud
 
             Expect.isError result "the command exits one"
-            Expect.isTrue (capture.Errors |> List.exists _.Contains("Could not execute")) $"stderr should be tagged as such: {capture.Errors}"
-            Expect.isTrue (capture.Lines |> List.exists _.Contains("Possible reasons")) $"stdout should be captured too: {capture.Lines}"
-            Expect.isFalse (capture.ErrorText.Contains "Possible reasons") "stdout should not have leaked into the error text"
+            Expect.isTrue (OutputCapture.errors capture |> List.exists _.Contains("Could not execute")) $"stderr should be tagged as such: {OutputCapture.errors capture}"
+            Expect.isTrue (OutputCapture.lines capture |> List.exists _.Contains("Possible reasons")) $"stdout should be captured too: {OutputCapture.lines capture}"
+            Expect.isFalse ((OutputCapture.errorText capture).Contains "Possible reasons") "stdout should not have leaked into the error text"
         }
 
         test "a failing step lifts what it captured into its error" {
-            let capture = OutputCapture()
+            let capture = OutputCapture.create()
 
             match runStep (stageWith (StageOutput.Captured capture)) loud with
             | Ok () -> failtest "the command exits one"
@@ -61,18 +62,37 @@ let tests =
         }
 
         test "everything is lifted when the command failed without using stderr" {
-            let capture = OutputCapture()
-            capture.Add (StdStream.Out, "assertion failed somewhere in the noise")
+            let capture = OutputCapture.create()
+            OutputCapture.add StdStream.Out "assertion failed somewhere in the noise" capture
 
-            Expect.equal capture.FailureText "assertion failed somewhere in the noise" "a runner reporting failures on stdout must still lift something"
+            Expect.equal (OutputCapture.failureText capture) "assertion failed somewhere in the noise" "a runner reporting failures on stdout must still lift something"
         }
 
         test "a successful step lifts nothing" {
-            let capture = OutputCapture()
+            let capture = OutputCapture.create()
             let result = runStep (stageWith (StageOutput.Captured capture)) quiet
 
             Expect.equal result (Ok()) "the command exits zero"
-            Expect.isNonEmpty capture.Lines "the version it printed is still captured"
+            Expect.isNonEmpty (OutputCapture.lines capture) "the version it printed is still captured"
+        }
+
+        // The two capture surfaces exist for different readers. A stage's capture is a log: its lines carry the
+        // step prefix and a blank one says nothing worth keeping. `ProcessExecutor.capture` is data.
+        test "a routed line is prefixed and a routed blank line is dropped, where raw capture keeps both" {
+            let capture = OutputCapture.create()
+            let command = ProcessFixture.command [ "text"; "0" ]
+            let stage = { stageWith (StageOutput.Captured capture) with NoPrefixForStep = false }
+
+            Expect.equal (runStep stage command) (Ok()) "the child exits zero"
+            Expect.equal (OutputCapture.lines capture).Length 4 "the two blank lines the child wrote should not be routed"
+            Expect.all (OutputCapture.lines capture) (fun line -> line.Contains "/step-0 ") "every routed line should carry the step prefix"
+            Expect.equal (OutputCapture.errors capture |> List.map (fun line -> line.Substring (line.IndexOf "/step-0 " + 8))) [ "err-one"; "err-two" ] "stderr should still be tagged as such"
+
+            let raw =
+                ProcessExecutor.capture (CmdRunner.toStartInfo stage command) CancellationToken.None ignore
+                |> fun capturing -> capturing.GetAwaiter().GetResult()
+
+            Expect.equal raw.Stdout "alpha\n\nbeta\n" "the same command captured raw keeps the blank line and carries no prefix"
         }
 
         test "silent output is dropped, and a failure says only that it failed" {
@@ -82,20 +102,20 @@ let tests =
         }
 
         test "a step buffer forces redirection even under the console sink" {
-            let buffer = OutputCapture()
+            let buffer = OutputCapture.create()
             let ctx = { StageContext.create "output" with StepBuffer = ValueSome buffer }
 
             let result = runStep ctx quiet
 
             Expect.equal result (Ok()) "the command exits zero"
-            Expect.isNonEmpty buffer.Lines "a step buffer in play must redirect the child, not let it write the console handle directly"
+            Expect.isNonEmpty (OutputCapture.lines buffer) "a step buffer in play must redirect the child, not let it write the console handle directly"
         }
 
         test "a failing step under a step buffer lifts its own lines, not a sibling's already-flushed ones" {
-            let capture = OutputCapture()
-            capture.Add (StdStream.Out, "sibling-1")
-            capture.Add (StdStream.Out, "sibling-2")
-            let buffer = OutputCapture()
+            let capture = OutputCapture.create()
+            OutputCapture.add StdStream.Out "sibling-1" capture
+            OutputCapture.add StdStream.Out "sibling-2" capture
+            let buffer = OutputCapture.create()
             let ctx = { stageWith (StageOutput.Captured capture) with StepBuffer = ValueSome buffer }
 
             match runStep ctx loud with
@@ -117,7 +137,7 @@ let tests =
         }
 
         test "a sub-stage writes into the capture its parent declared" {
-            let capture = OutputCapture()
+            let capture = OutputCapture.create()
 
             let built =
                 pipeline "capture" {
@@ -131,12 +151,12 @@ let tests =
                 }
 
             Expect.isTrue (runs built) "the pipeline should succeed"
-            Expect.equal capture.Lines [ "from the child" ] "the child inherits the sink rather than printing"
+            Expect.equal (OutputCapture.lines capture) [ "from the child" ] "the child inherits the sink rather than printing"
         }
 
         test "a sub-stage overrides what it inherited" {
-            let outer = OutputCapture()
-            let inner = OutputCapture()
+            let outer = OutputCapture.create()
+            let inner = OutputCapture.create()
 
             let built =
                 pipeline "capture" {
@@ -152,12 +172,12 @@ let tests =
                 }
 
             Expect.isTrue (runs built) "the pipeline should succeed"
-            Expect.equal outer.Lines [ "from the parent" ] "the parent keeps its own"
-            Expect.equal inner.Lines [ "from the child" ] "the child takes the nearer declaration"
+            Expect.equal (OutputCapture.lines outer) [ "from the parent" ] "the parent keeps its own"
+            Expect.equal (OutputCapture.lines inner) [ "from the child" ] "the child takes the nearer declaration"
         }
 
         test "a pipeline sets the default its stages inherit" {
-            let capture = OutputCapture()
+            let capture = OutputCapture.create()
 
             let built =
                 pipeline "capture" {
@@ -167,16 +187,16 @@ let tests =
                 }
 
             Expect.isTrue (runs built) "the pipeline should succeed"
-            Expect.equal capture.Lines [ "one"; "two" ] "both stages write into it"
+            Expect.equal (OutputCapture.lines capture) [ "one"; "two" ] "both stages write into it"
         }
 
         test "running the same pipeline twice does not accumulate" {
-            let capture = OutputCapture()
+            let capture = OutputCapture.create()
             let built = pipeline "capture" { stage "one" { captureOutput capture; echo "one" } }
 
             Expect.isTrue (runs built) "the first run"
             Expect.isTrue (runs built) "the second run"
-            Expect.equal capture.Lines [ "one" ] "the stage clears the capture it declared before it starts"
+            Expect.equal (OutputCapture.lines capture) [ "one" ] "the stage clears the capture it declared before it starts"
         }
 
         test "a lifted message survives being made into a GitHub Actions annotation" {
@@ -200,7 +220,7 @@ let tests =
             AnsiConsole.Console <- console
 
             try
-                let built = pipeline "failing" { stage "one" { captureOutput (OutputCapture()); run loud } }
+                let built = pipeline "failing" { stage "one" { captureOutput (OutputCapture.create()); run loud } }
                 Expect.isFalse (runs built) "the pipeline should fail"
             finally
                 AnsiConsole.Console <- previous
@@ -209,11 +229,11 @@ let tests =
         }
 
         test "noStdRedirectForStep wins, because there is nothing to route without redirection" {
-            let capture = OutputCapture()
+            let capture = OutputCapture.create()
             let ctx = { stageWith (StageOutput.Captured capture) with NoStdRedirectForStep = true }
 
             runStep ctx loud |> ignore
 
-            Expect.isTrue capture.IsEmpty "the child wrote straight to the console"
+            Expect.isTrue (OutputCapture.isEmpty capture) "the child wrote straight to the console"
         }
     ]

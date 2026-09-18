@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <IsPackable>false</IsPackable>
+        <GenerateProgramFile>false</GenerateProgramFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="NetStandardCmdTests.fs"/>
+        <Compile Include="Main.fs"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Expecto" Version="11.0.0-alpha8"/>
+        <PackageReference Include="YoloDev.Expecto.TestSdk" Version="0.15.5"/>
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.4.0"/>
+    </ItemGroup>
+
+    <!-- The netstandard2.0 build is the one with the `ProcessStartInfo.Arguments` path; the net8/net10 builds
+         use `ArgumentList` and never see it. -->
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\Partas.Build.Cmd\Partas.Build.Cmd.fsproj" SetTargetFramework="TargetFramework=netstandard2.0"/>
+        <!-- Built, never referenced: the tests run it as a child process from its own output directory. -->
+        <ProjectReference Include="..\Fixtures\ProcessFixture\ProcessFixture.csproj" ReferenceOutputAssembly="false"/>
+    </ItemGroup>
+
+</Project>

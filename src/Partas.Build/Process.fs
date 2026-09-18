@@ -4,13 +4,8 @@
 namespace Partas.Build.Internal
 
 open System
-open System.Diagnostics
-open System.IO
 open System.Net.Http
-open System.Runtime.InteropServices
-open System.Text
 open System.Threading
-open Spectre.Console
 open Partas.Build
 
 /// Runs a <see cref="T:Partas.Build.Cmd"/> as a step of a stage.
@@ -22,96 +17,80 @@ module CmdRunner =
             (StageContext.buildEnvVars ctx)
             cmd
 
-    /// <summary>Kills the process and everything it started.</summary>
+    open Output
+
+    /// <summary>The prefix a step's lines carry, escaped for Spectre, and empty where the stage prints none.</summary>
+    let stepPrefix (ctx: StageContext) (index: StepIndex) =
+        if StageContext.getNoPrefixForStep ctx then "" else StageContext.buildStepPrefix ctx index |> Markup.escape
+
+    /// <summary>Announces the step and logs the command line it is about to run.</summary>
+    /// <remarks>The command line is the log form, with secrets masked, and reaches a verbose stage alone.</remarks>
+    let logCommand (ctx: StageContext) (escapedPrefix: string) (cmd: Cmd) =
+        if not (String.IsNullOrEmpty escapedPrefix) then escapedPrefix |> Markup.green |> print
+        Cmd.toLogString cmd |> vprintn ctx
+
+    /// <summary>Where a streamed step's lines go, given the stage's output settings.</summary>
     /// <remarks>
-    /// Fun.Build asks for a graceful exit first — <c>CloseMainWindow</c> on Windows, <c>SIGTERM</c> through a
-    /// P/Invoke elsewhere — but neither reaches a console child's own children. Killing the tree is both
-    /// simpler and more thorough; a build step that needs a graceful shutdown should own that itself.
+    /// Redirection costs the child's colours, so it is only worth it when the output has to be prefixed —
+    /// or when the stage has said it goes somewhere that is not the console, which cannot be done without it —
+    /// or when a step buffer is in play, since buffering a line is impossible without first receiving it here.
+    /// <c>noStdRedirectForStep</c> is the explicit opt out and wins over all three: it makes capture impossible, by
+    /// design.
     /// </remarks>
-    let private kill (proc: Process) =
-        try
-#if NETSTANDARD2_0
-            if not proc.HasExited then proc.Kill()
-#else
-            if not proc.HasExited then proc.Kill true
-#endif
-        with _ ->
-            try proc.Kill() with _ -> ()
-    open SpectreConsoleExt
-    /// <summary>Runs cmd and maps its exit code through the stage's acceptable exit codes.</summary>
-    /// <remarks>A cancelled command succeeds: the runner that cancelled it is the one reporting why.</remarks>
-    let run (ctx: StageContext) (index: StepIndex) (cancellationToken: CancellationToken) (cmd: Cmd) = async {
-        let noPrefix = StageContext.getNoPrefixForStep ctx
-        let escapedPrefix = if noPrefix then "" else StageContext.buildStepPrefix ctx index |> Markup.escape
-
-        if not noPrefix then escapedPrefix |> Markup.green |> print
-        Cmd.toLogString cmd
-        |> vprintn ctx
-
-        let output = StageContext.getOutput ctx
-        let stepBuffer = StageContext.getStepBuffer ctx
-
+    let outputPolicy (ctx: StageContext) (escapedPrefix: string) =
         let toConsole =
-            match output with
+            match StageContext.getOutput ctx with
             | ValueNone | ValueSome StageOutput.Console -> true
             | _ -> false
 
-        // Redirection costs the child's colours, so it is only worth it when the output has to be prefixed --
-        // or when the stage has said it goes somewhere that is not the console, which cannot be done without it --
-        // or when a step buffer is in play, since buffering a line is impossible without first receiving it here.
-        // `noStdRedirectForStep` is the explicit opt out and wins over all three: it makes capture impossible, by
-        // design.
+        let noPrefix = String.IsNullOrEmpty escapedPrefix
         let redirect =
-            (not noPrefix || not toConsole || stepBuffer.IsSome) && not (StageContext.getNoStdRedirectForStep ctx)
+            (not noPrefix || not toConsole || (StageContext.getStepBuffer ctx).IsSome)
+            && not (StageContext.getNoStdRedirectForStep ctx)
+
+        if not redirect then OutputPolicy.Inherit
+        else
+            // An empty line adds nothing to a prefixed log. `ProcessExecutor.capture` is where the raw
+            // text, blank lines and all, is available.
+            let write (stream: StdStream) (line: string) =
+                if not (String.IsNullOrEmpty line) then
+                    StageContext.writeLine ctx stream (if noPrefix then line else escapedPrefix + " " + line)
+            OutputPolicy.Lines(write StdStream.Out, write StdStream.Err)
+
+    /// <summary>Says that the step's process is about to be killed.</summary>
+    /// <remarks>Passed to the executor, which runs it once, before the kill.</remarks>
+    let announceKill (escapedPrefix: string) () =
+        $"{escapedPrefix} is cancelled or timed out; the process will be killed."
+        |> Markup.yellow
+        |> printn
+
+    /// <summary>Runs cmd and maps its exit code through the stage's acceptable exit codes.</summary>
+    /// <remarks>A cancelled command succeeds: the runner that cancelled it is the one reporting why.</remarks>
+    let run (ctx: StageContext) (index: StepIndex) (cancellationToken: CancellationToken) (cmd: Cmd) = async {
+        let escapedPrefix = stepPrefix ctx index
+        logCommand ctx escapedPrefix cmd
+
+        let output = StageContext.getOutput ctx
+        let stepBuffer = StageContext.getStepBuffer ctx
         let startInfo = toStartInfo ctx cmd
+        let policy = outputPolicy ctx escapedPrefix
 
-        if redirect then
-            startInfo.RedirectStandardOutput <- true
-            startInfo.RedirectStandardError <- true
-            startInfo.StandardOutputEncoding <- Encoding.UTF8
-            startInfo.StandardErrorEncoding <- Encoding.UTF8
-
-        use proc = Process.Start startInfo
-
-        if redirect then
-            // Both streams are read, always: a child whose stderr is redirected and never drained blocks on a
-            // full pipe once it has written a few kilobytes there, and waits for a reader that never comes.
-            let onData (stream: StdStream) (ev: DataReceivedEventArgs) =
-                if not (String.IsNullOrEmpty ev.Data) then
-                    StageContext.writeLine ctx stream (if noPrefix then ev.Data else escapedPrefix + " " + ev.Data)
-            proc.OutputDataReceived.Add (onData StdStream.Out)
-            proc.ErrorDataReceived.Add (onData StdStream.Err)
-            proc.BeginOutputReadLine()
-            proc.BeginErrorReadLine()
-
-        // Killing the process is what ends the wait below, whichever token asked for it: the ambient one carries
-        // the stage's timeout, the parameter one belongs to whoever wrote the step.
-        //
-        // The kill must happen from a token registration and not from `Async.OnCancel`: a tree kill issued from a
-        // cancellation continuation reaches the child but silently leaves its grandchildren alive, so
-        // `cmd /c ping` would go on pinging long after the stage had given up on it.
-        let killed = ref 0
-
-        let killOnce () =
-            if Interlocked.Exchange(&killed.contents, 1) = 0 then
-                $"{escapedPrefix} is cancelled or timed out; the process will be killed."
-                |> Markup.yellow
-                |> printn
-                kill proc
-
+        // Killing the process is what ends the wait, whichever token asked for it: the ambient one carries the
+        // stage's timeout, the parameter one belongs to whoever wrote the step. Linking them gives the executor
+        // one token to register on and leaves the two here, where telling them apart is what decides the result.
         let! ambientToken = Async.CancellationToken
-        use _ambient = ambientToken.Register killOnce
-        use _registration = cancellationToken.Register killOnce
-#if NETSTANDARD2_0
-        do proc.WaitForExit()
-#else
-        do! proc.WaitForExitAsync() |> Async.AwaitTask
-#endif
+        use linked = CancellationTokenSource.CreateLinkedTokenSource(ambientToken, cancellationToken)
+
+        let announce = announceKill escapedPrefix
+
+        // A completed run rather than a raised cancellation: a stage timeout has to reach
+        // `mapExitCodeToResult` as the exit code of the kill, and a caller-token cancellation the `Ok()` below.
+        let! exitCode = ProcessExecutor.streamToExit startInfo policy linked.Token announce |> Async.AwaitTask
 
         return
             if cancellationToken.IsCancellationRequested then Ok()
             else
-                match StageContext.mapExitCodeToResult ctx proc.ExitCode with
+                match StageContext.mapExitCodeToResult ctx exitCode with
                 | Ok () -> Ok()
                 // The point of holding the output back: nothing was printed, so the reason has to travel in the
                 // error instead, which is what reaches `printError` and the GitHub Actions annotation.
@@ -123,9 +102,9 @@ module CmdRunner =
                         // from the buffer when there is one keeps the annotation to this step's own output.
                         let failureText =
                             match stepBuffer with
-                            | ValueSome buffer when not buffer.IsEmpty -> ValueSome buffer.FailureText
+                            | ValueSome buffer when not (OutputCapture.isEmpty buffer) -> ValueSome (OutputCapture.failureText buffer)
                             | ValueSome _ -> ValueNone
-                            | ValueNone when not capture.IsEmpty -> ValueSome capture.FailureText
+                            | ValueNone when not (OutputCapture.isEmpty capture) -> ValueSome (OutputCapture.failureText capture)
                             | ValueNone -> ValueNone
                         match failureText with
                         | ValueSome text -> Error $"%s{message}%s{Environment.NewLine}%s{text}"

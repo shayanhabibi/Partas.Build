@@ -21,6 +21,26 @@ let private capturingOut (fn: unit -> 'T) =
 [<Tests>]
 let tests =
     testList "explain" [
+        test "explain names the producer a stage declares and the producers a stage requires" {
+            let mutable prepared = 0
+            let source =
+                Producer.define "compile" (InputSpec.ret ()) DependencySpec.empty (fun _ _ ->
+                    prepared <- prepared + 1
+                    Operation.ret 42)
+
+            let built =
+                pipeline "release" {
+                    Producer.stage source
+                    Stage.consuming "pack" (DependencySpec.require source) (fun _ -> Operation.ret ())
+                }
+
+            let text = Explain.render [ built ]
+
+            Expect.equal prepared 0 "rendering invokes no producer callback"
+            Expect.stringContains text "produces compile" "the explicitly listed producer stage says what it declares"
+            Expect.stringContains text "needs compile" "the consumer stage says what it requires"
+        }
+
         test "explain renders the tree without running anything" {
             let ran = ResizeArray<string>()
 
@@ -101,7 +121,7 @@ let tests =
     
 
         test "explain renders a stage whose output sink is not the console" {
-            let capture = OutputCapture()
+            let capture = OutputCapture.create()
 
             let built =
                 pipeline "p" {
@@ -116,7 +136,7 @@ let tests =
             Expect.stringContains text "held" "a captured stage is still described"
             Expect.stringContains text "dotnet --info" "and so is its step"
             Expect.equal printed "" "render prints nothing of its own"
-            Expect.isTrue capture.IsEmpty "and diverts nothing into a stage's sink"
+            Expect.isTrue (OutputCapture.isEmpty capture) "and diverts nothing into a stage's sink"
         }
 
         test "a command explains a silenced stage in full" {

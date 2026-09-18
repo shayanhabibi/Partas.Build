@@ -15,6 +15,16 @@ open FSharp.Data.UnitSystems.SI
 
 type StepFnSignature = StageContext -> StepIndex -> Async<Result<unit, string>>
 
+/// The inputs a plain branch declares, read off the stage it builds on an empty context.
+let private declaredBuildInputs name (build: BuildStage) =
+    StageContext.create name |> build |> StageContext.declaredInputs
+
+let private withDeclaredBuildInputs name (build: BuildStage) (spec: InputSpec<'T>): InputSpec<'T> =
+    { spec with Inputs = InputSpec.union [ declaredBuildInputs name build; spec.Inputs ] }
+
+let private withDeclaredStageInputs (stage: StageContext) (spec: InputSpec<'T>): InputSpec<'T> =
+    { spec with Inputs = InputSpec.union [ StageContext.declaredInputs stage; spec.Inputs ] }
+
 type private IILAttribute = InlineIfLambdaAttribute
 type private EBAttribute = EditorBrowsableAttribute
 [<Literal>]
@@ -43,6 +53,7 @@ type SRTPStageBuilderRunner =
 
 and [<EB(advanced)>]
     StageBuilder(name: string) =
+    inherit StageSettingsBuilder()
     [<EB(never)>] // `Run` is deliberately not `inline`: `BuildStage` is a plain function type rather than a delegate,
     // and inlining an application of one defeats the optimiser (`FS1118`) in Release builds only.
     // It applies a closure once at construction time, so there is nothing to gain by inlining it.
@@ -107,17 +118,21 @@ and [<EB(advanced)>]
     [<EB(never)>]
     member inline _.Combine ([<IIL>] build1, [<IIL>] build2) = BuildStage.merge build1 build2
     [<EB(never)>]
-    member inline _.Combine ([<IIL>] build, spec) = InputSpec.map (BuildStage.merge build) spec
+    member _.Combine (build: BuildStage, spec: InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map (BuildStage.merge build) spec |> withDeclaredBuildInputs name build
     [<EB(never)>]
     member inline _.Combine (spec, rest): InputSpec<BuildStage> = InputSpec.map2 (>>) spec rest
     [<EB(never)>]
-    member inline _.Combine (spec, [<IIL>] rest: BuildStage): InputSpec<BuildStage> = InputSpec.map (fun build -> build >> rest) spec
+    member _.Combine (spec: InputSpec<BuildStage>, rest: BuildStage): InputSpec<BuildStage> =
+        InputSpec.map (fun build -> build >> rest) spec |> withDeclaredBuildInputs name rest
     [<EB(never)>]
-    member inline _.Combine (spec, [<IIL>] build: BuildStage): InputSpec<BuildStage> = InputSpec.map (fun stage -> StageContext.addSubStage stage >> build) spec
+    member _.Combine (spec: InputSpec<StageContext>, build: BuildStage): InputSpec<BuildStage> =
+        InputSpec.map (fun stage -> StageContext.addSubStage stage >> build) spec |> withDeclaredBuildInputs name build
     [<EB(never)>]
     member inline _.Combine (spec, rest): InputSpec<BuildStage> = InputSpec.map2 (fun stage ->  (>>) (StageContext.addSubStage stage)) spec rest
     [<EB(never)>]
-    member inline _.Combine (stage, spec): InputSpec<BuildStage> = InputSpec.map ((>>) (StageContext.addSubStage stage)) spec
+    member _.Combine (stage: StageContext, spec: InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map ((>>) (StageContext.addSubStage stage)) spec |> withDeclaredStageInputs stage
     [<EB(never)>]
     member inline _.Combine ([<IIL>] builder, spec): InputSpec<BuildStage> = InputSpec.map ((>>) (StageContext.addStepFn builder)) spec
     [<EB(never)>]
@@ -145,16 +160,19 @@ and [<EB(advanced)>]
     [<EB(never)>]
     member inline _.For<'T>(items: 'T seq, [<IIL>]fn: 'T -> BuildStep): BuildStage = fun ctx -> items |> Seq.fold (fun ctx item -> StageContext.addStepFn (fn item) ctx) ctx
     [<EB(never)>]
-    member inline _.For ([<IIL>] build, [<IIL>] fn: unit -> InputSpec<BuildStage>): InputSpec<BuildStage> = InputSpec.map (fun rest -> build >> rest) (fn ())
+    member _.For (build: BuildStage, fn: unit -> InputSpec<BuildStage>): InputSpec<BuildStage> =
+        InputSpec.map (fun rest -> build >> rest) (fn ()) |> withDeclaredBuildInputs name build
     [<EB(never)>]
-    member inline _.For ([<IIL>] build: BuildStage, [<IIL>] fn: unit -> InputSpec<StageContext>): InputSpec<BuildStage> =
-        InputSpec.map (fun stage -> build >> StageContext.addSubStage stage) (fn ())
+    member _.For (build: BuildStage, fn: unit -> InputSpec<StageContext>): InputSpec<BuildStage> =
+        InputSpec.map (fun stage -> build >> StageContext.addSubStage stage) (fn ()) |> withDeclaredBuildInputs name build
     [<EB(never)>]
-    member inline _.For (spec, [<IIL>] fn: unit -> BuildStage): InputSpec<BuildStage> =
-        InputSpec.map (fun build -> build >> fn ()) spec
+    member _.For (spec: InputSpec<BuildStage>, fn: unit -> BuildStage): InputSpec<BuildStage> =
+        let rest = fn ()
+        InputSpec.map (fun build -> build >> rest) spec |> withDeclaredBuildInputs name rest
     [<EB(never)>]
-    member inline _.For (spec, [<IIL>] fn: unit -> StageContext): InputSpec<BuildStage> =
-        InputSpec.map (fun build -> build >> StageContext.addSubStage (fn ())) spec
+    member _.For (spec: InputSpec<BuildStage>, fn: unit -> StageContext): InputSpec<BuildStage> =
+        let stage = fn ()
+        InputSpec.map (fun build -> build >> StageContext.addSubStage stage) spec |> withDeclaredStageInputs stage
     [<EB(never)>]
     member inline _.For (spec, [<IIL>] fn: unit -> BuildStep): InputSpec<BuildStage> =
         InputSpec.map (fun build -> build >> StageContext.addStepFn (fn ())) spec
@@ -183,203 +201,6 @@ and [<EB(advanced)>]
     // =================================================================
     //                         CustomOperations
     // =================================================================
-    /// <summary>Adds environment variables to the stage.</summary>
-    /// <remarks>Variables set here override inherited values from parent contexts. A stage-level variable shadows any pipeline-level variable with the same name.</remarks>
-    [<CustomOperation>] member inline _.
-        envVars
-        ([<InlineIfLambda>] build: BuildStage, kvs: seq<string * string>): BuildStage
-        = build >> fun ctx -> { ctx with EnvVars = kvs |> Seq.fold (fun state (k, v) -> Map.add k v state) ctx.EnvVars }
-    /// <summary>Sets exit codes that are treated as successful.</summary>
-    /// <remarks>By default, only exit code 0 is acceptable. Setting this replaces (rather than appends to) the default acceptable codes. A stage-level setting overrides the pipeline's.</remarks>
-    [<CustomOperation>] member inline _.
-        acceptExitCodes
-        ([<InlineIfLambda>] build: BuildStage, codes: int seq): BuildStage
-        = build >> fun ctx -> { ctx with AcceptableExitCodes = set codes }
-    /// <summary>Fails the pipeline if this stage is inactive.</summary>
-    /// <remarks>By default, inactive stages are skipped without failure. Enable this to treat an inactive stage as a pipeline error.</remarks>
-    [<CustomOperation>] member inline _.
-        failIfIgnored
-        ([<InlineIfLambda>] build: BuildStage, ?flag: bool): BuildStage
-        = build >> fun ctx -> { ctx with FailIfIgnored = defaultArg flag true }
-    /// <summary>Fails the pipeline if no substages of this stage are active.</summary>
-    /// <remarks>By default, stages with no active substages are skipped silently. Enable this to require at least one active substage.</remarks>
-    [<CustomOperation>] member inline _.
-        failIfNoActiveSubStage
-        ([<InlineIfLambda>] build: BuildStage, ?flag: bool): BuildStage
-        = build >> fun ctx -> { ctx with FailIfNoActiveSubStage = defaultArg flag true }
-    /// <summary>Continues executing remaining steps even if a step fails.</summary>
-    /// <remarks>By default, a step failure stops execution of subsequent steps. Enable this to run all steps regardless of earlier failures.</remarks>
-    [<CustomOperation>] member inline _.
-        continueStepsOnFailure
-        ([<InlineIfLambda>] build: BuildStage, ?flag): BuildStage
-        = build >> fun ctx -> { ctx with ContinueStepsOnFailure = defaultArg flag true }
-    /// <summary>Continues pipeline execution even if this stage fails.</summary>
-    /// <remarks>By default, a stage failure stops the entire pipeline. Enable this to allow post-stages and subsequent stages to run regardless of this stage's failure.</remarks>
-    [<CustomOperation>] member inline _.
-        continueStageOnFailure
-        ([<InlineIfLambda>] build: BuildStage, ?flag): BuildStage
-        = build >> fun ctx -> { ctx with ContinueStageOnFailure = defaultArg flag true }
-    /// <summary>Continues execution after a step failure and continues the pipeline after a stage failure.</summary>
-    /// <remarks>This is a convenience operation equivalent to enabling both <c>continueStepsOnFailure</c> and <c>continueStageOnFailure</c>.</remarks>
-    [<CustomOperation>] member inline _.
-        continueOnStepFailure
-        ([<InlineIfLambda>] build: BuildStage, ?flag): BuildStage
-        = build >> fun ctx ->
-            let shouldCont = defaultArg flag true
-            { ctx with ContinueStepsOnFailure = shouldCont; ContinueStageOnFailure = shouldCont }
-    /// <summary>Sets the overall timeout for the stage.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/timeout/*"/>
-    [<CustomOperation>] member inline _.
-        timeout
-        ([<InlineIfLambda>] build: BuildStage, seconds: int<second>): BuildStage
-        = build >> fun ctx -> { ctx with Timeout = ValueSome(TimeSpan.FromSeconds(float seconds)) }
-    /// <summary>Sets the overall timeout for the stage.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/timeout/*"/>
-    [<CustomOperation>] member inline _.
-        timeout
-        ([<InlineIfLambda>] build: BuildStage, seconds: float): BuildStage
-        = build >> fun ctx -> { ctx with Timeout = ValueSome(TimeSpan.FromSeconds(seconds)) }
-    /// <summary>Sets the overall timeout for the stage.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/timeout/*"/>
-    [<CustomOperation>] member inline _.
-        timeout
-        ([<InlineIfLambda>] build: BuildStage, timespan: TimeSpan): BuildStage
-        = build >> fun ctx -> { ctx with Timeout = ValueSome timespan }
-    /// <summary>Sets how many further attempts the stage's steps get after a failing one.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/retry/*"/>
-    [<CustomOperation>] member inline _.
-        retry
-        ([<InlineIfLambda>] build: BuildStage, count: int): BuildStage
-        = build >> fun ctx -> { ctx with Retry = max 0 count }
-    /// <summary>Sets the timeout for each step in the stage.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/timeoutForStep/*"/>
-    [<CustomOperation>] member inline _.
-        timeoutForStep
-        ([<InlineIfLambda>] build: BuildStage, seconds: int<second>): BuildStage
-        = build >> fun ctx -> { ctx with TimeoutForStep = ValueSome(TimeSpan.FromSeconds(float seconds)) }
-    /// <summary>Sets the timeout for each step in the stage.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/timeoutForStep/*"/>
-    [<CustomOperation>] member inline _.
-        timeoutForStep
-        ([<InlineIfLambda>] build: BuildStage, seconds: float): BuildStage
-        = build >> fun ctx -> { ctx with TimeoutForStep = ValueSome(TimeSpan.FromSeconds(seconds)) }
-    /// <summary>Sets the timeout for each step in the stage.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/timeoutForStep/*"/>
-    [<CustomOperation>] member inline _.
-        timeoutForStep
-        ([<InlineIfLambda>] build: BuildStage, timeSpan: TimeSpan): BuildStage
-        = build >> fun ctx -> { ctx with TimeoutForStep = ValueSome timeSpan }
-    /// <summary>Enables or disables parallel execution of steps in this stage.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/parallel/*"/>
-    [<CustomOperation>] member inline _.
-        parallel'
-        ([<InlineIfLambda>] build: BuildStage, ?flag: bool): BuildStage
-        = build >> fun ctx -> { ctx with IsParallel = fun _ -> if defaultArg flag true then ValueSome -1 else ValueNone }
-    /// <summary>Enables parallel execution of steps in this stage throttled to the given number of processes.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/parallel/*"/>
-    [<CustomOperation>] member inline _.
-        parallel'
-        ([<InlineIfLambda>] build: BuildStage, throttle: int): BuildStage
-        = build >> fun ctx -> { ctx with IsParallel = fun _ -> ValueSome throttle }
-    /// <summary>Sets a condition for parallel execution of steps in this stage. Can either return a boolean switch, or the throttle count.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/parallel/*"/>
-    [<CustomOperation>] member inline _.
-        parallel'
-        ([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] condition: StageContext -> int voption): BuildStage
-        = build >> fun ctx -> { ctx with IsParallel = condition }
-    /// <summary>Sets a condition for parallel execution of steps in this stage. Can either return a boolean switch, or the throttle count.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/parallel/*"/>
-    [<CustomOperation>] member inline _.
-        parallel'
-        ([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] condition: StageContext -> Choice<bool, int>): BuildStage
-        = build >> fun ctx -> { ctx with IsParallel = condition >> function Choice1Of2 b -> (if b then ValueSome -1 else ValueNone) | Choice2Of2 i -> ValueSome i }
-    /// <summary>Sets a condition for parallel execution of steps in this stage. Can either return a boolean switch, or the throttle count.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/parallel/*"/>
-    [<CustomOperation>] member inline _.
-        parallel'
-        ([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] condition: StageContext -> Choice<int, bool>): BuildStage
-        = build >> fun ctx -> { ctx with IsParallel = condition >> function Choice1Of2 i -> ValueSome i | Choice2Of2 true -> ValueSome -1 | _ -> ValueNone }
-    /// <summary>Sets a condition for parallel execution of steps in this stage. Can either return a boolean switch, or the throttle count.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/parallel/*"/>
-    [<CustomOperation>] member inline _.
-        parallel'
-        ([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] condition: StageContext -> bool): BuildStage
-        = build >> fun ctx -> { ctx with IsParallel = condition >> function true -> ValueSome -1 | false -> ValueNone }
-
-    /// <summary>Sets the working directory for this stage.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/workingDir/*"/>
-    [<CustomOperation>] member inline _.
-        workingDir
-        ([<InlineIfLambda>] build: BuildStage, path: string): BuildStage
-        = build >> fun ctx -> { ctx with WorkingDir = ValueSome path }
-
-    /// <summary>Sets the working directory for this stage.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/workingDir/*"/>
-    [<CustomOperation>] member inline _.
-        workingDir
-        ([<InlineIfLambda>] build: BuildStage, path: IO.DirectoryInfo): BuildStage
-        = build >> fun ctx -> { ctx with WorkingDir = ValueSome path.FullName }
-
-    /// <summary>Suppresses the step number prefix in step output.</summary>
-    /// <remarks>By default, each step's output is prefixed with its stage and step number. Enable this to output without the prefix.</remarks>
-    [<CustomOperation>] member inline _.
-        noPrefixForStep
-        ([<InlineIfLambda>] build: BuildStage, ?flag: bool): BuildStage
-        = build >> fun ctx -> { ctx with NoPrefixForStep = defaultArg flag true }
-
-    /// <summary>Disables stdout and stderr redirection for steps in this stage.</summary>
-    /// <remarks>By default, step output is captured and logged. Enable this to let steps write directly to the console without redirection.</remarks>
-    [<CustomOperation>] member inline _.
-        noStdRedirectForStep
-        ([<InlineIfLambda>] build: BuildStage, ?flag: bool): BuildStage
-        = build >> fun ctx -> { ctx with NoStdRedirectForStep = defaultArg flag true }
-
-    /// <summary>Sends the output of this stage's steps somewhere other than the console.</summary>
-    /// <remarks>
-    /// Inherited by sub-stages that declare nothing of their own. Only the steps' output moves: the pipeline's
-    /// log — the stage rules, the command lines, the timings — stays on the console, and <c>verbosity</c> is
-    /// what quietens that. <c>noStdRedirectForStep</c> overrides this, since without redirection there is
-    /// nothing to route.
-    ///
-    /// Named <c>outputTo</c> rather than <c>output</c> because a custom operation's name shadows every
-    /// identifier of that name inside the CE, and <c>output</c> is a value a stage very often has in scope.
-    /// </remarks>
-    [<CustomOperation>] member inline _.
-        outputTo
-        ([<InlineIfLambda>] build: BuildStage, output: StageOutput): BuildStage
-        = build >> fun ctx -> { ctx with Output = ValueSome output }
-
-    /// <summary>Drops the output of this stage's steps.</summary>
-    /// <remarks>For a step whose noise is never worth reading. A failure still reports its exit code.</remarks>
-    [<CustomOperation>] member inline _.
-        silentOutput
-        ([<InlineIfLambda>] build: BuildStage): BuildStage
-        = build >> fun ctx -> { ctx with Output = ValueSome StageOutput.Silent }
-
-    /// <summary>Holds the output of this stage's steps back, and lifts it into the error message if one fails.</summary>
-    /// <remarks>
-    /// A quiet run that still says why it failed: stderr if the process used it, and everything it wrote
-    /// otherwise. Pass an <c>OutputCapture</c> to keep a handle on the lines regardless of the outcome.
-    /// </remarks>
-    [<CustomOperation>] member inline _.
-        captureOutput
-        ([<InlineIfLambda>] build: BuildStage, ?capture: OutputCapture): BuildStage
-        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture()))) }
-
-    /// <summary>Hands each line of this stage's step output to write as it arrives.</summary>
-    /// <remarks>Called from the reader threads of both streams, so write must tolerate that.</remarks>
-    [<CustomOperation>] member inline _.
-        redirectOutput
-        ([<InlineIfLambda>] build: BuildStage, [<InlineIfLambda>] write: StdStream -> string -> unit): BuildStage
-        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Redirect write) }
-
-    /// <summary>Randomizes the execution order of steps in this stage.</summary>
-    /// <remarks>By default, steps execute in the order they are declared. Enable this to shuffle the order randomly at each run.</remarks>
-    [<CustomOperation>] member inline _.
-        shuffleExecuteSequence
-        ([<InlineIfLambda>] build: BuildStage, ?flag: bool): BuildStage
-        = build >> fun ctx -> { ctx with ShuffleExecuteSequence = defaultArg flag true }
-
     /// <summary>Adds a step built from a context-dependent function.</summary>
     /// <remarks>The function receives the current stage context and returns a step function that operates on that context.</remarks>
     [<CustomOperation>] member _.
@@ -574,6 +395,18 @@ and [<EB(advanced)>]
         = build >> fun ctx -> {
             ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, ((^T or SRTPStageBuilderRunner):(static member unifyResult: ^T -> StepFnSignature) step)) ]
         }
+    /// <summary>Adds a step running deferred work.</summary>
+    /// <remarks>
+    /// The operation runs under the stage's working directory, environment, acceptable exit codes and output
+    /// routing, and reports a structured failure the runner renders at the print site.
+    /// <c>label</c> is what <c>--explain</c> shows for the step; without one it shows the step's index.
+    /// </remarks>
+    [<CustomOperation>] member _.
+        runOperation
+        (build: BuildStage, operation: Operation<unit>, ?label: string): BuildStage
+        = build >> fun ctx ->
+        { ctx with Steps = ctx.Steps @ [ Step.Operation(ValueOption.ofOption label, Operation.toStepOutcome operation) ] }
+
     /// <summary>Adds a step that polls an HTTP endpoint for health.</summary>
     /// <remarks>The step repeatedly polls the given URL until it succeeds or the stage is cancelled. Useful for waiting for services to become available.</remarks>
     [<CustomOperation>] member _.
@@ -583,250 +416,6 @@ and [<EB(advanced)>]
         let configRequest = defaultArg configRequest ignore
         let cancellationToken = defaultArg cancellationToken CancellationToken.None
         { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, fun ctx _ -> StageContext.runHttpHealthCheckCancelableWithConfigRequest ctx cancellationToken configRequest url) ] }
-    /// <summary>Adds a step that prints a message derived from the stage context.</summary>
-    /// <remarks>The message is prefixed with the step number unless <c>noPrefixForStep</c> is enabled.</remarks>
-    [<CustomOperation>] member inline _.
-        echo
-        ([<InlineIfLambda>] build: BuildStage, msg: StageContext -> string): BuildStage
-        = build >> fun ctx ->
-        { ctx with
-              Steps = ctx.Steps @ [ Step.StepFn(ValueNone, fun ctx i -> async {
-                  if StageContext.getNoPrefixForStep ctx
-                  then StageContext.writeLine ctx StdStream.Out $"%s{msg ctx}"
-                  else StageContext.writeLine ctx StdStream.Out $"%s{StageContext.buildStepPrefix ctx i}: %s{msg ctx}"
-                  return Ok()
-              }) ] }
-
-    [<CustomOperation>] member inline _.
-        verbosity
-        ([<InlineIfLambda>] build: BuildStage, verbosity: Verbosity): BuildStage
-        = build >> fun ctx -> { ctx with Verbosity = ValueSome verbosity }
-    [<CustomOperation>] member inline _.
-        verbose
-        ([<InlineIfLambda>] build: BuildStage): BuildStage
-        = build >> fun ctx -> { ctx with Verbosity = ValueSome Verbosity.Verbose }
-    [<CustomOperation>] member inline _.
-        quiet
-        ([<InlineIfLambda>] build: BuildStage): BuildStage
-        = build >> fun ctx -> { ctx with Verbosity = ValueSome Verbosity.Quiet }
-
-
-    /// <summary>Adds a step that prints a message.</summary>
-    /// <remarks>The message is prefixed with the step number unless <c>noPrefixForStep</c> is enabled.</remarks>
-    [<CustomOperation>] member inline
-        this.echo
-        ([<InlineIfLambda>] build: BuildStage, msg: string): BuildStage
-        = this.echo(build, fun _ -> msg)
-
-
-    // =================================================================
-    //                        InputSpec mirrors
-    // =================================================================
-    // One per custom operation above, for a stage that has already picked up a sub-stage declaring inputs.
-    // Without these, placing a setting *after* such a sub-stage is an overload error rather than a no-op.
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("envVars")>] member inline this.
-        envVars
-        (spec: InputSpec<BuildStage>, kvs: seq<string * string>): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.envVars(build, kvs)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("acceptExitCodes")>] member inline this.
-        acceptExitCodes
-        (spec: InputSpec<BuildStage>, codes: int seq): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.acceptExitCodes(build, codes)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("failIfIgnored")>] member inline this.
-        failIfIgnored
-        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.failIfIgnored(build, ?flag = flag)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("failIfNoActiveSubStage")>] member inline this.
-        failIfNoActiveSubStage
-        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.failIfNoActiveSubStage(build, ?flag = flag)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("continueStepsOnFailure")>] member inline this.
-        continueStepsOnFailure
-        (spec: InputSpec<BuildStage>, ?flag): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.continueStepsOnFailure(build, ?flag = flag)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("continueStageOnFailure")>] member inline this.
-        continueStageOnFailure
-        (spec: InputSpec<BuildStage>, ?flag): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.continueStageOnFailure(build, ?flag = flag)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("continueOnStepFailure")>] member inline this.
-        continueOnStepFailure
-        (spec: InputSpec<BuildStage>, ?flag): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.continueOnStepFailure(build, ?flag = flag)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("timeout")>] member inline this.
-        timeout
-        (spec: InputSpec<BuildStage>, seconds: int<second>): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.timeout(build, seconds)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("timeout")>] member inline this.
-        timeout
-        (spec: InputSpec<BuildStage>, seconds: float): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.timeout(build, seconds)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("timeout")>] member inline this.
-        timeout
-        (spec: InputSpec<BuildStage>, timespan: TimeSpan): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.timeout(build, timespan)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("retry")>] member inline this.
-        retry
-        (spec: InputSpec<BuildStage>, count: int): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.retry(build, count)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("timeoutForStep")>] member inline this.
-        timeoutForStep
-        (spec: InputSpec<BuildStage>, seconds: int<second>): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.timeoutForStep(build, seconds)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("timeoutForStep")>] member inline this.
-        timeoutForStep
-        (spec: InputSpec<BuildStage>, seconds: float): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.timeoutForStep(build, seconds)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("timeoutForStep")>] member inline this.
-        timeoutForStep
-        (spec: InputSpec<BuildStage>, timeSpan: TimeSpan): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.timeoutForStep(build, timeSpan)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("parallel'")>] member inline this.
-        parallel'
-        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, ?flag = flag)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("parallel'")>] member inline this.
-        parallel'
-        (spec: InputSpec<BuildStage>, throttle: int): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, throttle)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("parallel'")>] member inline this.
-        parallel'
-        (spec: InputSpec<BuildStage>, condition: StageContext -> int voption): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, condition)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("parallel'")>] member inline this.
-        parallel'
-        (spec: InputSpec<BuildStage>, condition: StageContext -> Choice<bool, int>): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, condition)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("parallel'")>] member inline this.
-        parallel'
-        (spec: InputSpec<BuildStage>, condition: StageContext -> Choice<int, bool>): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, condition)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("parallel'")>] member inline this.
-        parallel'
-        (spec: InputSpec<BuildStage>, condition: StageContext -> bool): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.parallel'(build, condition)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("workingDir")>] member inline this.
-        workingDir
-        (spec: InputSpec<BuildStage>, path: string): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.workingDir(build, path)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("workingDir")>] member inline this.
-        workingDir
-        (spec: InputSpec<BuildStage>, path: IO.DirectoryInfo): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.workingDir(build, path)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("noPrefixForStep")>] member inline this.
-        noPrefixForStep
-        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.noPrefixForStep(build, ?flag = flag)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("noStdRedirectForStep")>] member inline this.
-        noStdRedirectForStep
-        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.noStdRedirectForStep(build, ?flag = flag)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("outputTo")>] member inline this.
-        outputTo
-        (spec: InputSpec<BuildStage>, output: StageOutput): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.outputTo(build, output)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("silentOutput")>] member inline this.
-        silentOutput
-        (spec: InputSpec<BuildStage>): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.silentOutput(build)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("captureOutput")>] member inline this.
-        captureOutput
-        (spec: InputSpec<BuildStage>, ?capture: OutputCapture): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.captureOutput(build, ?capture = capture)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("redirectOutput")>] member inline this.
-        redirectOutput
-        (spec: InputSpec<BuildStage>, write: StdStream -> string -> unit): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.redirectOutput(build, write)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("shuffleExecuteSequence")>] member inline this.
-        shuffleExecuteSequence
-        (spec: InputSpec<BuildStage>, ?flag: bool): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.shuffleExecuteSequence(build, ?flag = flag)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
@@ -981,37 +570,9 @@ and [<EB(advanced)>]
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("echo")>] member inline this.
-        echo
-        (spec: InputSpec<BuildStage>, msg: StageContext -> string): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.echo(build, msg)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("verbosity")>] member inline this.
-        verbosity
-        (spec: InputSpec<BuildStage>, verbosity: Verbosity): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.verbosity(build, verbosity)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("verbose")>] member inline this.
-        verbose
-        (spec: InputSpec<BuildStage>): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.verbose(build)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("quiet")>] member inline this.
-        quiet
-        (spec: InputSpec<BuildStage>): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.quiet(build)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("echo")>] member inline this.
-        echo
-        (spec: InputSpec<BuildStage>, msg: string): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.echo(build, msg)) spec
+    [<CustomOperation("runOperation")>] member inline this.
+        runOperation
+        (spec: InputSpec<BuildStage>, operation: Operation<unit>, ?label: string): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.runOperation(build, operation, ?label = label)) spec
 
 let inline stage name = StageBuilder(name)

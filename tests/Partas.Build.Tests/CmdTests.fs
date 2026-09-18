@@ -212,4 +212,21 @@ let tests =
             Expect.equal skipped.Arguments baseline.Arguments "None appends neither"
             Expect.isEmpty skipped.Secrets "and marks nothing secret"
         }
+
+        // Pins the legacy contract the typed executor (PLAN-Execution C02) deliberately leaves alone: a command
+        // cancelled through the token its author passed to `run` is a successful step, and only the ambient
+        // stage timeout turns a kill into a failure.
+        test "legacy run reports success when the caller's own token cancels the process" {
+            let before = sleepsAlive ()
+            use cts = new CancellationTokenSource 500
+            let watch = Stopwatch.StartNew()
+            let succeeded = runs (pipeline "caller-cancel" { stage "sleep" { run sleeps cts.Token } })
+            watch.Stop()
+
+            Expect.isTrue succeeded "a step cancelled by its own token is Ok(), not a failure"
+            Expect.isLessThan watch.ElapsedMilliseconds 20000L "the caller's token should kill the process, not wait it out"
+
+            Thread.Sleep 1500
+            Expect.equal (sleepsAlive ()) before "the caller's token should kill the whole tree, as the timeout does"
+        }
     ]

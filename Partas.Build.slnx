@@ -10,6 +10,8 @@
     <File Path=".config/dotnet-tools.json" />
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
+    <File Path=".mcp.json" />
+    <File Path="CLAUDE.md" />
     <File Path="Directory.Build.props" />
     <File Path="Directory.Build.targets" />
   </Folder>
@@ -24,12 +26,15 @@
     <Project Path="Partas.ExternalAnnotations/Partas.ExternalAnnotations.fsproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Partas.Build.CompilerProbe/Partas.Build.CompilerProbe.fsproj" />
     <Project Path="tests/Partas.Build.ExternalAnnotations.Tests/Partas.Build.ExternalAnnotations.Tests.fsproj" />
+    <Project Path="tests/Partas.Build.Cmd.NetStandard.Tests/Partas.Build.Cmd.NetStandard.Tests.fsproj" />
     <Project Path="tests/Partas.Build.Tests/Partas.Build.Tests.fsproj" />
     <Project Path="tests/Partas.ExternalAnnotations.Tests/Partas.ExternalAnnotations.Tests.fsproj" />
   </Folder>
   <Folder Name="/tests/fixtures/">
     <Project Path="tests/Fixtures/AnnotationsFixture.Cs/AnnotationsFixture.Cs.csproj" />
     <Project Path="tests/Fixtures/AnnotationsFixture.Fs/AnnotationsFixture.Fs.fsproj" />
+    <Project Path="tests/Fixtures/ProcessFixture/ProcessFixture.csproj" />
   </Folder>
 </Solution>

@@ -2,18 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What this is
-
-`src/Partas.Build` is a **library in early construction**. It merges three things that already exist separately in sibling repositories:
-
-- **Fun.Build** (`../Fun.Build`) — the pipeline/stage/step computation-expression DSL and its execution engine. `Types.fs` is a port of Fun.Build's `Types.fs` + `Types.Internal.fs` + `StageContextExtensions.fs` + `PipelineContextExtensions.fs`, restructured into one file and rewritten from members-on-records into `module StageContext` / `module PipelineContext` functions using `voption` instead of `option`.
-- **System.CommandLine 2.0.11** via a vendored, adapted copy of `FSharp.SystemCommandLine`'s input layer (`System.CommandLine/Inputs.fs`, `Aliases.fs`) — `ActionInput<'T>`, the `Input.xxx` combinators, `ActionContext`.
-- **ActionPath** (from `../Partas.ProjectTemplates`) — the `ActionContext -> ActionContext` composable build step, where each step reads its own flags so commands are flat ordered lists rather than a dependency graph. It is where the flat-ordered-list shape came from; this repo's own `Build/` CLI used it until Phase 7 replaced it with the library.
-
-The goal of the merge: a Fun.Build-style pipeline that *declares the CLI inputs it needs*, with commands deriving their `System.CommandLine` option set from the pipelines they activate — so options, validation and help text are generated from the pipeline definition instead of registered by hand.
-
-Do not treat `../Fun.Build` as a dependency: it is the reference implementation being absorbed and reshaped. Consult it (and its `CLAUDE.md`) when porting a feature; do not copy its record-member style.
-
 ## Read `PLAN.md` first
 
 `PLAN.md` is the agreed design for how input binding works and what changes in `Types.fs` and the builders, plus a running record of what each phase actually did and what the compiler proved along the way. All seven phases are implemented. Read the phase statuses before changing a builder — several of them are the reason a member looks the way it does.
@@ -57,7 +45,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Architecture notes
 
-Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Inputs.fs` → `Types.fs` → `Process.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `Builders/Command.fs` → `Baked.fs` → `Builders.fs`.
+Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Inputs.fs` → `Types.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `Builders/Command.fs` → `Baked.fs` → `Builders.fs`.
 
 `Explain.fs` renders the resolved stage tree `--explain` prints, as text and nothing else: it writes to no
 console and to no stage sink, so a stage that silences or captures its execution output is still described in

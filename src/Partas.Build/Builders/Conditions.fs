@@ -31,8 +31,8 @@ module Conditions =
             | ValueSome value -> info.Values.IsEmpty || List.contains value info.Values
             | ValueNone -> false)
 
-    let whenEnvVar (name: string) = whenEnvArg (EnvArg.Create name)
-    let whenEnvVarValue (name: string) (value: string) = whenEnvArg (EnvArg.Create(name, values = [ value ]))
+    let whenEnvVar (name: string) = whenEnvArg (EnvArg.create name)
+    let whenEnvVarValue (name: string) (value: string) = whenEnvArg (EnvArg.create name |> EnvArg.withValues [ value ])
 
     /// The branch is read with <c>git branch --show-current</c> in the stage's working directory.
     // TODO Phase 6: retarget onto the `Cmd` runner once it exists, so this inherits env vars and cancellation too.
@@ -219,7 +219,7 @@ type WhenNotBuilder() =
 [<EB(advanced)>]
 type WhenEnvBuilder() =
     [<EB(never)>]
-    member _.Run(build: BuildEnvInfo): BuildStageIsActive = Conditions.whenEnvArg (build (EnvArg.Create ""))
+    member _.Run(build: BuildEnvInfo): BuildStageIsActive = Conditions.whenEnvArg (build (EnvArg.create ""))
     [<EB(never)>] member inline _.Yield(_: unit): BuildEnvInfo = id
     [<EB(never)>] member inline _.Zero(): BuildEnvInfo = id
     [<EB(never)>] member inline _.Yield([<IIL>] build: BuildEnvInfo): BuildEnvInfo = build
@@ -228,26 +228,26 @@ type WhenEnvBuilder() =
 
     /// <summary>Sets the environment variable name to check.</summary>
     [<CustomOperation "name">]
-    member inline _.name([<IIL>] build: BuildEnvInfo, name: string) = build >> _.WithName(name)
+    member inline _.name([<IIL>] build: BuildEnvInfo, name: string) = build >> EnvArg.withName name
 
     /// <summary>Sets an optional description for the environment variable.</summary>
     [<CustomOperation "description">]
-    member inline _.description([<IIL>] build: BuildEnvInfo, description: string) = build >> _.WithDescription(Some description)
+    member inline _.description([<IIL>] build: BuildEnvInfo, description: string) = build >> EnvArg.withDescription description
 
     /// <summary>Sets a single required value for the environment variable.</summary>
     /// <remarks>The condition is met if the environment variable equals this value.</remarks>
     [<CustomOperation "value">]
-    member inline _.value([<IIL>] build: BuildEnvInfo, value: string) = build >> _.WithValues[value]
+    member inline _.value([<IIL>] build: BuildEnvInfo, value: string) = build >> EnvArg.withValues [ value ]
 
     /// <summary>Sets multiple accepted values for the environment variable.</summary>
     /// <remarks>The condition is met if the environment variable value is one of the accepted values.</remarks>
     [<CustomOperation "acceptValues">]
-    member inline _.acceptValues([<IIL>] build: BuildEnvInfo, values: string list) = build >> _.WithValues(values)
+    member inline _.acceptValues([<IIL>] build: BuildEnvInfo, values: string list) = build >> EnvArg.withValues values
 
     /// <summary>Marks the environment variable as optional.</summary>
     /// <remarks>When optional, the condition is met even if the variable is unset.</remarks>
     [<CustomOperation "optional">]
-    member inline _.optional([<IIL>] build: BuildEnvInfo) = build >> _.WithIsOptional(true)
+    member inline _.optional([<IIL>] build: BuildEnvInfo) = build >> EnvArg.withIsOptional true
 
 /// A stage run purely for its result. Everything `stage` accepts is accepted here.
 [<EB(advanced)>]
@@ -294,7 +294,7 @@ type StageBuilder with
     /// </remarks>
     [<CustomOperation("whenEnvVar")>]
     member inline _.whenEnvVar([<IIL>] build: BuildStage, name: string) =
-        StageContext.buildStageIsActiveBecause (ValueSome (Conditions.Reason.envArg (EnvArg.Create name))) build (Conditions.whenEnvVar name)
+        StageContext.buildStageIsActiveBecause (ValueSome (Conditions.Reason.envArg (EnvArg.create name))) build (Conditions.whenEnvVar name)
 
     /// <summary>Adds an environment variable condition that checks both name and value.</summary>
     /// <remarks>
@@ -305,7 +305,7 @@ type StageBuilder with
     [<CustomOperation("whenEnvVar")>]
     member inline _.whenEnvVar([<IIL>] build: BuildStage, name: string, value: string) =
         StageContext.buildStageIsActiveBecause
-            (ValueSome (Conditions.Reason.envArg (EnvArg.Create(name, values = [ value ]))))
+            (ValueSome (Conditions.Reason.envArg (EnvArg.create name |> EnvArg.withValues [ value ])))
             build
             (Conditions.whenEnvVarValue name value)
 

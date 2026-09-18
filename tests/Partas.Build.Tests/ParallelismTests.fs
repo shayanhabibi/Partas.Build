@@ -190,4 +190,65 @@ let tests =
 
             Expect.equal (blocksOf lines) 2 "each step's five lines should arrive as one contiguous run"
         }
+
+        test "parallel consumers reuse a producer completed before their scope" {
+            let executions = ref 0
+            let seen = ResizeArray<int>()
+            let source: Producer<int> =
+                Producer.define "compile" (InputSpec.ret ()) DependencySpec.empty (fun _ _ ->
+                    Operation.ofAsync (async {
+                        Interlocked.Increment executions |> ignore
+                        return 42
+                    }))
+
+            let reading name =
+                Stage.consuming name (DependencySpec.require source) (fun value ->
+                    Operation.ofAsync (async { lock seen (fun () -> seen.Add value) }))
+
+            let built =
+                command "build" {
+                    pipeline "work" {
+                        quiet
+                        Producer.stage source
+
+                        stage "workers" {
+                            parallel' 2
+                            reading "first"
+                            reading "second"
+                        }
+                    }
+                }
+
+            Expect.equal (built.Parse("").Invoke()) 0 "consumers of a completed value run in parallel"
+            Expect.equal executions.Value 1 "the listed producer runs once, before the parallel scope"
+            Expect.sequenceEqual (List.ofSeq seen) [ 42; 42 ] "both parallel consumers read the published value"
+        }
+
+        test "a producer first needed inside a parallel scope fails the invocation before anything runs" {
+            let executions = ref 0
+            let ran = ResizeArray<string>()
+            let source: Producer<int> =
+                Producer.define "compile" (InputSpec.ret ()) DependencySpec.empty (fun _ _ ->
+                    Operation.ofAsync (async {
+                        Interlocked.Increment executions |> ignore
+                        return 42
+                    }))
+
+            let built =
+                command "build" {
+                    pipeline "work" {
+                        quiet
+                        stage "earlier" { run (fun (_: StageContext) -> lock ran (fun () -> ran.Add "earlier")) }
+
+                        stage "workers" {
+                            parallel' 2
+                            Stage.consuming "use" (DependencySpec.require source) (fun _ -> Operation.ret ())
+                        }
+                    }
+                }
+
+            Expect.equal (built.Parse("").Invoke()) 1 "an unresolved dependency inside a parallel scope is rejected"
+            Expect.equal executions.Value 0 "the rejected arrangement runs no producer"
+            Expect.isEmpty ran "the rejection precedes every stage of the invocation"
+        }
     ]

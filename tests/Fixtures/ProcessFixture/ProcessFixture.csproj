@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+    A fixture, not a product: a console child whose stdout, stderr, exit code and lifetime are chosen by
+    the caller, so a process test asserts against known bytes instead of against whatever `dotnet` prints
+    this week. Referenced with ReferenceOutputAssembly="false"; the tests run the built dll through
+    `dotnet <path>` and find it under this directory's own `bin`.
+    -->
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <AssemblyName>ProcessFixture</AssemblyName>
+        <RootNamespace>ProcessFixture</RootNamespace>
+        <IsPackable>false</IsPackable>
+        <GenerateDocumentationFile>false</GenerateDocumentationFile>
+        <Nullable>disable</Nullable>
+        <InvariantGlobalization>true</InvariantGlobalization>
+    </PropertyGroup>
+
+</Project>

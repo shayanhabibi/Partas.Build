@@ -19,6 +19,7 @@ type Cmd = {
 
 module Cmd =
     open System.Diagnostics
+    open System.Threading
     /// <summary>
     /// Marks a string as containing sensitive information, so it is never printed when
     /// processed in a <see cref="T:Partas.Build.Cmd"/>.
@@ -255,39 +256,29 @@ module Cmd =
     /// The working directory and environment variables come from walking `ParentContext` upward.
     let toStartInfo (workingDir: string voption) (envVar: Map<string, string>) (cmd: Cmd) =
         let startInfo = ProcessStartInfo(Internal.resolveExecutable cmd.Executable, UseShellExecute = false)
-#if NETSTANDARD2_0
-        for arg in cmd.Arguments do startInfo.Arguments <- startInfo.Arguments + " " + arg
-#else
-        for arg in cmd.Arguments do startInfo.ArgumentList.Add arg
-#endif
+        ProcessExecutor.Arguments.transport startInfo cmd.Arguments
         workingDir |> ValueOption.iter (fun dir -> startInfo.WorkingDirectory <- dir)
         envVar |> Map.iter (fun key value -> startInfo.Environment[key] <- value)
         startInfo
 
+    /// <summary>Runs the command to completion and reports its exit code with its output as lines.</summary>
+    /// <remarks>
+    /// The lines are the child's text split on its own newlines, with empty ones dropped, so a caller after the
+    /// raw text — blank lines and all — reaches <see cref="M:Partas.Build.ProcessExecutor.capture"/> instead.
+    /// </remarks>
     let run (workingDir: string voption) (envVar: Map<string, string>) (cmd: Cmd) = task {
-        let startInfo = toStartInfo workingDir envVar cmd
-        startInfo.RedirectStandardOutput <- true
-        startInfo.RedirectStandardError <- true
-        let output = ResizeArray<string>()
-        let error = ResizeArray<string>()
-        use proc = Process.Start startInfo
-        let onData isError (ev: DataReceivedEventArgs) =
-            if (String.IsNullOrEmpty ev.Data) then () else
-            ev.Data |> if isError then error.Add else output.Add
-        proc.OutputDataReceived.Add (onData false)
-        proc.ErrorDataReceived.Add (onData true)
-        proc.BeginErrorReadLine()
-        proc.BeginOutputReadLine()
-#if NETSTANDARD2_0
-        proc.WaitForExit()
-#else
-        do! proc.WaitForExitAsync()
-#endif
+        let! result = ProcessExecutor.capture (toStartInfo workingDir envVar cmd) CancellationToken.None ignore
+
+        let lines (text: string) =
+            text.Split '\n'
+            |> Array.map (fun line -> line.TrimEnd '\r')
+            |> Array.filter (String.IsNullOrEmpty >> not)
+
         return
             struct
-            {| exitCode = proc.ExitCode
-               output = output.ToArray()
-               error = error.ToArray() |}
+            {| exitCode = result.ExitCode
+               output = lines result.Stdout
+               error = lines result.Stderr |}
     }
 
 [<AutoOpen>]

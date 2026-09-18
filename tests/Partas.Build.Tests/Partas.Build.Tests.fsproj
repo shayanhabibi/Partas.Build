@@ -11,16 +11,19 @@
     <ItemGroup>
         <Compile Include="Helpers.fs"/>
         <Compile Include="InputsTests.fs"/>
+        <Compile Include="DependencyTests.fs"/>
         <Compile Include="StageTests.fs"/>
         <Compile Include="ParallelismTests.fs"/>
         <Compile Include="PipelineTests.fs"/>
         <Compile Include="ConditionsTests.fs"/>
         <Compile Include="CmdTests.fs"/>
         <Compile Include="OutputTests.fs"/>
+        <Compile Include="ExecutionTests.fs"/>
         <Compile Include="CommandTests.fs"/>
         <Compile Include="CompositionTests.fs"/>
         <Compile Include="ExplainTests.fs"/>
         <Compile Include="SummaryTests.fs"/>
+        <Compile Include="CompilerTests.fs"/>
         <Compile Include="Main.fs"/>
     </ItemGroup>
 
@@ -33,6 +36,8 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Partas.Build\Partas.Build.fsproj"/>
+        <!-- Built, never referenced: the tests run it as a child process from its own output directory. -->
+        <ProjectReference Include="..\Fixtures\ProcessFixture\ProcessFixture.csproj" ReferenceOutputAssembly="false"/>
     </ItemGroup>
 
 </Project>

@@ -367,7 +367,11 @@ rtk dotnet run --project Build.fsproj -- test --configuration Release
   - Classification: which token fired decides a timeout from a cancellation. `StepBudget` gives each step its
     own `timeoutForStep`, taken when the step starts and the only clock over it: the step's whole body runs
     under that token, so a command registers its kill on it. `cts`/a step budget are failures of the stage;
-    `ct` and `stepErrorCts` are cancellations and run no handler, as does a condition stage.
+    `ct` and `stepErrorCts` are cancellations and run no handler, as does a condition stage. This retires T3's
+    *Not reached: a `timeoutForStep` expiry* line above: `Async.StartChild` no longer carries the budget, and a
+    step that outlives one is classified and killed through the source the step ran under.
+  - A cancellation a step raises itself, while the token it ran under stands, is a cause of its own
+    (`FailureCause.Raised`) rather than a cancellation of the runner's.
   - Vertical slice: `FailureTests.fs` `slice` drives `--tag` -> a typed producer capturing a JSON document from
     `tests/Fixtures/ProcessFixture` (`echo` mode) -> a consumer retrying over the typed value -> the handlers of
     both scopes -> `ScopeReports`. The producer runs once while the consumer attempts three times. The same

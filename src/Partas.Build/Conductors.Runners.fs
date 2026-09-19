@@ -17,10 +17,12 @@ module StageContext =
             Logging.PipelineFailed.print message
             raise (PipelineFailedException message)
 
-    /// The exception a step handed back, with the aggregate the await wrapped it in removed.
-    let rec internal awaited (error: exn) =
+    /// <summary>The exception a step handed back, with the aggregate the await wrapped it in removed.</summary>
+    /// <remarks>One layer, which is the one the await added: an aggregate a step raised itself arrives inside
+    /// that wrapper and travels on as the cause the step produced.</remarks>
+    let internal awaited (error: exn) =
         match error with
-        | :? AggregateException as aggregate when aggregate.InnerExceptions.Count = 1 -> awaited aggregate.InnerExceptions[0]
+        | :? AggregateException as aggregate when aggregate.InnerExceptions.Count = 1 -> aggregate.InnerExceptions[0]
         | _ -> error
 
     /// The step one attempt is executing, while it is executing.
@@ -299,10 +301,13 @@ module StageContext =
                                     writeLine stage stream line)),
                             { stage with StepBuffer = ValueSome capture }
 
+                        // Taken before the step starts, so the clause below can ask whether the token this step
+                        // ran under is the one that ended it.
+                        let budget = takeBudget i
+
                         try
                             try
                                 inFlight[i] <- { index = i; label = Internal.getStepLabel step; prefix = escapedPrefix }
-                                let budget = takeBudget i
                                 // The step's work runs under the budget this step was given, so the token it
                                 // reads through `Async.CancellationToken` — the one a command registers its
                                 // kill on — expires with that budget.
@@ -336,10 +341,11 @@ module StageContext =
                             | :? PipelineFailedException as ex ->
                                 raise ex
                                 return false
-                            // A token the step ran under fired: its own budget, or the attempt's. The step
+                            // The token this step ran under fired: its own budget, or the attempt's. The step
                             // stays in flight and the cancellation travels, which is what the attempt
-                            // classifies once it has unwound.
-                            | :? OperationCanceledException as ex ->
+                            // classifies once it has unwound. A cancellation the step raised while that token
+                            // stands takes the handler below and is recorded as the cause it is.
+                            | :? OperationCanceledException as ex when budget.IsCancellationRequested ->
                                 raise ex
                                 return false
                             | :? StepSoftCancelledException as ex ->

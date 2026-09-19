@@ -28,8 +28,11 @@ let private sleeps =
 let private sleepProcessName =
     if Runtime.InteropServices.RuntimeInformation.IsOSPlatform Runtime.InteropServices.OSPlatform.Windows then "PING" else "sleep"
 
-/// How many of those grandchildren the machine is running.
-let private sleepingProcesses () = Diagnostics.Process.GetProcessesByName sleepProcessName |> Array.length
+/// <summary>The process ids of those grandchildren the machine is running.</summary>
+/// <remarks>Compared as a set across a run rather than as a count: an unrelated one of the same name, started
+/// or ended by something else on the machine, is then neither a surviving child nor a missing one.</remarks>
+let private sleepingProcessIds () =
+    Diagnostics.Process.GetProcessesByName sleepProcessName |> Array.map _.Id |> Set.ofArray
 
 /// The report of the scope named <paramref name="name"/>, wherever it sits in <paramref name="reports"/>.
 let private scope (reports: ScopeReports) name =
@@ -656,7 +659,7 @@ let handlers =
         }
 
         test "a step over its budget takes the process tree it started with it" {
-            let before = sleepingProcesses ()
+            let before = sleepingProcessIds ()
             let watch = Diagnostics.Stopwatch.StartNew()
             let handled = ResizeArray<FailureContext>()
 
@@ -681,7 +684,8 @@ let handlers =
 
             // The kill is asynchronous, and it is the grandchild that used to survive it.
             Thread.Sleep 1500
-            Expect.equal (sleepingProcesses ()) before "the whole tree goes with the budget, not just the process the runner started"
+            Expect.isEmpty (Set.difference (sleepingProcessIds ()) before)
+                "the whole tree goes with the budget, not just the process the runner started"
         }
 
         test "a step budget under parallel' ends its own step while its sub-stage siblings finish" {
@@ -739,6 +743,57 @@ let handlers =
                 [ for failure in ScopeReports.propagated work.Reports -> failure.Index, failure.Label ]
                 [ 0, ValueNone; StepFailure.NoStep, ValueSome FailureContext.HandlerLabel ]
                 "a cause a stage handler raised reaches the pipeline behind the stage's own, where a cause raised by the pipeline's own handler reaches it nowhere"
+        }
+
+        test "a step that raises a cancellation of its own reports it as the exception it is" {
+            let work =
+                pipeline "release" {
+                    quiet
+                    stage "fetch" {
+                        run (fun (_: StageContext) -> async { raise (Tasks.TaskCanceledException "the request timed out") })
+                    }
+                }
+
+            let raised =
+                quietly (fun () ->
+                    try
+                        PipelineContext.run work
+                        None
+                    with :? PipelineFailedException as ex -> Some ex)
+
+            match raised with
+            | None -> failtest "a step that raised should fail the run"
+            | Some ex ->
+                match ex.InnerException with
+                | :? Tasks.TaskCanceledException as cancelled ->
+                    Expect.equal cancelled.Message "the request timed out" "the pipeline carries the exception the step raised"
+                | other -> failtestf "the run should fail with the step's own exception; got %A" other
+
+            match (scope work.Reports "fetch").Failures with
+            | [ failure ] ->
+                match failure.Cause with
+                | FailureCause.Raised error ->
+                    Expect.isTrue (error :? Tasks.TaskCanceledException) $"the cause retains the exception; got {error.GetType().Name}"
+                | other -> failtestf "a raised cancellation is a cause of its own; got %A" other
+            | other -> failtestf "one cause should be recorded; got %A" other
+        }
+
+        test "a step that raises an aggregate of its own keeps it as its cause" {
+            let built =
+                stage "fan out" {
+                    run (fun (_: StageContext) ->
+                        async { raise (AggregateException("the workers failed", InvalidOperationException "the first one")) })
+                }
+
+            let report = quietly (fun () -> reportStage built)
+
+            match report.Failures with
+            | [ failure ] ->
+                match failure.Cause with
+                | FailureCause.Raised error ->
+                    Expect.isTrue (error :? AggregateException) $"the aggregate the step raised is the cause; got {error.GetType().Name}"
+                | other -> failtestf "a raised aggregate is a cause of its own; got %A" other
+            | other -> failtestf "one cause should be recorded; got %A" other
         }
 
         test "a pipeline timeout cancels its stages and runs no handler" {

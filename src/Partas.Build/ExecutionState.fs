@@ -134,7 +134,9 @@ module ExecutionSchedule =
     /// <para>A stage requiring a producer is skipped while that producer has published nothing, and names it as
     /// the reason, which leaves the consumers of a skipped or failed producer skipped. An implicitly placed
     /// producer runs where a stage requiring it is active and is skipped where every such stage is inactive; an
-    /// explicitly listed producer runs where the author's own conditions put it.</para>
+    /// explicitly listed producer runs where the author's own conditions put it. Where the requiring stage is a
+    /// <c>whenStage</c> consumer, this gate evaluates that condition's own stage a second time, alongside the
+    /// evaluation <c>whenStageSucceeds</c> already performs.</para>
     /// <para>Parallel scopes take consumers alone: a consumer under <c>parallel'</c> or
     /// <c>shuffleExecuteSequence</c> reads a value published before its scope began. Placing a producer under
     /// such a scope is an arrangement <c>DependencyPlan.validate</c> rejects, naming the producer and the

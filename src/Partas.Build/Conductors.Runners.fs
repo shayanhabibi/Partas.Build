@@ -48,6 +48,9 @@ module StageContext =
     /// <para><c>cancellation</c> is the token the step's whole body runs under, a sub-stage and a command
     /// alike: a command reads it through <c>Async.CancellationToken</c> and registers its kill on it, so an
     /// expiry takes the process tree with it.</para>
+    /// <para>A step still recorded as in flight when the attempt unwinds — abandoned by the token that ended
+    /// it, or by the stage's own fail-fast cancellation — leaves its sources undisposed rather than racing a
+    /// straggler that may still read them.</para>
     /// </remarks>
     [<Struct>]
     type internal StepBudget = {
@@ -615,6 +618,13 @@ module PipelineContext =
 
     let runStages (ctx: PipelineContext) (cancelToken: CancellationToken) (stages: StageContext seq) = runStagesWithFailFast ctx false cancelToken stages
 
+    /// <summary>Runs every stage of <paramref name="this"/> and raises on failure or cancellation.</summary>
+    /// <remarks>
+    /// Skips <c>DependencyPlan.validate</c>: the command path validates placement before this runs and never
+    /// reaches it for <c>--explain</c>, but a caller invoking this directly gets no such check, and an
+    /// arrangement <c>DependencyPlan.validate</c> would reject — a producer placed under a <c>parallel'</c> or
+    /// <c>shuffleExecuteSequence</c> scope, say — runs instead of failing at validation.
+    /// </remarks>
     let rec run (this: PipelineContext) =
         Console.InputEncoding <- Encoding.UTF8
         Console.OutputEncoding <- Encoding.UTF8

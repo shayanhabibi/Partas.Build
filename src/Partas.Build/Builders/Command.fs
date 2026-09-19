@@ -240,6 +240,8 @@ module Args =
 /// <c>InputSpec</c> of each pipeline it runs, so declaring a stage that reads <c>--configuration</c> is
 /// what puts <c>--configuration</c> in <c>--help</c>. <c>addInput</c> is for the remainder — flags no
 /// pipeline asks for, which a root command may still want to expose.
+/// <para>Carries no <c>onFailure</c> among its pipeline defaults: a failure of CLI parsing or of
+/// <c>InputSpec.Read</c>, ahead of every pipeline this command runs, reaches no handler.</para>
 /// </remarks>
 type CommandBuilderBase() =
     /// <summary>Adds one more setting to the defaults the command hands every pipeline it runs.</summary>

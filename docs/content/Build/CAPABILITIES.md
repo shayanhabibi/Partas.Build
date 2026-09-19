@@ -7,8 +7,8 @@ order: 1
 # Capabilities
 
 Every custom operation on the four builders, every `Input` combinator, and the `Cmd` argument helpers — one
-line each. Use it to find the name; the [API reference](reference/index.html) has the full signature and
-remarks for each, and [Composing reusable blocks](composition.html) has worked examples.
+line each. Use it to find the name; the [API reference](../../reference/) has the full signature and
+remarks for each, and [Composing reusable blocks](../composition/) has worked examples.
 
 ## How settings resolve
 
@@ -428,7 +428,7 @@ Ready-made declarations for the options every build CLI ends up wanting. `Baked.
 
 ## Reference
 
-- [Overview](build-overview.html) — the layers, and a first pipeline.
-- [Composing reusable blocks](composition.html) — blocks, nesting, and composition across files.
-- [Stage CE run overloads](computation-expression-operations.html).
-- [API reference](reference/index.html) — full signatures and remarks.
+- [Overview](../build-overview/) — the layers, and a first pipeline.
+- [Composing reusable blocks](../composition/) — blocks, nesting, and composition across files.
+- [Stage CE run overloads](../computation-expression-operations/).
+- [API reference](../../reference/) — full signatures and remarks.

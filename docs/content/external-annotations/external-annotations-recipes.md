@@ -6,8 +6,8 @@ index: 3
 
 # External Annotations — Recipes
 
-Concrete setups. Background is on the [overview](external-annotations.html); the F# API is
-[here](external-annotations-api.html).
+Concrete setups. Background is on the [overview](../); the F# API is
+[here](../external-annotations-api/).
 
 ## Ship annotations from a repo you own
 

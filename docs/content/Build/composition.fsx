@@ -56,7 +56,7 @@ open Partas.Build.Internal
 (**
 # Composing reusable blocks
 
-[The guide](index.html) introduces one stage at a time. This page is the other half: building a library of
+[The guide](../) introduces one stage at a time. This page is the other half: building a library of
 reusable *blocks* — stages that carry their own CLI inputs — and assembling them into pipelines and commands.
 
 Every snippet here is compiled when the docs are built, except the two file listings under
@@ -542,6 +542,6 @@ because they exist, and one process resolves packages once.
 
 ## Reference
 
-- [Guide](index.html) — steps, conditions, inputs, output, timeouts, `Baked`.
-- [API reference](reference/index.html) — every custom operation, from its XML documentation.
+- [Guide](../) — steps, conditions, inputs, output, timeouts, `Baked`.
+- [API reference](../../reference/) — every custom operation, from its XML documentation.
 *)

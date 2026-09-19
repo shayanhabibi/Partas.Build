@@ -7,9 +7,9 @@
 
 ## Start here
 
-- [Capabilities](https://shayanhabibi.github.io/Partas.Build/CAPABILITIES.html): every operation and Input combinator, one line each
-- [Index](https://shayanhabibi.github.io/Partas.Build/index.html): the layers, and a first pipeline
-- [Composition](https://shayanhabibi.github.io/Partas.Build/composition.html): nesting stages, and reusing commands across files
+- [Capabilities](https://shayanhabibi.github.io/Partas.Build/build/capabilities/): every operation and Input combinator, one line each
+- [Index](https://shayanhabibi.github.io/Partas.Build/build/): the layers, and a first pipeline
+- [Composition](https://shayanhabibi.github.io/Partas.Build/build/composition/): nesting stages, and reusing commands across files
 
 ## Ask the script rather than reading it
 
@@ -18,7 +18,6 @@ flags those stages bind. `<script> <command> --help` is the authority on what a 
 
 ## Optional
 
-- [Build overview](https://shayanhabibi.github.io/Partas.Build/build-overview.html)
-- [CE operations](https://shayanhabibi.github.io/Partas.Build/computation-expression-operations.html)
-- [API reference](https://shayanhabibi.github.io/Partas.Build/reference/index.html)
-- [Full bundle](https://shayanhabibi.github.io/Partas.Build/llms-full.txt): every page above, inlined as plain text
+- [Build overview](https://shayanhabibi.github.io/Partas.Build/build/build-overview/)
+- [CE operations](https://shayanhabibi.github.io/Partas.Build/build/computation-expression-operations/)
+- [API reference](https://shayanhabibi.github.io/Partas.Build/reference/)

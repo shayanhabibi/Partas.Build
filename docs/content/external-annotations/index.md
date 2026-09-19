@@ -41,7 +41,7 @@ The generator therefore emits at member level wherever the attribute sits on a m
 | `Partas.Build.ExternalAnnotations` | Partas.Build stages and commands over the generator, plus the MSBuild `.targets` as an embedded resource and a packed `build/` asset. |
 | `Partas.ExternalAnnotations.Tool` | The `partas-annotations` dotnet tool: a `rootCommand` over the library's three commands. |
 
-The tool is what MSBuild shells out to during pack — see [the F# surface](external-annotations-api.html) if you
+The tool is what MSBuild shells out to during pack — see [the F# surface](external-annotations-api/) if you
 would rather own the behaviour in your own build.
 
 Your assembly is never loaded for execution and its target framework is irrelevant: any tool host produces

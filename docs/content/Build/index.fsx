@@ -341,7 +341,7 @@ let testAll =
 
 (**
 The same works one layer up: a `pipeline` is a value, and a `command` can run several of them in declaration
-order. [Composing reusable blocks](composition.html) goes further — nesting, lists of blocks, and stages that
+order. [Composing reusable blocks](composition/) goes further — nesting, lists of blocks, and stages that
 carry their own inputs.
 
 ### Nameless Pipelines
@@ -701,5 +701,5 @@ the stage and use `runSensitive $"…"` inside it as normal.
 
 ## API reference
 
-The [API reference](reference/index.html) is generated from the XML documentation on each custom operation.
+The [API reference](../reference/) is generated from the XML documentation on each custom operation.
 *)

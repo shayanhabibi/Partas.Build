@@ -15,7 +15,7 @@ type StageSoftCancelledException(msg: string) = inherit Exception(msg)
 
 /// <summary>Carries a <see cref="T:Partas.Build.Internal.FailureCause"/> out of the operation that produced it.</summary>
 /// <remarks>Its own <c>Message</c> matches each case of <c>cause</c> by hand rather than through
-/// <see cref="M:Partas.Build.Internal.FailureCause.describe"/>: the two are written separately and can drift.</remarks>
+/// <see cref="M:Partas.Build.ErrorHandling.FailureCause.describe"/>: the two are written separately and can drift.</remarks>
 type OperationFailedException(cause: FailureCause) =
     inherit Exception(
         match cause with

@@ -2,7 +2,6 @@ module Partas.Build.CompilerProbe.PipelineProbe
 
 open System
 open System.CommandLine
-open System.ComponentModel
 open Expecto
 open Partas.Build
 open Partas.Build.Internal

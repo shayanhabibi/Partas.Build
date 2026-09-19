@@ -481,6 +481,35 @@ Available overloads:
  - static member StageMap.Map: spec: InputSpec<StageContext> * update: (StageContext -> StageContext) -> InputSpec<StageContext> // Argument 'spec' doesn't match
 ```
 
+The pipeline side has only two states, not three, so the `UnsupportedPipelineState` fixture's two statements
+fail with different codes: the mapping helper still answers `FS0001`, but the custom operation answers `FS0041`,
+because `PipelineSettingsBuilder.timeout` is generic over `^State` rather than declaring `PipelineContext` as a
+plain overload the way `StageBuilder.retry` does. Verbatim from the `UnsupportedPipelineState` fixture's build
+output:
+
+```
+UnsupportedPipelineState.fs(9,5): error FS0001: No overloads match for method 'Map'.
+
+Known return type: InputSpec<int>
+
+Known type parameters: < InputSpec<int> , (PipelineContext -> PipelineContext) >
+
+Available overloads:
+ - static member PipelineMap.Map: build: BuildPipeline * update: (PipelineContext -> PipelineContext) -> BuildPipeline // Argument 'build' doesn't match
+ - static member PipelineMap.Map: spec: InputSpec<BuildPipeline> * update: (PipelineContext -> PipelineContext) -> InputSpec<BuildPipeline> // Argument 'spec' doesn't match
+
+UnsupportedPipelineState.fs(12,69): error FS0041: No overloads match for method 'timeout'.
+
+Known types of arguments: InputSpec<int> * int
+
+Available overloads:
+ - member PipelineSettingsBuilder.timeout<^State when (^State or PipelineMap) : (static member Map: ^State * (PipelineContext -> PipelineContext) -> ^State)> : state: ^State * seconds: float -> ^State // Argument 'state' doesn't match
+ - member PipelineSettingsBuilder.timeout<^State when (^State or PipelineMap) : (static member Map: ^State * (PipelineContext -> PipelineContext) -> ^State)> : state: ^State * seconds: int<second> -> ^State // Argument 'state' doesn't match
+ - member PipelineSettingsBuilder.timeout<^State when (^State or PipelineMap) : (static member Map: ^State * (PipelineContext -> PipelineContext) -> ^State)> : state: ^State * timeSpan: System.TimeSpan -> ^State // Argument 'state' doesn't match
+```
+
+`CompilerTests.fs` pins only the first statement's `FS0001`, the same shape as the stage fixture's pin.
+
 `InputSpec<InputSpec<_>>` stays unflattened: yielding an input-aware value inside a returned stage is, verbatim
 from the `NestedInputSpec` fixture's build output,
 

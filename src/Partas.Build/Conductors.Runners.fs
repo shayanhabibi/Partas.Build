@@ -17,6 +17,12 @@ module StageContext =
             Logging.PipelineFailed.print message
             raise (PipelineFailedException message)
 
+    /// The exception a step handed back, with the aggregate the await wrapped it in removed.
+    let rec internal awaited (error: exn) =
+        match error with
+        | :? AggregateException as aggregate when aggregate.InnerExceptions.Count = 1 -> awaited aggregate.InnerExceptions[0]
+        | _ -> error
+
     /// The step one attempt is executing, while it is executing.
     [<Struct>]
     type internal InFlightStep = {
@@ -35,8 +41,11 @@ module StageContext =
     /// <summary>The tokens one step of an attempt runs under.</summary>
     /// <remarks>
     /// <c>expiry</c> is the <c>timeoutForStep</c> budget the stage gave the step, running from the moment that
-    /// step starts, so each step of a sequential stage gets the whole budget. Where the stage set no budget it
-    /// is <c>ValueNone</c> and <c>cancellation</c> is the attempt's own source.
+    /// step starts and the only clock over it, so each step of a sequential stage gets the whole budget. Where
+    /// the stage set no budget it is <c>ValueNone</c> and <c>cancellation</c> is the attempt's own source.
+    /// <para><c>cancellation</c> is the token the step's whole body runs under, a sub-stage and a command
+    /// alike: a command reads it through <c>Async.CancellationToken</c> and registers its kill on it, so an
+    /// expiry takes the process tree with it.</para>
     /// </remarks>
     [<Struct>]
     type internal StepBudget = {
@@ -162,8 +171,8 @@ module StageContext =
         let pipeline = getParentPipeline stage
         let timings = Internal.getTimings pipeline index stage
         let reports = Internal.getReports pipeline index stage
-        // Where this stage sits in the run. A condition stage belongs to the condition that runs it and takes
-        // the address of the stage it decides, which nothing records.
+        // Where this stage sits in the run. A condition stage takes no position of its own: its address, its
+        // timing and its report all belong to the condition that runs it, and none of the three is recorded.
         let address =
             let enclosing = mapStageParentContext ScopeAddress.root _.Address stage
             match index with
@@ -293,18 +302,31 @@ module StageContext =
                         try
                             try
                                 inFlight[i] <- { index = i; label = Internal.getStepLabel step; prefix = escapedPrefix }
+                                let budget = takeBudget i
+                                // The step's work runs under the budget this step was given, so the token it
+                                // reads through `Async.CancellationToken` — the one a command registers its
+                                // kill on — expires with that budget.
+                                let work =
+                                    Async.StartAsTask(
+                                        stepHandler {
+                                            inFlight = inFlight
+                                            stage = stage
+                                            stepStage = stepStage
+                                            parallelism = parallelism
+                                            i = i
+                                            escapedPrefix = escapedPrefix
+                                            linkedStepCts = budget
+                                            evidence = evidence
+                                            stepErrorCts = stepErrorCts
+                                        } step,
+                                        cancellationToken = budget.Token)
+
                                 let! outcome =
-                                    stepHandler {
-                                        inFlight = inFlight
-                                        stage = stage
-                                        stepStage = stepStage
-                                        parallelism = parallelism
-                                        i = i
-                                        escapedPrefix = escapedPrefix
-                                        linkedStepCts = takeBudget i
-                                        evidence = evidence
-                                        stepErrorCts = stepErrorCts
-                                    } step
+                                    async {
+                                        try return! Async.AwaitTask work
+                                        with error -> return raise (awaited error)
+                                    }
+
                                 inFlight.TryRemove i |> ignore
                                 return outcome
                             with
@@ -312,6 +334,12 @@ module StageContext =
                                 raise ex
                                 return false
                             | :? PipelineFailedException as ex ->
+                                raise ex
+                                return false
+                            // A token the step ran under fired: its own budget, or the attempt's. The step
+                            // stays in flight and the cancellation travels, which is what the attempt
+                            // classifies once it has unwound.
+                            | :? OperationCanceledException as ex ->
                                 raise ex
                                 return false
                             | :? StepSoftCancelledException as ex ->
@@ -344,89 +372,98 @@ module StageContext =
                         finally flush ()
                     })
                 try
-                    let ts =
-                        // Async.StartChild is what applies timeoutForStep, and it starts the work there and then, so it
-                        // has to happen inside the handler. Doing it while producing the sequence instead lets the
-                        // throttle pull -- and therefore start -- one more step than it is meant to have in flight.
-                        let inline asyncHandler step = async {
-                            if stage.ContinueStepsOnFailure || isSuccess then
-                                let! child = Async.StartChild(step, timeoutForStep)
-                                let! result = child
-                                if not result && not stage.ContinueStepsOnFailure then stepErrorCts.Cancel()
-                                AND_SUCCESS result
-                        }
-                        let steps = AsyncSeq.ofSeq steps
-                        match parallelism with
-                        | ValueSome p when p > 1 ->
-                            steps
-                            |> AsyncSeq.iterAsyncParallelThrottled p asyncHandler
-                        | ValueSome p when p < 1 ->
-                            steps
-                            |> AsyncSeq.iterAsyncParallel asyncHandler
-                        | _ ->
-                            steps
-                            |> AsyncSeq.iterAsync asyncHandler
-                    Async.RunSynchronously(ts, cancellationToken = linkedCts.Token)
-                with
-                | :? PipelineCancelledException as ex -> FAIL(); cancelled <- true; raise ex
-                | :? PipelineFailedException as ex -> FAIL(); raise ex
-                | _ when isStageSoftCancelled -> SUCCESS()
-                | ex ->
-                    FAIL()
-                    escaped <- true
-                    if linkedCts.Token.IsCancellationRequested && not stepErrorCts.IsCancellationRequested then
-                        $"{buildCurrentStepPrefix stage |> Markup.escape}> stage is cancelled or timed-out."
-                        |> Markup.yellow
-                        |> nprintn stage
-                    else if not stepErrorCts.IsCancellationRequested then
-                        $"{buildCurrentStepPrefix stage |> Markup.escape}> stage's step failed."
-                        |> Markup.red
-                        |> printn
-                        AnsiConsole.WriteException ex
+                    try
+                        let ts =
+                            // The budget each step was given is the only clock over it, so `Async.StartChild`
+                            // takes none. It starts the work there and then, which is why it has to happen inside
+                            // the handler: producing the sequence instead lets the throttle pull -- and therefore
+                            // start -- one more step than it is meant to have in flight.
+                            let inline asyncHandler step = async {
+                                if stage.ContinueStepsOnFailure || isSuccess then
+                                    let! child = Async.StartChild step
+                                    let! result = child
+                                    if not result && not stage.ContinueStepsOnFailure then stepErrorCts.Cancel()
+                                    AND_SUCCESS result
+                            }
+                            let steps = AsyncSeq.ofSeq steps
+                            match parallelism with
+                            | ValueSome p when p > 1 ->
+                                steps
+                                |> AsyncSeq.iterAsyncParallelThrottled p asyncHandler
+                            | ValueSome p when p < 1 ->
+                                steps
+                                |> AsyncSeq.iterAsyncParallel asyncHandler
+                            | _ ->
+                                steps
+                                |> AsyncSeq.iterAsync asyncHandler
+                        Async.RunSynchronously(ts, cancellationToken = linkedCts.Token)
+                    with
+                    | :? PipelineCancelledException as ex -> FAIL(); cancelled <- true; raise ex
+                    | :? PipelineFailedException as ex -> FAIL(); raise ex
+                    | _ when isStageSoftCancelled -> SUCCESS()
+                    | ex ->
+                        FAIL()
+                        escaped <- true
+                        if
+                            (linkedCts.Token.IsCancellationRequested || stepBudgets.Keys |> Seq.exists expired)
+                            && not stepErrorCts.IsCancellationRequested
+                        then
+                            $"{buildCurrentStepPrefix stage |> Markup.escape}> stage is cancelled or timed-out."
+                            |> Markup.yellow
+                            |> nprintn stage
+                        else if not stepErrorCts.IsCancellationRequested then
+                            $"{buildCurrentStepPrefix stage |> Markup.escape}> stage's step failed."
+                            |> Markup.red
+                            |> printn
+                            AnsiConsole.WriteException ex
 
-                // Which token fired decides this, and only the runner holds them: `cts` is the budget this
-                // stage was given and each `StepBudget.expiry` the budget it gave one of its steps, so an
-                // expiry of either is a failure of this stage and reports `FailureCause.TimedOut`. `ct`
-                // belongs to an ancestor and `stepErrorCts` to stage policy; a step either of those ended
-                // stays a cancellation, reported as one above. The stage's own budget catches every step
-                // still in flight — several, under `parallel'` — and a step budget catches its own step.
-                if
-                    escaped
-                    && (cts.IsCancellationRequested || stepBudgets.Keys |> Seq.exists expired)
-                    && not ct.IsCancellationRequested
-                    && not stepErrorCts.IsCancellationRequested
-                then
-                    let message = FailureCause.describe FailureCause.TimedOut
-                    let caught =
-                        inFlight.Values
-                        |> Seq.filter (fun step -> cts.IsCancellationRequested || expired step.index)
-                        |> Seq.sortBy _.index
-                        |> List.ofSeq
+                    // Which token fired decides this, and only the runner holds them: `cts` is the budget this
+                    // stage was given and each `StepBudget.expiry` the budget it gave one of its steps, so an
+                    // expiry of either is a failure of this stage and reports `FailureCause.TimedOut`. `ct`
+                    // belongs to an ancestor and `stepErrorCts` to stage policy; a step either of those ended
+                    // stays a cancellation, reported as one above. The stage's own budget catches every step
+                    // still in flight — several, under `parallel'` — and a step budget catches its own step.
+                    if
+                        escaped
+                        && (cts.IsCancellationRequested || stepBudgets.Keys |> Seq.exists expired)
+                        && not ct.IsCancellationRequested
+                        && not stepErrorCts.IsCancellationRequested
+                    then
+                        let message = FailureCause.describe FailureCause.TimedOut
+                        let caught =
+                            inFlight.Values
+                            |> Seq.filter (fun step -> cts.IsCancellationRequested || expired step.index)
+                            |> Seq.sortBy _.index
+                            |> List.ofSeq
 
-                    let timedOut =
-                        match caught with
-                        // A budget that expired between two steps leaves the stage itself as the whole of the
-                        // evidence, and the stage carries no step index.
-                        | [] -> [ { index = StepFailure.NoStep; label = ValueNone; prefix = buildCurrentStepPrefix stage } ]
-                        | steps -> steps
+                        let timedOut =
+                            match caught with
+                            // A budget that expired between two steps leaves the stage itself as the whole of the
+                            // evidence, and the stage carries no step index.
+                            | [] -> [ { index = StepFailure.NoStep; label = ValueNone; prefix = buildCurrentStepPrefix stage } ]
+                            | steps -> steps
 
-                    FAIL()
+                        FAIL()
 
-                    for step in timedOut do
-                        let line = if parallelism.IsNone && getNoPrefixForStep stage then message else $"{step.prefix} {message}"
-                        printError stage line
-                        evidence |> StepEvidence.addFailure { Index = step.index; Label = step.label; Cause = FailureCause.TimedOut }
-                        if not stage.ContinueStageOnFailure then
-                            evidence |> StepEvidence.addExceptions [ Exception line ]
-                elif escaped && ct.IsCancellationRequested then
-                    cancelled <- true
+                        for step in timedOut do
+                            let line = if parallelism.IsNone && getNoPrefixForStep stage then message else $"{step.prefix} {message}"
+                            printError stage line
+                            evidence |> StepEvidence.addFailure { Index = step.index; Label = step.label; Cause = FailureCause.TimedOut }
+                            if not stage.ContinueStageOnFailure then
+                                evidence |> StepEvidence.addExceptions [ Exception line ]
+                    elif escaped && ct.IsCancellationRequested then
+                        cancelled <- true
 
-                for budget in stepBudgets.Values do
-                    // A step with no budget of its own ran under the attempt's source, which the attempt owns.
-                    budget.expiry
-                    |> ValueOption.iter (fun expiry ->
-                        budget.cancellation.Dispose()
-                        expiry.Dispose())
+                finally
+                    // A step still in flight was abandoned rather than finished and may still read the token it
+                    // was given, so its sources are left to the collector. A step the stage gave no budget ran
+                    // under the attempt's own source, which the attempt owns.
+                    for KeyValue(index, budget) in stepBudgets do
+                        if not (inFlight.ContainsKey index) then
+                            budget.expiry
+                            |> ValueOption.iter (fun expiry ->
+                                budget.cancellation.Dispose()
+                                expiry.Dispose())
 
                 if not isSuccess && retriesLeft > 0 && not cts.IsCancellationRequested && not ct.IsCancellationRequested then
                     $"%s{getNamePath stage |> Markup.escape} failed. Retrying, {retriesLeft} attempt(s) left."
@@ -469,6 +506,10 @@ module StageContext =
                     for failure in raised do
                         printError stage (FailureCause.describe failure.Cause)
 
+                    // On the stage's own report, behind the cause it failed with, so a cause a handler raised
+                    // travels to the pipeline alongside it and a reader of `ScopeReports.propagated` sees both.
+                    // A cause raised by a *pipeline* handler propagates nowhere: `FailureContext.handlerReport`
+                    // is where that asymmetry is written down.
                     reported <- { reported with Failures = reported.Failures @ raised }
 
             timings

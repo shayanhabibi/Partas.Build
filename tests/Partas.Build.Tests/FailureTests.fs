@@ -17,6 +17,20 @@ open Partas.Build.Tests.Helpers
 /// A stage whose steps write nowhere, so a command it runs leaves the test log alone.
 let private silently (stage: StageContext) = { stage with Output = ValueSome StageOutput.Silent }
 
+/// <summary>A command that outlives any budget a test gives it, and starts a grandchild of its own.</summary>
+/// <remarks>On Windows <c>cmd</c> is the process the runner starts and <c>ping</c> the one that has to die
+/// with it.</remarks>
+let private sleeps =
+    if Runtime.InteropServices.RuntimeInformation.IsOSPlatform Runtime.InteropServices.OSPlatform.Windows
+    then "cmd /c ping -n 30 127.0.0.1"
+    else "sh -c 'sleep 30'"
+
+let private sleepProcessName =
+    if Runtime.InteropServices.RuntimeInformation.IsOSPlatform Runtime.InteropServices.OSPlatform.Windows then "PING" else "sleep"
+
+/// How many of those grandchildren the machine is running.
+let private sleepingProcesses () = Diagnostics.Process.GetProcessesByName sleepProcessName |> Array.length
+
 /// The report of the scope named <paramref name="name"/>, wherever it sits in <paramref name="reports"/>.
 let private scope (reports: ScopeReports) name =
     match ScopeReports.all reports |> List.tryFind (fun report -> report.Name = name) with
@@ -639,6 +653,92 @@ let handlers =
                 Expect.equal [ for failure in context.Failures -> failure.Index, failure.Cause ] [ 1, FailureCause.TimedOut ]
                     "the step that overran the budget it was given is the one the cause names"
             | other -> failtestf "one handler invocation should be recorded; got %i" other.Length
+        }
+
+        test "a step over its budget takes the process tree it started with it" {
+            let before = sleepingProcesses ()
+            let watch = Diagnostics.Stopwatch.StartNew()
+            let handled = ResizeArray<FailureContext>()
+
+            let built =
+                stage "sleep" {
+                    timeoutForStep 2.0
+                    onFailure handled.Add
+                    run sleeps
+                }
+
+            let report = quietly (fun () -> reportStage built)
+            watch.Stop()
+
+            Expect.isTrue (ScopeReport.failed report) "a step that outlived its budget failed the stage"
+            Expect.isLessThan watch.ElapsedMilliseconds 20000L "the process is killed at the budget rather than waited out"
+
+            match handled |> List.ofSeq with
+            | [ context ] ->
+                Expect.equal [ for failure in context.Failures -> failure.Index, failure.Cause ] [ 0, FailureCause.TimedOut ]
+                    "the step that overran is the one the cause names"
+            | other -> failtestf "one handler invocation should be recorded; got %i" other.Length
+
+            // The kill is asynchronous, and it is the grandchild that used to survive it.
+            Thread.Sleep 1500
+            Expect.equal (sleepingProcesses ()) before "the whole tree goes with the budget, not just the process the runner started"
+        }
+
+        test "a step budget under parallel' ends its own step while its sub-stage siblings finish" {
+            let handled = ResizeArray<FailureContext>()
+
+            let built =
+                stage "workers" {
+                    parallel' 3
+                    timeoutForStep 1.0
+                    onFailure handled.Add
+                    stage "quick" { run (fun (_: StageContext) -> async { do! Async.Sleep 200 }) }
+                    run sleeping
+                    stage "also quick" { run (fun (_: StageContext) -> async { do! Async.Sleep 300 }) }
+                }
+
+            let report = quietly (fun () -> reportStage built)
+
+            Expect.isTrue (ScopeReport.failed report) "the step that overran its budget failed the stage"
+            Expect.equal [ for failure in ScopeReport.failures report -> failure.Index, failure.Cause ] [ 1, FailureCause.TimedOut ]
+                "the whole tree records one cause: the step whose own budget expired"
+            Expect.equal [ for nested in report.Nested -> nested.Outcome ] [ StageOutcome.Succeeded; StageOutcome.Succeeded ]
+                "the sub-stages that finished inside their own budgets succeeded, and the sources they ran under outlived them"
+
+            match handled |> List.ofSeq with
+            | [ context ] -> Expect.equal context.Scope "workers" "the stage that set the budget is the one that failed"
+            | other -> failtestf "one handler invocation should be recorded; got %i" other.Length
+        }
+
+        test "a cause a stage handler raised travels to the pipeline behind the stage's own" {
+            let work =
+                pipeline "release" {
+                    quiet
+                    stage "sign" {
+                        onFailure (fun _ -> raise (InvalidOperationException "the reporter is down"))
+                        run (fun (_: StageContext) -> Error "unsigned")
+                    }
+                }
+
+            let raised =
+                quietly (fun () ->
+                    try
+                        PipelineContext.run work
+                        None
+                    with :? PipelineFailedException as ex -> Some ex)
+
+            match raised with
+            | None -> failtest "a failing stage should fail the run"
+            | Some ex ->
+                match ex.InnerException with
+                | :? OperationFailedException as failed ->
+                    Expect.equal failed.Cause (FailureCause.Reported "unsigned") "the run fails with the cause the stage failed with"
+                | other -> failtestf "the pipeline should carry the structured cause; got %A" other
+
+            Expect.equal
+                [ for failure in ScopeReports.propagated work.Reports -> failure.Index, failure.Label ]
+                [ 0, ValueNone; StepFailure.NoStep, ValueSome FailureContext.HandlerLabel ]
+                "a cause a stage handler raised reaches the pipeline behind the stage's own, where a cause raised by the pipeline's own handler reaches it nowhere"
         }
 
         test "a pipeline timeout cancels its stages and runs no handler" {

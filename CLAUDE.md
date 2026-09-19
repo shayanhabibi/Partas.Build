@@ -37,7 +37,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 ## Current state (verify before assuming)
 
 - Phases 0-7 of `PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (220 Expecto tests across three suites — 80 in `tests/Partas.Build.Tests`, one file per layer, plus `tests/Partas.Build.ExternalAnnotations.Tests` and `tests/Partas.ExternalAnnotations.Tests`). The `Build/` CLI is itself written against the library, so it is the first thing a breaking change breaks.
-- The DSL exists end to end: `inputs` (`Builders/Inputs.fs`), `stage` (`Builders/Stage.fs`), `pipeline` (`Builders/Pipeline.fs`), `command`/`rootCommand` (`Builders/Command.fs`). A stage that declares an input turns its pipeline into an `InputSpec<PipelineContext>`, and the command registers whatever those specs declare. Conditions are in `Builders/Conditions.fs` — `whenAll`/`whenAny`/`whenNot`/`whenEnv`/`whenStage` plus the `when'`/`whenEnvVar`/`whenBranch`/`when{Windows,Linux,OSX}` operations on `StageBuilder`. `Builders.fs` is still an empty stub.
+- The DSL exists end to end: `inputs` (`Builders/Inputs.fs`), `stage` (`Builders/Stage.fs`), `pipeline` (`Builders/Pipeline.fs`), `command`/`rootCommand` (`Builders/Command.fs`). A stage that declares an input turns its pipeline into an `InputSpec<PipelineContext>`, and the command registers whatever those specs declare. Conditions are in `Builders/Conditions.fs` — `whenAll`/`whenAny`/`whenNot`/`whenEnv`/`whenStage` plus the `when'`/`whenEnvVar`/`whenBranch`/`when{Windows,Linux,OSX}` operations on `StageBuilder`.
 - A command carries `PipelineDefaults: BuildPipeline` and takes the pipeline-level operations itself (`workingDir`, `envVars`, the three timeouts, `acceptExitCodes`, the output operations, `noPrefixForStep`/`noStdRedirectForStep`, `runBeforeEachStage`/`runAfterEachStage`, `post`, `verbosity`/`verbose`/`quiet`), each one built through `CommandBuilderBase.MapPipelineDefault`. They are **defaults, not overrides**: `PipelineContext.applyDefaults` copies a setting across only where the pipeline left it at the value `PipelineContext.create` gave it, so a pipeline that sets the same thing wins. See *Command defaults* below.
 - `run`/`runSensitive` start real processes through `Process.fs`: a `Cmd` keeps the executable and its arguments apart all the way to `ProcessStartInfo.ArgumentList`, so the platform does the escaping. Interpolate through the `cmd` helper — `run (cmd $"dotnet build {project}")` — because `run $"..."` binds to the `string` overload and flattens the holes; `runSensitive $"..."` takes the `FormattableString` directly and masks every hole as `***`. There is no `Fake.Core.Process` dependency; `PLAN.md`'s *The command runner* records why.
 - Fun.Build's `Mode` (`Execution | CommandHelp | Verification`) has **not** been ported. `PipelineContext.Verify` is a placeholder and `buildPipelineVerification` is commented out. `CommandHelp` is redundant now that System.CommandLine generates help; whether `Verification` survives is an open question in `PLAN.md`.
@@ -45,12 +45,12 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Architecture notes
 
-Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Inputs.fs` → `Types.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `Builders/Command.fs` → `Baked.fs` → `Builders.fs`.
+Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Environment.fs` → `Timing.fs` → `Producer.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
 
 `Explain.fs` renders the resolved stage tree `--explain` prints, as text and nothing else: it writes to no
 console and to no stage sink, so a stage that silences or captures its execution output is still described in
 full. It compiles before `Builders/Command.fs`, whose `applyTo` registers the flag on every command and prints
-what the renderer returns; it depends on nothing beyond `Types.fs` and the `Input.*` combinators. A command that
+what the renderer returns; it depends on nothing beyond the core model and the `Input.*` combinators. A command that
 runs pipelines gets `Explain.option` and reads it in its own action. A grouping command gets
 `Explain.groupingOption`, which carries the rendering — a list of the subcommands it dispatches to — on the
 option's own `Action`, because such a command deliberately has no action of its own and adding one would displace
@@ -61,7 +61,7 @@ writes it alongside `IsActive`, the structured conditions in `Builders/Condition
 supplies none, because a `bool` argument leaves nothing to report.
 
 `Summary.fs` renders the per-stage timing table printed at the end of a run, as text and nothing else, the
-way `Explain.fs` renders the tree. The timings themselves are collected in `Types.fs`: `PipelineContext.Timings`
+way `Explain.fs` renders the tree. The timings themselves are collected in `Timing.fs` and `Conductors.fs`: `PipelineContext.Timings`
 is a `StageTimings` the stages append a `StageTiming` to as each finishes, reached by walking `ParentContext` up
 to the pipeline. A stage takes an ordinal from `StageTimings.Start()` when it starts and records it alongside
 its parent's, which it reads off `StageContext.TimingOrder` — the field `StageContext.run` sets on the value it
@@ -74,16 +74,17 @@ own line already carries. `Summary.render` sizes its three columns to the ambien
 not fit — the middle of a stage name, the end of an outcome — so the table is one row per stage at any width and
 the `Depth` indent survives an 80-column CI log.
 
-`Baked.fs` is the batteries-included layer over everything before it: ready-made `Input.*`/`Argument.*` definitions
+`src/Partas.Build.Baked` is the batteries-included layer over the library: ready-made `Input.*`/`Argument.*` definitions
 for the options every build CLI ends up wanting (`--configuration`, `--nuget-key`, `--project`, `--ci`, a version
 bump), the semver arithmetic in `Version`, and `IO.writeVersion`/`IO.bumpVersion` for editing a project file's
 `<Version>`. It is the only place in the library that writes to disk.
 
-`Types.fs` interleaves namespaces on purpose, in this order:
-1. `Partas.Build` — public `EnvArg`, pipeline exceptions.
-2. `Partas.Build.Internal` — the core model. `Step` is `StepFn | StepOfStage`, which is why a nested stage *is* one step of its parent and stages nest arbitrarily. `StageParent` links a stage to a parent stage or the pipeline.
-3. `Partas.Build` again — `StageContext` lookups that need `FsToolkit`/`HttpClient`.
-4. `Partas.Build.Internal.Runners` — the execution engine (`StageContext.run`, `PipelineContext.run`).
+The core model, once a single `Types.fs`, is split by responsibility and compiles in this order:
+1. `Exceptions.fs` (`Partas.Build.ErrorHandling`) — pipeline exceptions, `FailureCause`, `StepOutcome`.
+2. `Output.fs` (`Partas.Build.OutputHandling`) — `OutputCapture`, `StageOutput`, markup.
+3. `Environment.fs`, `Timing.fs`, `Producer.fs` (`Partas.Build`) — `EnvArg`; `StageTimings`; `ProducerId`/`ProducerRef`/`ProducerValues` and the `ExecutionState` type.
+4. `Conductors.fs` — `Partas.Build.Internal` first: `StageContext`, `PipelineContext`, `CommandSpec`. `Step` is `StepFn | Operation | StepOfStage`, which is why a nested stage *is* one step of its parent and stages nest arbitrarily. `StageParent` links a stage to a parent stage or the pipeline. The file ends in `Partas.Build` with the `StageContext` lookups that need `FsToolkit`/`HttpClient`.
+5. `Conductors.Runners.fs` (`Partas.Build.Internal.Runners`) — the execution engine (`StageContext.run`, `PipelineContext.run`).
 
 The `Build*` function aliases (`BuildStage`, `BuildStep`, `BuildStageIsActive`, …) no longer take an `ActionContext`: stages are pure and the aliases match Fun.Build's originals, except that Fun.Build declares them as delegates where this port uses plain function types. That difference has one mechanical consequence — **do not mark a CE entry member `inline` when it applies a `Build*` alias**, or Release builds fail with `FS1118` (Debug compiles fine). `Run` members are the usual offenders.
 

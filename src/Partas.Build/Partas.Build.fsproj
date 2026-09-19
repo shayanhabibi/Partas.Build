@@ -32,6 +32,7 @@
         <Compile Include="Builders\StageSettings.fs" />
         <Compile Include="Builders\Stage.fs" />
         <Compile Include="Builders\Conditions.fs" />
+        <Compile Include="Builders\PipelineSettings.fs" />
         <Compile Include="Builders\Pipeline.fs" />
         <Compile Include="Builders\Inputs.fs" />
         <Compile Include="Explain.fs" />

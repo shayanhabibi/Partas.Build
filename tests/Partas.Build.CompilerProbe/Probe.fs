@@ -27,6 +27,7 @@ let private parse (inputs: ActionInput list) =
 let private configuration () = Input.option<string> "--configuration" |> Input.def "Debug"
 
 let private tests = testList "compiler probe" [
+    PipelineProbe.tests
     test "the inherited setting serves both representations across an assembly boundary" {
         let reads = ref 0
         let config = configuration ()

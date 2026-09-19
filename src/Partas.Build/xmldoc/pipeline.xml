@@ -23,9 +23,4 @@
     <remarks>Setting this replaces the previous hook rather than chaining onto it. The hook receives the
     <c>StageContext</c> of the stage it brackets, and runs for every stage in the pipeline.</remarks>
   </hooks>
-  <mirror>
-    <remarks>This is the <c>InputSpec&lt;BuildPipeline></c> mirror of the operation of the same name. It exists so
-    that a setting placed <em>after</em> a stage that declares CLI inputs is still accepted; without it the
-    placement would be an overload error rather than a no-op. The behaviour is identical.</remarks>
-  </mirror>
 </pipeline>

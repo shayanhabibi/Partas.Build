@@ -14,6 +14,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <Compile Include="PipelineProbe.fs"/>
         <Compile Include="Probe.fs"/>
     </ItemGroup>
 

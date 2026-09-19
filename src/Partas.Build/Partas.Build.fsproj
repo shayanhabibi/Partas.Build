@@ -9,7 +9,7 @@
         <Title>Partas.Build</Title>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <!-- Owned by `dotnet run bump`; CI packs whatever this says. -->
-        <Version>0.6.2</Version>
+        <Version>0.6.3</Version>
         <AssemblyVersion>0.0.0.0</AssemblyVersion>
     </PropertyGroup>
 
@@ -35,6 +35,7 @@
         <Compile Include="Builders\PipelineSettings.fs" />
         <Compile Include="Builders\Pipeline.fs" />
         <Compile Include="Builders\Inputs.fs" />
+        <Compile Include="Builders\Dependencies.fs" />
         <Compile Include="Explain.fs" />
         <Compile Include="Summary.fs" />
         <Compile Include="Builders\Command.fs" />

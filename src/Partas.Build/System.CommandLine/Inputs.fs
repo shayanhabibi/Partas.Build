@@ -108,6 +108,7 @@ type ActionInput<'T>(inputType: ActionInputSource) =
 type InputSpec<'T> = { Inputs: ActionInput list; Read: ParseResult -> 'T }
 
 module InputSpec =
+    let empty = { Inputs = []; Read = fun _ -> () }
     /// Concatenates input sets, keeping the first occurrence of each input.
     /// <c>ActionInput</c> has no custom equality, so this compares by reference: the same <c>let</c>-bound
     /// option declared by two specs collapses to one, while two separately created options do not.

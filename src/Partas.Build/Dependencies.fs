@@ -140,6 +140,14 @@ module Producer =
         Requires = dependencies.Requires
         Prepare = fun parseResult values -> dependencies.Read values |> Result.map (execute (inputs.Read parseResult))
     }
+    /// <summary>
+    /// Defines a producer identified operation which has no dependencies.
+    /// </summary>
+    let emptyDefine
+        (name: string)
+        (operation: Operation<'T>)
+        : Producer<'T> =
+        define name InputSpec.empty DependencySpec.empty (fun () () -> operation)
 
 /// <summary>Stages defined from what they consume.</summary>
 module Stage =

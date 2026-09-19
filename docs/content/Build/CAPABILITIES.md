@@ -139,6 +139,7 @@ Declaring one registers its identity and harvests those inputs. Nothing runs unt
 |---|---|
 | `Producer.define name inputs dependencies execute` | Declares a producer: its own `InputSpec<'I>`, a `DependencySpec<'D>` of prerequisites, and the work computing `'T` from both |
 | `Producer.stage` | Places a producer at this exact point of a pipeline or parent stage, rather than leaving its placement implicit |
+| `Producer.emptyDefine name execute` | Declares a producer with no inputs or dependencies; identifies the operation as one that should only be run once. |
 | `DependencySpec.empty` | A specification with no prerequisites |
 | `DependencySpec.require producer` | A specification requiring one producer and reading its result |
 | `DependencySpec.map fn spec` | The prerequisites of `spec`, its value read through `fn` |

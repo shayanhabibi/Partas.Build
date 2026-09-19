@@ -6,10 +6,9 @@ order: 2
 ---
 *)
 (*** hide ***)
-// The sources are #load-ed rather than #r-ing a built DLL, for two reasons: the guide then type-checks against
-// the code as written instead of against the last build, and nothing holds a file lock — a #r-ed assembly stays
-// loaded for the lifetime of the site watcher (`dotnet run --project Build.fsproj -- docs --watch`), which on
-// Windows makes rebuilding the library fail.
+// #load-ed rather than #r-ed: the guide type-checks against the code as written, not the last build, and no
+// #r-ed assembly holds a file lock — one held open by the site watcher (`dotnet run --project Build.fsproj --
+// docs --watch`) breaks a rebuild of the library on Windows.
 // Keep this list in the same order as the <Compile> items in Partas.Build.fsproj.
 #r "nuget: FSharp.Control.AsyncSeq, 4.15.0"
 #r "nuget: FsToolkit.ErrorHandling, 5.2.0"
@@ -54,14 +53,12 @@ open Partas.Build.Internal
 (**
 <img src=".\content\img\sun-ztu.jpeg" width="50%" />
 
-Command line & build pipelines in F#. Composable, hints of elderberry - thick in tannins; a glorious vintage.
+Command line and build pipelines in F#. Composable, hints of elderberry, thick in tannins, a glorious vintage.
 
-A pipeline DSL originally based off [Fun.Build](https://github.com/slaveOftime/Fun.Build) that scaffolds over
-[FSharp.SystemCommandLine](https://github.com/jordanmarr/FSharp.SystemCommandLine) inputs and commands to build
-no nonsense CLIs.
-
-You declare CLI inputs where you use them, and they get lifted into the command line help section for the commands
-the pipeline runs. Automatic validation and help generation.
+A pipeline DSL based on [Fun.Build](https://github.com/slaveOftime/Fun.Build), scaffolded over
+[FSharp.SystemCommandLine](https://github.com/jordanmarr/FSharp.SystemCommandLine), for no-nonsense CLIs. CLI
+inputs are declared where used and lifted into the command line help of the commands that run them, with
+automatic validation and help.
 
 ## Layers
 
@@ -89,13 +86,12 @@ let hello =
 
 (**
 
-`step` -> `stage` -> `stage` -> ... -> `pipeline` -> `command` -> `rootCommand`
-
-No execution happens until the root command is run.
+`step` -> `stage` -> `stage` -> ... -> `pipeline` -> `command` -> `rootCommand`. Nothing runs until the root
+command does.
 
 ## Steps
 
-A step is anything yielded inside a `stage`. `run` is heavily overloaded; the three worth knowing are:
+A step is anything yielded inside a `stage`. `run` is heavily overloaded; three overloads matter:
 *)
 
 let steps =
@@ -113,9 +109,9 @@ let steps =
 (**
 ### Interpolation: use `cmd`
 
-`run $"..."` binds the **`string`** overload, which flattens the holes and then re-splits the result on
-whitespace — a path containing a space becomes two arguments. Route interpolation through `cmd`, which keeps
-each hole as exactly one argument and lets the platform do the escaping:
+`run $"..."` binds the **`string`** overload, which flattens the holes and re-splits the result on whitespace.
+A path containing a space becomes two arguments. Route interpolation through `cmd` instead: it keeps each hole
+as exactly one argument and lets the platform do the escaping:
 *)
 
                                    // v------- will break if directly passed verbatim
@@ -127,8 +123,8 @@ let interpolated =
     }
 
 (**
-`runSensitive` takes a `FormattableString` directly — no `cmd` needed — and masks every hole as `***` in the
-log while passing the real value to the process:
+`runSensitive` takes a `FormattableString` directly, needs no `cmd`, and masks every hole as `***` in the log
+while passing the real value to the process:
 *)
 
 let password = "drowssap"
@@ -139,8 +135,8 @@ let login =
     }
 
 (**
-Because it masks *every* hole, build a `Cmd` by hand when only one argument is secret. `Secrets` is a set of
-argument indices:
+It masks *every* hole. Build a `Cmd` by hand when only one argument is secret. `Secrets` is a set of argument
+indices:
 *)
 
 let pushArgs = [ "nuget"; "push"; "bin/x.nupkg"; "--api-key"; password ]
@@ -151,8 +147,8 @@ let push =
     }
 
 (**
-*New in >0.2.2*: Wrap sensitive strings with `Cmd.secret | Cmd.sensitive`. Picked up by any of the command runners;
-but will wrap strings with spaces in quotes.
+*New in >0.2.2*: wrap sensitive strings with `Cmd.secret` or `Cmd.sensitive`. Every command runner picks them
+up and quotes any string containing spaces.
 *)
 
 let pushSecret =
@@ -163,8 +159,8 @@ let pushSecret =
 (**
 ## Conditions
 
-`when'` and friends set whether a stage runs. They **conjoin** — a second condition narrows the first rather
-than replacing it:
+`when'` and its friends set whether a stage runs. They **conjoin**. A second condition narrows the first
+rather than replacing it:
 *)
 
 let conditional =
@@ -176,8 +172,8 @@ let conditional =
 
 (**
 `whenAll`, `whenAny` and `whenNot` are CEs that combine leaf conditions (`branch`, `branches`, `envVar`,
-`platformWindows`, `platformLinux`, `platformOSX`, and a literal `when'`). An empty `whenAll { }` is active —
-the identity of `forall` — while an empty `whenAny { }` is not.
+`platformWindows`, `platformLinux`, `platformOSX`, and a literal `when'`). An empty `whenAll { }` is active,
+the identity of `forall`. An empty `whenAny { }` is not.
 *)
 
 let combined =
@@ -190,13 +186,13 @@ let combined =
     }
 
 (**
-`when'` also accepts a whole `StageContext`, which is *run for real* — side effects and console output
-included — and its success taken as the answer.
+`when'` also accepts a whole `StageContext`. It runs for real, side effects and console output included, and
+its success is the answer.
 
 ## Inputs
 
-A stage that needs a CLI flag binds it in an `inputs` CE. And then jus' fo'get abou' it! It will be lifted into
-any command that asks for it. *Chef's kiss*:
+A stage that needs a CLI flag binds it in an `inputs` CE. It is then lifted into any command that asks for it,
+with no further wiring:
 *)
 
 module Options =
@@ -237,14 +233,13 @@ let build =
     }
 
 (**
-The CE explicitly will not allow you to have a second `let!`. Bind every source in one `let! … and! …`
-block. Otherwise we would not be able to lift the flags into the command line help without evaluating
-pipelines.
+The CE rejects a second `let!`; bind every source in one `let! … and! …` block. Binding this way is what lifts
+flags into the command line help without first evaluating pipelines.
 
 ### Harvesting upward
 
-Whenever a pipeline or stage asks for an input, or has a nested `input` request, it becomes wrapped in
-an `InputSpec<'T>`. These track inputs, and are unioned by reference.
+A pipeline or stage that asks for an input, or nests an `input` request, is wrapped in an `InputSpec<'T>`,
+which tracks inputs and unions them by reference.
 
 `--quick` and `--configuration` appear under `build --help` without being named anywhere but the
 stages that read them:
@@ -263,12 +258,12 @@ let buildCommand =
     }
 
 (**
-Flags therefore sit on the commands whose stages read them, not on the root. `addInput` covers the
-remainder — flags no pipeline asks for that a root command still wants to expose.
+Flags sit on the commands whose stages read them, not on the root. `addInput` covers the remainder: flags no
+pipeline asks for that a root command still wants to expose.
 
 ## Wiring the root
 
-`rootCommand` parses and invokes immediately, returning the process exit code, so it belongs in `main`:
+`rootCommand` parses and invokes immediately, returning the process exit code. It belongs in `main`:
 *)
 
 let main argv =
@@ -278,16 +273,14 @@ let main argv =
     }
 
 (**
-A command with no pipelines is a grouping node: it gets no action (like me until my 20s), so System.CommandLine reports the missing
+A command with no pipelines is a grouping node: it gets no action, so System.CommandLine reports the missing
 subcommand and prints help instead of succeeding silently.
 
 ## Composition
 
 ### Stages nest
 
-A stage can be yielded inside another stage, arbitrarily deep.....
-
-There is no separate grouping concept:
+A stage can be yielded inside another stage, arbitrarily deep, with no separate grouping concept:
 *)
 
 let nested =
@@ -303,8 +296,8 @@ let nested =
 (**
 ### Settings inherit
 
-Settings resolve outward — stage, then parent stage, then pipeline. A pipeline-level `workingDir` or `envVars`
-is the default for every stage that does not override it:
+Settings resolve outward: stage, then parent stage, then pipeline. A pipeline-level `workingDir` or `envVars`
+defaults every stage that does not override it:
 *)
 
 let inherited =
@@ -337,15 +330,15 @@ let testAll =
     }
 
 (**
-The same works one layer up: a `pipeline` is a value, and a `command` can run several of them in declaration
-order. [Composing reusable blocks](composition.fsx) goes further — nesting, lists of blocks, and stages that
-carry their own inputs.
+The same works one layer up: a `pipeline` is a value, and a `command` can run several in declaration order.
+[Composing reusable blocks](composition.fsx) covers nesting, lists of blocks, and stages that carry their own
+inputs.
 
 ### Nameless Pipelines
 
-Short CLI programs/commands can often execute a single pipeline named the same as the command.
-To help with this pattern there is `Command.pipeline`. This inherits its description and name from
-the command it is defined within. It's essentially just `pipeline null { }`.
+A short CLI command often runs a single pipeline named the same as the command. `Command.pipeline` covers
+this: it inherits its description and name from the command it is defined within, essentially `pipeline null
+{ }`.
 
 *)
 
@@ -367,8 +360,8 @@ let namelessPipe =
 A `command` also takes the pipeline settings: `workingDir`, `envVars`, `timeout`, `timeoutForStage`,
 `timeoutForStep`, `acceptExitCodes`, `outputTo`, `silentOutput`, `captureOutput`, `redirectOutput`,
 `noPrefixForStep`, `noStdRedirectForStep`, `runBeforeEachStage`, `runAfterEachStage`, `post`, `verbosity`,
-`verbose` and `quiet`. Written on the command they are **defaults for every pipeline the command runs**, which
-saves repeating the same three lines in each of them:
+`verbose` and `quiet`. Set on the command, these are **defaults for every pipeline the command runs**, saving
+repetition across pipelines:
 *)
 
 let ciCommand =
@@ -385,29 +378,29 @@ let ciCommand =
     }
 
 (**
-A default never overwrites a pipeline that set the same thing for itself — the pipeline wins, whichever order
-the two were written in. A command default written *below* the pipelines applies to them just the same, because
-defaults are folded in once the whole command is built rather than as each pipeline is yielded.
+A default never overwrites a pipeline's own setting: the pipeline wins regardless of write order. A default
+written *below* the pipelines still applies, because defaults are folded in once the whole command is built,
+not as each pipeline is yielded.
 
-"Set the same thing for itself" is decided against a freshly created pipeline: a setting still holding its
-initial value counts as untouched. So the optional settings (`workingDir`, the timeouts, `outputTo` and
-friends, `verbosity`) hand over as soon as the pipeline names them, `post` hands over as soon as the pipeline
-declares any post stage, `acceptExitCodes` as soon as the pipeline widens the set beyond `0`, and the hooks as
-soon as the pipeline installs one. `envVars` merges per variable: the pipeline keeps the keys it set, and the
-rest of the command's still arrive. The two flags `noPrefixForStep` and `noStdRedirectForStep` are plain
-booleans with no "unset" to detect, so a pipeline that sets one to the value it already had cannot be told
-apart from one that never mentioned it.
+A setting counts as the pipeline's own once it differs from a freshly created pipeline's initial value:
 
-Stages are never touched: a command default fills in pipeline settings only, and stage-level settings still
-override what they inherit.
+- `workingDir`, the timeouts, `outputTo` and friends, `verbosity`: hand over as soon as the pipeline names them.
+- `post`: hands over as soon as the pipeline declares a post stage.
+- `acceptExitCodes`: hands over as soon as it widens the set beyond `0`.
+- the hooks: hand over as soon as one is installed.
+- `envVars`: merges per variable — keys the pipeline set stay, the rest arrive from the command.
+- `noPrefixForStep`, `noStdRedirectForStep`: plain booleans with no "unset" state, so setting one to its
+  existing value is indistinguishable from not setting it.
+
+Stages are never touched: a command default fills in pipeline settings only.
 
 ## Advanced
 
 ### Parallelism
 
 `parallel'` makes a stage run its steps concurrently. It takes a flag, a throttle, or a function returning
-either — `StageContext -> bool`, `-> int voption`, `-> Choice<bool, int>`, `-> Choice<int, bool>`. Every
-overload lands on the same `int voption`:
+either: `StageContext -> bool`, `-> int voption`, `-> Choice<bool, int>`, `-> Choice<int, bool>`. Every
+overload resolves to the same `int voption`:
 
 | You write | Resolves to | Behaviour |
 |---|---|---|
@@ -429,7 +422,7 @@ let fanOut =
     }
 
 (**
-The bound is exact — a stage set to `2` never has a third step in flight.
+The bound is exact: a stage set to `2` never has a third step in flight.
 
 To choose a mode at runtime, return the choice from a single condition rather than writing two operations:
 *)
@@ -444,9 +437,9 @@ let adaptive =
 (**
 ### Settings overwrite, conditions conjoin
 
-The two halves of the stage CE compose differently, and mixing them up is the most common surprise.
-`parallel'`, `workingDir`, `timeout` and the rest are **settings**: the last one written wins, and an earlier
-one leaves no trace.
+The two halves of the stage CE compose differently. Mixing them up is the most common surprise. `parallel'`,
+`workingDir`, `timeout` and the rest are **settings**: the last one written wins and an earlier one leaves no
+trace.
 *)
 
 let lastWins =
@@ -457,8 +450,8 @@ let lastWins =
     }
 
 (**
-`when'`, `whenBranch`, `whenWindows` and the rest are **conditions**: each one narrows the stage to the
-logical AND of everything declared so far, so a second condition can only ever make the stage run less often.
+`when'`, `whenBranch`, `whenWindows` and the rest are **conditions**: each narrows the stage to the logical AND
+of everything declared so far, so a second condition can only make the stage run less often.
 *)
 
 let narrows =
@@ -469,20 +462,20 @@ let narrows =
     }
 
 (**
-Hence the two different escape hatches. To widen a condition, write **one** `whenAny { }` containing both
-alternatives — a second operation would narrow. To switch between parallel modes, write **one** condition
-function returning the mode — a second operation would discard the first.
+To widen a condition, write **one** `whenAny { }` containing both alternatives: a second operation would
+narrow instead. To switch parallel modes, write **one** condition function returning the mode: a second
+operation would discard the first.
 
 ### Timeouts and cancellation
 
-Three scopes, settable on a stage or a pipeline: `timeout` (the stage or pipeline as a whole),
-`timeoutForStage` and `timeoutForStep`. All three accept `int<second>`, `float` seconds, or a `TimeSpan`.
+Three scopes are settable on a stage or a pipeline: `timeout` (the stage or pipeline as a whole),
+`timeoutForStage` and `timeoutForStep`, each accepting `int<second>`, `float` seconds, or a `TimeSpan`.
 
 A timeout cancels the stage and kills the whole process tree it started, grandchildren included.
 
 ### Post stages
 
-`post` stages run after the main stages whether or not the pipeline succeeded — the place for teardown:
+`post` stages run after the main stages whether or not the pipeline succeeded: the place for teardown.
 *)
 
 let withTeardown =
@@ -496,9 +489,11 @@ let withTeardown =
 (**
 ### Failure control
 
-`continueStepsOnFailure` keeps a stage going after a failed step; `continueStageOnFailure` keeps the pipeline
-going after a failed stage; `continueOnStepFailure` sets both. `acceptExitCodes` widens what counts as success
-(the default is `0`), and `failIfIgnored` turns a skipped stage into a failure.
+- `continueStepsOnFailure` keeps a stage going after a failed step.
+- `continueStageOnFailure` keeps the pipeline going after a failed stage.
+- `continueOnStepFailure` sets both.
+- `acceptExitCodes` widens what counts as success (the default is `0`).
+- `failIfIgnored` turns a skipped stage into a failure.
 
 ### Hooks
 
@@ -507,8 +502,8 @@ pipeline.
 
 ### Where step output goes
 
-By default a step's output goes straight to the console. `outputTo` sends it somewhere else, and the setting
-is inherited by sub-stages the way every other setting is:
+By default a step's output goes straight to the console. `outputTo` redirects it, inherited by sub-stages like
+any other setting:
 
 | | |
 |---|---|
@@ -529,10 +524,10 @@ let quietTests =
     }
 
 (**
-`captureOutput` lifts stderr if the process wrote any and everything it wrote otherwise, into the step's
-error — so a failing stage still says why, on the console and in the GitHub Actions annotation.
+`captureOutput` lifts stderr into the step's error, or everything written if there was none. A failing stage
+still says why, on the console and in the GitHub Actions annotation.
 
-Pass an `OutputCapture` to keep a handle on the lines whatever the outcome:
+Pass an `OutputCapture` to keep the lines regardless of outcome:
 
 ```fsharp
 let log = OutputCapture.create()
@@ -548,23 +543,24 @@ let audited =
     }
 ```
 
-`OutputCapture.lines` returns both streams in the order they arrived, `OutputCapture.errors` only stderr,
-`OutputCapture.text`/`OutputCapture.errorText` the same joined,
-and `OutputCapture.failureText` is what a failure lifts.
+- `OutputCapture.lines`: both streams, in the order they arrived.
+- `OutputCapture.errors`: stderr only.
+- `OutputCapture.text` / `OutputCapture.errorText`: the same, joined.
+- `OutputCapture.failureText`: what a failure lifts.
 
-Three things it does not cover:
+It does not cover three things:
 
-- The pipeline's own log — stage rules, command lines, timings — is `verbosity`, not `outputTo`. A stage that
-  wants both quiet needs `quiet` *and* `silentOutput`.
+- The pipeline's own log (stage rules, command lines, timings) is `verbosity`, not `outputTo`. A stage wanting
+  both quiet needs `quiet` *and* `silentOutput`.
 - A bare `printfn` inside a step is not routable. Use `echo`, or `StageContext.writeLine ctx StdStream.Out`.
 - `noStdRedirectForStep` overrides all of it: without redirection there is no stream to route.
 
 
 ## Baked: the batteries
 
-`Partas.Build.Baked` is the layer of things every build CLI ends up writing anyway, ready made and described.
-It ships as its own package. Each declaration is a `BuildOption<'T>` carrying both forms: `.option` is the flag,
-`.argument` the positional equivalent.
+`Partas.Build.Baked` is the layer of options every build CLI ends up writing anyway, ready made, documented,
+and shipped as its own package. Each declaration is a `BuildOption<'T>`: `.option` the flag, `.argument` the
+positional equivalent.
 
 | | |
 |---|---|
@@ -573,8 +569,8 @@ It ships as its own package. Each declaration is a `BuildOption<'T>` carrying bo
 | `Baked.SemVer.bump` | `bump`, parsed to a `Bump` DU over `major\|minor\|patch\|alpha\|beta\|rc\|preview\|<SEMVER>`, defaulting to `patch` |
 | `Baked.Common.isCI` | `--ci`, defaulting to true when the environment looks like CI |
 
-`BuildOption.map`, `.mapOpt` and `.mapArg` apply an `Input.*` combinator to both forms, or to one. Both forms
-are `ActionInput` values like any other, so they bind in an `inputs` CE exactly as a hand-rolled option does:
+`BuildOption.map`, `.mapOpt` and `.mapArg` apply an `Input.*` combinator to both forms or to one. Both forms
+are `ActionInput` values, so they bind in an `inputs` CE exactly as a hand-rolled option does:
 *)
 
 
@@ -594,9 +590,9 @@ let packaging =
 (**
 ### Versioning a project file
 
-`Baked.SemVer.Version` is semantic-version arithmetic over the `Bump` DU, and `Baked.SemVer.Version.IO` applies
-it to a project file. The `bump` stage itself is ready made: it binds `--ci` and skips itself when that is set,
-and it takes the projects to edit as an `InputSpec<string list>`, so the CLI decides what `--project` accepts.
+`Baked.SemVer.Version` is semantic-version arithmetic over the `Bump` DU. `Baked.SemVer.Version.IO` applies it
+to a project file. The `bump` stage is ready made: it binds `--ci`, skips itself when set, and takes the
+projects to edit as an `InputSpec<string list>`, so the CLI decides what `--project` accepts.
 
 ```fsharp
 let bumpAsArgument = Baked.SemVer.Stages.bumpArgument Options.projects   // <command> minor -p MyLib
@@ -604,15 +600,15 @@ let bumpAsOption   = Baked.SemVer.Stages.bumpOption Options.projects     // <com
 ```
 
 `Baked.SemVer.Version.IO.writeVersion` rewrites `<Version>` and `<AssemblyVersion>` in the first
-`PropertyGroup`, adding either element if it is absent, and answers what `<Version>` held before. It saves without the `<?xml ?>` declaration
-and byte-order mark `XDocument.Save` would otherwise introduce, so a bump reads as a one-line diff.
+`PropertyGroup`, adding either if absent, and returns the previous `<Version>`. It skips the `<?xml ?>`
+declaration and byte-order mark `XDocument.Save` would otherwise add, so a bump reads as a one-line diff.
 
-The two properties are not the same string. `<Version>` is the package version and moves however you bump it;
-`<AssemblyVersion>` only takes the major. Letting the assembly version move on a patch bump breaks anything not
-rebuilt in the same pass with `Could not load file or assembly '<name>, Version=…'`.
+`<Version>` is the package version and moves however it is bumped. `<AssemblyVersion>` only takes the major.
+Moving it on a patch bump breaks anything not rebuilt in the same pass, with `Could not load file or assembly
+'<name>, Version=…'`.
 
-Pair it with `Baked.Common.isCI`, as above, and versions are bumped locally and committed rather than
-invented on a runner: CI packs whatever the project file carries.
+Paired with `Baked.Common.isCI`, versions are bumped locally and committed, so CI packs whatever the project
+file carries rather than inventing one at build time.
 
 The arithmetic itself:
 
@@ -627,17 +623,16 @@ The arithmetic itself:
 | `1.2.4-rc.1` | `patch` | `1.2.4` |
 | anything | `Target "2.0.0-nightly.7"` | `2.0.0-nightly.7` |
 
-A `patch` on a pre-release *releases* it rather than moving past it, and `major`/`minor` drop the tag outright.
+A `patch` on a pre-release *releases* it rather than moving past it. `major`/`minor` drop the tag outright.
 `Target` is taken verbatim, unparsed.
 
 ## Antipatterns
 
-
 **Interpolating straight into `run`.** `run $"dotnet build {path}"` picks the `string` overload and re-splits
 on whitespace. Use `run (cmd $"...")`.
 
-**Nested `let!` in `inputs`.** It does not compile, by design — use `and!`. Wanting one source to depend on
-another's value means you want a single input with a richer type, or a runtime check inside a step.
+**Nested `let!` in `inputs`.** It does not compile, by design. Use `and!`. A source that depends on another's
+value needs a single input with a richer type, or a runtime check inside a step.
 
 **Custom operations under `if` or `match`.** F# forbids it. Build the value first, then apply the operation
 unconditionally:
@@ -651,7 +646,7 @@ let push = if hasKey then pushToNuget else pushToLocal
 stage "publish" { run push }
 ```
 
-A whole *stage* under an `if` is fine, though — an untaken branch simply contributes nothing:
+A whole *stage* under an `if` is fine: an untaken branch contributes nothing.
 
 ```fsharp
 pipeline "ci" {
@@ -663,21 +658,21 @@ pipeline "ci" {
 **Mixing `yield!` with a custom operation in the same CE.** F# rejects it (`FS3086`). Yield a list instead:
 `pipeline "p" { [ yield! blocks; yield extra ] }`, and put the settings on a stage inside.
 
-**Registering options on the root so every command has them.** The point of the design is that `build --help`
-lists `--configuration` *because* a build stage binds it. Hand-registering reintroduces the drift the library
-exists to remove.
+**Registering options on the root so every command has them.** `build --help` lists `--configuration`
+*because* a build stage binds it. Hand-registering reintroduces the drift the library exists to remove.
 
-**Expecting a second condition to replace the first.** Conditions conjoin; settings do not. A second
+**Expecting a second condition to replace the first.** Conditions conjoin. Settings do not. A second
 `whenBranch` narrows to both branches at once (so: never), where a second `parallel'` silently throws the
 first away. To widen a condition, put the alternatives in one `whenAny { }`.
 
-**`runSensitive` with a bound interpolation.** `runSensitive` takes a `FormattableString`, which F# will only
-convert a `string` into when a single overload is in play. It has no `InputSpec` form: bind the value outside
-the stage and use `runSensitive $"…"` inside it as normal.
+**`runSensitive` with a bound interpolation.** `runSensitive` takes a `FormattableString`, and F# only
+converts a `string` when a single overload is in play. It has no `InputSpec` form: bind the value outside the
+stage and use `runSensitive $"…"` inside it as normal.
 
 <img src="content\img\the-glass.jpeg" width="400"/>
 
 ## API reference
 
-The [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) is generated from the XML documentation on each custom operation.
+The [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) is generated from the XML
+documentation on each custom operation.
 *)

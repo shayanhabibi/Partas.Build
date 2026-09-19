@@ -21,6 +21,7 @@ type [<Struct; RequireQualifiedAccess>]
     /// <summary>A step of deferred work, and the label <c>--explain</c> renders for it.</summary>
     /// <remarks>The outcome is structured: the runner renders a failure to a string at the print site.</remarks>
     | Operation of operationLabel: string voption * operation: (RuntimeContext -> Async<StepOutcome>)
+    /// <summary>A nested stage run</summary>
     | StepOfStage of stage: StageContext
 
 /// <summary>What an operation can read about the step executing it.</summary>

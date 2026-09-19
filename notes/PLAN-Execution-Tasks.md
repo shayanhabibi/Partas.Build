@@ -379,3 +379,40 @@ rtk dotnet run --project Build.fsproj -- test --configuration Release
   - Suites after T7 and its two review rounds: `tests/Partas.Build.Tests` 278 passed, 0 ignored, 0 failed;
     `Partas.Build.Cmd.NetStandard.Tests` 3; the two external-annotation suites 65 and 74. Library Debug and
     Release 0 errors 0 warnings; `dotnet run --project Build.fsproj -- test --quick` green.
+- T8/T9 (2026-09-19, worktree Partas.Build-execution-builders, branch execution/builders, `2552ee120879e22fb14fb5c9a8590acbc24e7196`):
+  - Build CLI: `Build/Program.fs`'s `test` stage now runs `tests/Partas.Build.CompilerProbe` in both Debug and
+    Release regardless of `--configuration`, through the same `run (Cmd.ofString …)` shape as the four Expecto
+    suites, without `--no-build` — `dotnet run` builds each configuration itself rather than riding `buildAll`'s
+    single-configuration build. `--explain` on `test` shows `compiler probe (Debug)` and `compiler probe
+    (Release)` as two further steps of the `test` stage.
+  - Verification block, run in this worktree:
+    - `dotnet build src/Partas.Build/Partas.Build.fsproj -c Debug` — 0 errors, 0 warnings.
+    - `dotnet build src/Partas.Build/Partas.Build.fsproj -c Release` — 0 errors, 0 warnings.
+    - `dotnet build src/Partas.Build.Cmd/Partas.Build.Cmd.fsproj -c Release` — 0 errors, 0 warnings.
+    - `dotnet run --project tests/Partas.Build.Tests -- --sequenced` — 291 passed, 0 ignored, 0 failed.
+    - `dotnet run --project tests/Partas.Build.Tests -- --sequenced --filter-test-case "every custom operation
+      stays visible to completion, and the machinery behind it does not"` (T8c's completion-attribute sweep) —
+      1 passed, 0 failed.
+    - `dotnet run --project tests/Partas.Build.CompilerProbe -c Debug` — 11 passed, 0 failed.
+    - `dotnet run --project tests/Partas.Build.CompilerProbe -c Release` — 11 passed, 0 failed.
+    - `dotnet run --project tests/Partas.Build.Tests -- --sequenced --filter "CompilerTests"` — 4 passed, 0
+      failed (drives `CompilerProbe.Negative`, `UnsupportedPipelineState` included).
+    - `dotnet run --project Build.fsproj -- test --quick --configuration Debug` — pipeline `ok`; 291 tests in
+      `Partas.Build.Tests`, probe 11/11 in both configurations.
+    - `dotnet run --project Build.fsproj -- test --configuration Release` (full, non-quick, the coordinator run)
+      — pipeline `ok`; same counts, restore and clean included.
+    - Not run: anything on Linux — no such runner available from this worktree; recorded as not run rather than
+      claimed.
+  - Whole-branch diff `git diff 6093b93..HEAD -- src/`: 12 files touched. `Builders/Command.fs` and
+    `Builders/Conditions.fs` gained doc comments only (T9a's documentation pass), no body changes — command
+    default semantics untouched. The stage-side output-routing operations (`outputTo`/`silentOutput`/
+    `captureOutput`/`redirectOutput` in `Builders/StageSettings.fs`) are byte-identical to `6093b93` line for
+    line. The pipeline-side mirrored pairs at `6093b93` (`Builders/Pipeline.fs`, both the `BuildPipeline` and
+    `InputSpec<BuildPipeline>` members) and their single generic replacements now in
+    `Builders/PipelineSettings.fs` write the same `Output` field to the same values. The stage and pipeline CE
+    lifecycle blocks (`Run`/`Yield`/`Zero`/`YieldFrom`/`Delay`/`Combine`/`For`, which is where `InputSpec.Inputs`
+    harvesting lives) are byte-for-byte identical between `6093b93` and `HEAD` in both `Builders/Stage.fs` and
+    `Builders/Pipeline.fs` — confirmed by isolating each block from both revisions and diffing the isolated text,
+    since a line-based diff of the whole file misaligns these blocks around the settings members moved out from
+    beside them. `Conductors.Runners.fs`, `Exceptions.fs`, `ExecutionState.fs` and `Failures.fs` gained doc
+    comments only. No drift found.

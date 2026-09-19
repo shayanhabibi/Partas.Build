@@ -213,6 +213,36 @@ let private tests = testList "compiler probe" [
         Expect.equal calls.Value 0 "declaring a step invokes nothing"
         Expect.equal ((around.Read (parse around.Inputs)).Steps |> List.length) 3 "both steps and the child are steps of the materialized stage"
     }
+
+    test "deferred work and a health check run in every representation across the assembly boundary" {
+        let config = configuration ()
+        let calls = ref 0
+
+        let child name = {
+            Inputs = [ config :> ActionInput ]
+            Read = fun _ -> stage name { echo "child" }
+        }
+
+        let work = Operation.ofAsync (async { calls.Value <- calls.Value + 1 })
+
+        // No annotation on any binding: the functions below are what fixes the type.
+        let plain = stage "plain" { runOperation work }
+        let labelled = stage "labelled" { runOperation work "labelled work" }
+        let polling = stage "polling" { runHttpHealthCheck "http://localhost:9/health" }
+        let before = stage "before" { runOperation work; child "a" }
+        let after = stage "after" { child "b"; runHttpHealthCheck "http://localhost:9/health" }
+        let around = stage "around" { runOperation work; child "c"; runHttpHealthCheck "http://localhost:9/health" }
+
+        Expect.equal (requiresStage plain) "plain" "deferred work leaves a stage a StageContext"
+        Expect.equal (requiresStage labelled) "labelled" "a labelled step leaves a stage a StageContext"
+        Expect.equal (requiresStage polling) "polling" "a health check leaves a stage a StageContext"
+        Expect.equal (requiresSpec before |> List.length) 1 "a step before an input-aware child keeps the specification"
+        Expect.equal (requiresSpec after |> List.length) 1 "a step after an input-aware child keeps the specification"
+        Expect.equal (requiresSpec around |> List.length) 1 "steps on both sides of a child keep the specification"
+
+        Expect.equal calls.Value 0 "declaring deferred work invokes nothing"
+        Expect.equal ((around.Read (parse around.Inputs)).Steps |> List.length) 3 "both steps and the child are steps of the materialized stage"
+    }
 ]
 
 [<EntryPoint>]

@@ -225,6 +225,8 @@ let tests =
 
             sharedBy "retry" 1
             sharedBy "runSensitive" 1
+            sharedBy "runOperation" 1
+            sharedBy "runHttpHealthCheck" 1
 
             // `run` keeps one mirrored pair, over `StageContext -> BuildStep`: it is the only `run` taking no
             // optional argument, and a lambda whose return type the call site leaves open resolves through it.
@@ -273,6 +275,22 @@ let tests =
             capturingOut (fun () -> PipelineContext.run built) |> ignore
 
             Expect.equal calls.Value 2 "the step should run once from the plain stage and once from the materialized one"
+        }
+
+        test "a moved runOperation runs its operation in every builder state" {
+            let config = configuration ()
+            let reads = ref 0
+            let calls = ref 0
+            let work = Operation.ofAsync (async { lock calls (fun () -> calls.Value <- calls.Value + 1) })
+
+            let plain: StageContext = stage "plain" { runOperation work }
+            let spec: InputSpec<StageContext> = stage "spec" { countingBlock reads "child" config; runOperation work "labelled" }
+            let built = pipeline "moved operation" { plain; spec.Read (parse spec.Inputs "") }
+
+            Expect.equal calls.Value 0 "declaring the operation should run nothing"
+            capturingOut (fun () -> PipelineContext.run built) |> ignore
+
+            Expect.equal calls.Value 2 "the operation should run once from the plain stage and once from the materialized one"
         }
 
         // ---------------------------------------------------------------- producers and their consumers

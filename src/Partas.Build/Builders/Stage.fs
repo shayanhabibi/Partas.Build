@@ -3,9 +3,6 @@ module Partas.Build.StageBuilder
 
 open System
 open System.ComponentModel
-open System.Threading
-open System.Threading.Tasks
-open FsToolkit.ErrorHandling
 open Partas.Build.Internal
 open Partas.Build
 open FSharp.Data.UnitSystems.SI
@@ -202,41 +199,5 @@ type StageBuilder(name: string) =
         run
         (spec: InputSpec<BuildStage>, buildStep: StageContext -> BuildStep): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.run(build, buildStep)) spec
-
-    /// <summary>Adds a step running deferred work.</summary>
-    /// <remarks>
-    /// The operation runs under the stage's working directory, environment, acceptable exit codes and output
-    /// routing, and reports a structured failure the runner renders at the print site.
-    /// <c>label</c> is what <c>--explain</c> shows for the step; without one it shows the step's index.
-    /// </remarks>
-    [<CustomOperation>] member _.
-        runOperation
-        (build: BuildStage, operation: Operation<unit>, ?label: string): BuildStage
-        = build >> fun ctx ->
-        { ctx with Steps = ctx.Steps @ [ Step.Operation(ValueOption.ofOption label, Operation.toStepOutcome operation) ] }
-
-    /// <summary>Adds a step that polls an HTTP endpoint for health.</summary>
-    /// <remarks>The step repeatedly polls the given URL until it succeeds or the stage is cancelled. Useful for waiting for services to become available.</remarks>
-    [<CustomOperation>] member _.
-        runHttpHealthCheck
-        (build: BuildStage, url: string, ?configRequest, ?cancellationToken: CancellationToken): BuildStage
-        = build >> fun ctx ->
-        let configRequest = defaultArg configRequest ignore
-        let cancellationToken = defaultArg cancellationToken CancellationToken.None
-        { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, fun ctx _ -> StageContext.runHttpHealthCheckCancelableWithConfigRequest ctx cancellationToken configRequest url) ] }
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("runHttpHealthCheck")>] member inline this.
-        runHttpHealthCheck
-        (spec: InputSpec<BuildStage>, url: string, ?configRequest, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.runHttpHealthCheck(build, url, ?configRequest = configRequest, ?cancellationToken = cancellationToken)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation("runOperation")>] member inline this.
-        runOperation
-        (spec: InputSpec<BuildStage>, operation: Operation<unit>, ?label: string): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.runOperation(build, operation, ?label = label)) spec
 
 let inline stage name = StageBuilder(name)

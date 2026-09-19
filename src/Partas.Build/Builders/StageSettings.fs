@@ -482,3 +482,24 @@ type StageSettingsBuilder() =
         StageMap.mapStage (fun ctx ->
             let stepFn = ((^T or SRTPStageBuilderRunner):(static member unifyResult: ^T -> StepFnSignature) step)
             { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, stepFn) ] }) state
+
+    /// <summary>Adds a step running deferred work.</summary>
+    /// <remarks>
+    /// The operation runs under the stage's working directory, environment, acceptable exit codes and output
+    /// routing, and reports a structured failure the runner renders at the print site.
+    /// <c>label</c> is what <c>--explain</c> shows for the step; without one it shows the step's index.
+    /// </remarks>
+    [<CustomOperation>]
+    member inline _.runOperation(state: ^State, operation: Operation<unit>, ?label: string): ^State =
+        StageMap.mapStage (fun ctx ->
+            { ctx with Steps = ctx.Steps @ [ Step.Operation(ValueOption.ofOption label, Operation.toStepOutcome operation) ] }) state
+
+    /// <summary>Adds a step that polls an HTTP endpoint for health.</summary>
+    /// <remarks>The step repeatedly polls the given URL until it succeeds or the stage is cancelled. Useful for waiting for services to become available.</remarks>
+    [<CustomOperation>]
+    member inline _.runHttpHealthCheck(state: ^State, url: string, ?configRequest, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let configRequest = defaultArg configRequest ignore
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let poll ctx _ = StageContext.runHttpHealthCheckCancelableWithConfigRequest ctx cancellationToken configRequest url
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, poll) ] }) state

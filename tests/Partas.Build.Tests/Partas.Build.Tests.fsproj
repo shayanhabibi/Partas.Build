@@ -19,6 +19,7 @@
         <Compile Include="CmdTests.fs"/>
         <Compile Include="OutputTests.fs"/>
         <Compile Include="ExecutionTests.fs"/>
+        <Compile Include="FailureTests.fs"/>
         <Compile Include="CommandTests.fs"/>
         <Compile Include="CompositionTests.fs"/>
         <Compile Include="ExplainTests.fs"/>

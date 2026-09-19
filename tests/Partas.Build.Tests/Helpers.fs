@@ -50,13 +50,15 @@ let parse (inputs: ActionInput list) (commandLine: string) =
 
     root.Parse commandLine
 
+/// Runs a stage as the first stage of no pipeline and answers the report it left.
+let reportStage (stage: StageContext) = StageContext.run stage (StageIndex.Stage 0) CancellationToken.None
+
 /// Runs a stage as the first stage of no pipeline and reports its outcome. <c>Error</c> carries the
 /// exceptions the stage's steps raised, so a step that returned <c>Error</c> rather than raising gives
 /// an empty list.
 let runStage (stage: StageContext) : Result<unit, exn list> =
-    match StageContext.run stage (StageIndex.Stage 0) CancellationToken.None with
-    | true, _ -> Ok ()
-    | false, exns -> Error (List.ofSeq exns)
+    let report = reportStage stage
+    if ScopeReport.continues report then Ok () else Error report.Exceptions
 
 /// The option names a spec declares, in declaration order.
 let inputNames (inputs: ActionInput list) = [

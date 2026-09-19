@@ -35,6 +35,19 @@ let private expectOneImplementation (names: string list) =
             (System.Attribute.GetCustomAttribute(found[0], typeof<System.ComponentModel.EditorBrowsableAttribute>))
             $"the operation {name} should stay visible to completion"
 
+/// Asserts that each named operation survives with one member per argument type, all inherited and generic in the state.
+let private expectOverloadsOnly (expected: (string * int) list) =
+    let builder = typeof<Partas.Build.PipelineBuilder.PipelineBuilder>
+
+    for name, count in expected do
+        let found = builder.GetMethods() |> Array.filter (fun method -> method.Name = name)
+
+        Expect.equal found.Length count $"{name} should keep one member per argument type and no state mirror"
+        Expect.allEqual (found |> Array.map _.IsGenericMethodDefinition) true $"every {name} should be generic in the builder state"
+        Expect.isFalse
+            (found |> Array.exists (fun method -> method.DeclaringType = builder))
+            $"every {name} should be inherited from the shared settings builder"
+
 let private options () =
     Input.option<string> "--configuration" |> Input.def "Debug",
     Input.option<bool> "--quick" |> Input.def false,
@@ -251,5 +264,57 @@ let tests =
                 "verbose"
                 "verbosity"
             ]
+        }
+
+        test "the budget settings land on the pipeline in both representations" {
+            let config, _, _ = options ()
+
+            let declaring = input {
+                let! cfg = config
+                return stage "compile" { run (fun (_: StageContext) -> ignore cfg) }
+            }
+
+            let plain: PipelineContext =
+                pipeline "plainBudget" {
+                    timeout 30<second>
+                    timeoutForStage 20.0
+                    timeoutForStep (System.TimeSpan.FromSeconds 10.0)
+                    workingDir "/plain"
+                    envVars [ "PARTAS_BUILD_T8B", "plain" ]
+                    acceptExitCodes [ 0; 2 ]
+                    stage "restore" { run noop }
+                }
+
+            let spec: InputSpec<PipelineContext> =
+                pipeline "specBudget" {
+                    timeout 45.0
+                    declaring
+                    timeoutForStage 15<second>
+                    timeoutForStep 5.0
+                    workingDir (System.IO.DirectoryInfo "/spec")
+                    envVars [ "PARTAS_BUILD_T8B", "spec" ]
+                    acceptExitCodes [ 0; 3 ]
+                }
+
+            let built = spec.Read (parse spec.Inputs "")
+
+            Expect.equal plain.Timeout (ValueSome (System.TimeSpan.FromSeconds 30.0)) "a plain pipeline should record the pipeline budget"
+            Expect.equal plain.TimeoutForStage (ValueSome (System.TimeSpan.FromSeconds 20.0)) "a plain pipeline should record the stage budget"
+            Expect.equal plain.TimeoutForStep (ValueSome (System.TimeSpan.FromSeconds 10.0)) "a plain pipeline should record the step budget"
+            Expect.equal plain.WorkingDir (ValueSome "/plain") "a plain pipeline should record the working directory"
+            Expect.equal (Map.tryFind "PARTAS_BUILD_T8B" plain.EnvVars) (Some "plain") "a plain pipeline should record the variable"
+            Expect.equal plain.AcceptableExitCodes (set [ 0; 2 ]) "a plain pipeline should record the exit codes"
+
+            Expect.equal built.Timeout (ValueSome (System.TimeSpan.FromSeconds 45.0)) "a setting before the declaring stage should reach the pipeline"
+            Expect.equal built.TimeoutForStage (ValueSome (System.TimeSpan.FromSeconds 15.0)) "an input-aware pipeline should record the stage budget"
+            Expect.equal built.TimeoutForStep (ValueSome (System.TimeSpan.FromSeconds 5.0)) "an input-aware pipeline should record the step budget"
+            Expect.equal built.WorkingDir (ValueSome (System.IO.DirectoryInfo("/spec").FullName)) "an input-aware pipeline should record the working directory"
+            Expect.equal (Map.tryFind "PARTAS_BUILD_T8B" built.EnvVars) (Some "spec") "an input-aware pipeline should record the variable"
+            Expect.equal built.AcceptableExitCodes (set [ 0; 3 ]) "an input-aware pipeline should record the exit codes"
+        }
+
+        test "one budget setting implementation serves every pipeline builder state" {
+            expectOneImplementation [ "envVars"; "acceptExitCodes" ]
+            expectOverloadsOnly [ "timeout", 3; "timeoutForStage", 3; "timeoutForStep", 3; "workingDir", 2 ]
         }
     ]

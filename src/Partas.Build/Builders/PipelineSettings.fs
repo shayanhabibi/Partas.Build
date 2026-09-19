@@ -1,5 +1,6 @@
 namespace Partas.Build.Internal
 
+open System
 open System.ComponentModel
 open Partas.Build
 
@@ -43,6 +44,94 @@ module PipelineMap =
 /// </remarks>
 [<EditorBrowsable(EditorBrowsableState.Advanced)>]
 type PipelineSettingsBuilder() =
+
+    /// <summary>Sets the total timeout for the entire pipeline execution.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/timeoutUnits/*"/>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
+    [<CustomOperation>] member inline _.
+        timeout
+        (state: ^State, seconds: int<second>): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with Timeout = ValueSome(TimeSpan.FromSeconds(float seconds)) }) state
+
+    /// <summary>Sets the total timeout for the entire pipeline execution (accepts seconds as float).</summary>
+    [<CustomOperation>] member inline _.
+        timeout
+        (state: ^State, seconds: float): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with Timeout = ValueSome(TimeSpan.FromSeconds seconds) }) state
+
+    /// <summary>Sets the total timeout for the entire pipeline execution (accepts TimeSpan).</summary>
+    [<CustomOperation>] member inline _.
+        timeout
+        (state: ^State, timeSpan: TimeSpan): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with Timeout = ValueSome timeSpan }) state
+
+    /// <summary>Sets the default timeout for each individual stage in the pipeline.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/timeoutUnits/*"/>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
+    [<CustomOperation>] member inline _.
+        timeoutForStage
+        (state: ^State, seconds: int<second>): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with TimeoutForStage = ValueSome(TimeSpan.FromSeconds(float seconds)) }) state
+
+    /// <summary>Sets the default timeout for each individual stage in the pipeline (accepts seconds as float).</summary>
+    [<CustomOperation>] member inline _.
+        timeoutForStage
+        (state: ^State, seconds: float): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with TimeoutForStage = ValueSome(TimeSpan.FromSeconds seconds) }) state
+
+    /// <summary>Sets the default timeout for each individual stage in the pipeline (accepts TimeSpan).</summary>
+    [<CustomOperation>] member inline _.
+        timeoutForStage
+        (state: ^State, timeSpan: TimeSpan): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with TimeoutForStage = ValueSome timeSpan }) state
+
+    /// <summary>Sets the default timeout applied to each step in the pipeline.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/timeoutUnits/*"/>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
+    [<CustomOperation>] member inline _.
+        timeoutForStep
+        (state: ^State, seconds: int<second>): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with TimeoutForStep = ValueSome(TimeSpan.FromSeconds(float seconds)) }) state
+
+    /// <summary>Sets the default timeout applied to each step in the pipeline (accepts seconds as float).</summary>
+    [<CustomOperation>] member inline _.
+        timeoutForStep
+        (state: ^State, seconds: float): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with TimeoutForStep = ValueSome(TimeSpan.FromSeconds seconds) }) state
+
+    /// <summary>Sets the default timeout applied to each step in the pipeline (accepts TimeSpan).</summary>
+    [<CustomOperation>] member inline _.
+        timeoutForStep
+        (state: ^State, timeSpan: TimeSpan): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with TimeoutForStep = ValueSome timeSpan }) state
+
+    /// <summary>Adds environment variables inherited by every stage in the pipeline.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/envVars/*"/>
+    [<CustomOperation>] member inline _.
+        envVars
+        (state: ^State, kvs: seq<string * string>): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with EnvVars = kvs |> Seq.fold (fun state (k, v) -> Map.add k v state) ctx.EnvVars }) state
+
+    /// <summary>Sets which process exit codes count as success for the whole pipeline.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/acceptableExitCodes/*"/>
+    [<CustomOperation>] member inline _.
+        acceptExitCodes
+        (state: ^State, codes: int seq): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with AcceptableExitCodes = set codes }) state
+
+    /// <summary>Sets the directory commands run in, for every stage that does not override it.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
+    [<CustomOperation>] member inline _.
+        workingDir
+        (state: ^State, path: IO.DirectoryInfo): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with WorkingDir = ValueSome path.FullName }) state
+
+    /// <summary>Sets the directory commands run in, for every stage that does not override it.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
+    [<CustomOperation>] member inline _.
+        workingDir
+        (state: ^State, path: string): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with WorkingDir = ValueSome path }) state
 
     /// <summary>Stops each step prefixing its console output with the stage and step index.</summary>
     /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>

@@ -72,4 +72,51 @@ let tests = testList "pipeline compiler probe" [
         Expect.isTrue (after.Read (parse after.Inputs)).NoStdRedirectForStep "a setting after a declaring stage reaches the pipeline"
         Expect.equal (after.Read (parse after.Inputs)).Verbosity (ValueSome Verbosity.Quiet) "a setting after a declaring stage reaches the pipeline"
     }
+
+    test "the inherited budget settings serve both representations across an assembly boundary" {
+        let config = configuration ()
+
+        let child name: InputSpec<StageContext> = {
+            Inputs = [ config :> ActionInput ]
+            Read = fun _ -> stage name { echo "child" }
+        }
+
+        let plain: PipelineContext =
+            pipeline "plain" {
+                timeout 30<second>
+                timeoutForStage 20.0
+                timeoutForStep (TimeSpan.FromSeconds 10.0)
+                workingDir "/tmp"
+                envVars [ "PROBE", "plain" ]
+                acceptExitCodes [ 0; 2 ]
+                stage "one" { echo "one" }
+            }
+
+        let before: InputSpec<PipelineContext> =
+            pipeline "before" {
+                timeout 45.0
+                workingDir (IO.DirectoryInfo "/tmp")
+                child "a"
+            }
+
+        let after: InputSpec<PipelineContext> =
+            pipeline "after" {
+                child "b"
+                timeoutForStage 15<second>
+                timeoutForStep 5.0
+                envVars [ "PROBE", "after" ]
+                acceptExitCodes [ 0; 3 ]
+            }
+
+        Expect.equal (requiresPipeline plain) "plain" "a pipeline declaring nothing stays a plain context"
+        Expect.equal (requiresSpec before).Length 1 "a setting before a declaring stage keeps the specification"
+        Expect.equal (requiresSpec after).Length 1 "a setting after a declaring stage keeps the specification"
+
+        Expect.equal plain.Timeout (ValueSome (TimeSpan.FromSeconds 30.0)) "a plain pipeline keeps the setting"
+        Expect.equal plain.WorkingDir (ValueSome "/tmp") "a plain pipeline keeps the setting"
+        Expect.equal plain.AcceptableExitCodes (set [ 0; 2 ]) "a plain pipeline keeps the setting"
+        Expect.equal (before.Read (parse before.Inputs)).Timeout (ValueSome (TimeSpan.FromSeconds 45.0)) "a setting before a declaring stage reaches the pipeline"
+        Expect.equal (after.Read (parse after.Inputs)).TimeoutForStep (ValueSome (TimeSpan.FromSeconds 5.0)) "a setting after a declaring stage reaches the pipeline"
+        Expect.equal (after.Read (parse after.Inputs)).AcceptableExitCodes (set [ 0; 3 ]) "a setting after a declaring stage reaches the pipeline"
+    }
 ]

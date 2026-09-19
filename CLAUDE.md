@@ -36,7 +36,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Current state (verify before assuming)
 
-- Phases 0-7 of `PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (220 Expecto tests across three suites — 80 in `tests/Partas.Build.Tests`, one file per layer, plus `tests/Partas.Build.ExternalAnnotations.Tests` and `tests/Partas.ExternalAnnotations.Tests`). The `Build/` CLI is itself written against the library, so it is the first thing a breaking change breaks.
+- Phases 0-7 of `PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (408 Expecto tests across four suites — 266 in `tests/Partas.Build.Tests`, one file per layer, plus 65 in `tests/Partas.Build.ExternalAnnotations.Tests`, 74 in `tests/Partas.ExternalAnnotations.Tests` and 3 in `tests/Partas.Build.Cmd.NetStandard.Tests`). The `Build/` CLI is itself written against the library, so it is the first thing a breaking change breaks.
 - The DSL exists end to end: `inputs` (`Builders/Inputs.fs`), `stage` (`Builders/Stage.fs`), `pipeline` (`Builders/Pipeline.fs`), `command`/`rootCommand` (`Builders/Command.fs`). A stage that declares an input turns its pipeline into an `InputSpec<PipelineContext>`, and the command registers whatever those specs declare. Conditions are in `Builders/Conditions.fs` — `whenAll`/`whenAny`/`whenNot`/`whenEnv`/`whenStage` plus the `when'`/`whenEnvVar`/`whenBranch`/`when{Windows,Linux,OSX}` operations on `StageBuilder`.
 - A command carries `PipelineDefaults: BuildPipeline` and takes the pipeline-level operations itself (`workingDir`, `envVars`, the three timeouts, `acceptExitCodes`, the output operations, `noPrefixForStep`/`noStdRedirectForStep`, `runBeforeEachStage`/`runAfterEachStage`, `post`, `verbosity`/`verbose`/`quiet`), each one built through `CommandBuilderBase.MapPipelineDefault`. They are **defaults, not overrides**: `PipelineContext.applyDefaults` copies a setting across only where the pipeline left it at the value `PipelineContext.create` gave it, so a pipeline that sets the same thing wins. See *Command defaults* below.
 - `run`/`runSensitive` start real processes through `Process.fs`: a `Cmd` keeps the executable and its arguments apart all the way to `ProcessStartInfo.ArgumentList`, so the platform does the escaping. Interpolate through the `cmd` helper — `run (cmd $"dotnet build {project}")` — because `run $"..."` binds to the `string` overload and flattens the holes; `runSensitive $"..."` takes the `FormattableString` directly and masks every hole as `***`. There is no `Fake.Core.Process` dependency; `PLAN.md`'s *The command runner* records why.
@@ -45,7 +45,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Architecture notes
 
-Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Environment.fs` → `Timing.fs` → `Failures.fs` → `Producer.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
+Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Environment.fs` → `Timing.fs` → `Producer.fs` → `Failures.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
 
 `Explain.fs` renders the resolved stage tree `--explain` prints, as text and nothing else: it writes to no
 console and to no stage sink, so a stage that silences or captures its execution output is still described in
@@ -68,9 +68,27 @@ received and `Nested` the reports of the sub-stages. A `continueStageOnFailure` 
 `Propagates = false` and keeps the cause, which is what lets a consumer of a suppressed producer tell a failed
 producer from a skipped one. `ScopeReport.propagated` reads the tree down to the scopes whose failures reached
 the pipeline, and `PipelineContext.run` takes the `PipelineFailedException`'s inner exception from the first of
-them through `FailureCause.toException`. Placement is deliberate: the file sits after `Timing.fs` because
-`ScopeReport.Name` would otherwise be the last `Name`-bearing record in scope for `Environment.fs`, which is an
-FS0667 waiting to bind `EnvArg.withName` to the wrong record.
+them through `FailureCause.toException`. Placement is deliberate: the file sits after `Environment.fs`, because
+`ScopeReport.Name` would otherwise be the last `Name`-bearing record in scope there — an FS0667 waiting to bind
+`EnvArg.withName` to the wrong record — and after `Producer.fs`, because a `FailureContext` carries
+`ProducerValues`.
+
+`onFailure` registers a `FailureHandler` on a stage and on a pipeline, and `Failures.fs` holds both the
+`FailureContext` it receives and `FailureContext.runHandlers`, which runs them. A handler runs once per failed
+execution of its scope, from the same `finally` of `StageContext.run` that builds the report, so the scopes
+nested in one have reported before it does and the retries of one are over before it runs at all. It reads the
+scope's identity off `ScopeAddress` — the ordinals and names from the pipeline's own stage inward, carried on
+`StageContext.Address` the way `TimingOrder` is — and the failure itself off `Primary`/`Secondary` rather than
+off rendered text. `FailureContext.TryGetOutput` is an extension member in `Dependencies.fs`, where
+`Producer<'T>` exists: a lookup over `ExecutionState.values`, which schedules nothing. An exception out of a
+handler is appended to the report's `Failures` under `StepFailure.NoStep` and reaches no `Exceptions`, so the
+cause the pipeline raises stays the scope's own.
+
+Which token fired tells a timeout from a cancellation, and only `StageContext.run` holds them all: `cts` (the
+stage's own `timeout`) and `stepCts` (its own `timeoutForStep`) are failures of that stage, recorded as
+`FailureCause.TimedOut` against every step of `InFlightSteps` that had started and not finished — several, under
+`parallel'` — while `ct` (an ancestor's, the pipeline's, the invocation's) and `stepErrorCts` (stage policy) are
+cancellations, which run no handler.
 
 `PipelineContext.Reports` collects those reports the way `Timings` collects timings — a `ScopeReports` on the
 pipeline value, emptied at the start of a run and appended to as each stage of the pipeline finishes. It is the

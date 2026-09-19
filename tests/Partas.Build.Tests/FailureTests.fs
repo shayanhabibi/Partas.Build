@@ -7,6 +7,7 @@
 module Partas.Build.Tests.FailureTests
 
 open System
+open System.Text.Json
 open System.Threading
 open Expecto
 open Partas.Build
@@ -460,5 +461,129 @@ let handlers =
 
             Expect.equal stageHandled 0 "the pipeline's budget is no failure of the stage it cancels"
             Expect.equal pipelineHandled 0 "and a cancelled run is no failure of the pipeline"
+        }
+    ]
+
+/// The document the fixture writes, as the producer reads it.
+type private Manifest = { Package: string; Version: string }
+
+/// <summary>One run of the migration use case, and the counters its parts increment.</summary>
+/// <remarks>Every side effect of the slice is a counter here: a test asserts what ran by reading them.</remarks>
+type private Slice = {
+    Command: System.CommandLine.Command
+    Work: PipelineContext
+    Manifest: Producer<Manifest>
+    /// What the producer's captured document said, once per execution of the producer.
+    Produced: ResizeArray<string>
+    /// The version the consumer read, once per attempt.
+    Attempts: ResizeArray<string>
+    /// What the consumer's own handler was told.
+    Handled: ResizeArray<FailureContext>
+    /// What the pipeline's handler was told.
+    Reported: ResizeArray<FailureContext>
+}
+
+/// <summary>The slice: a CLI option read by a producer that captures a document from a child process, a
+/// consumer retrying over the typed value, and the handlers of both scopes.</summary>
+let private slice () =
+    let produced = ResizeArray<string>()
+    let attempts = ResizeArray<string>()
+    let handled = ResizeArray<FailureContext>()
+    let reported = ResizeArray<FailureContext>()
+
+    let tag = Input.option<string> "--tag" |> Input.def "v0.0.0"
+
+    let manifest: Producer<Manifest> =
+        Producer.define "manifest" (InputSpec.ofInput tag) DependencySpec.empty (fun tag _ ->
+            ProcessFixture.command [ "echo"; $"""{{"package":"partas","version":"%s{tag}"}}""" ]
+            |> executeCapture
+            |> Operation.map (fun result ->
+                produced.Add result.Stdout
+                let document = JsonDocument.Parse result.Stdout
+                {
+                    Package = document.RootElement.GetProperty("package").GetString()
+                    Version = document.RootElement.GetProperty("version").GetString()
+                }))
+
+    let work =
+        pipeline "release" {
+            quiet
+            onFailure reported.Add
+            stage "publish" {
+                retry 2
+                silentOutput
+                onFailure handled.Add
+                consumes (DependencySpec.require manifest) (fun manifest ->
+                    Operation.ofAsync (async { attempts.Add manifest.Version })
+                    |> Operation.bind (fun () -> execute (ProcessFixture.command [ "text"; "3" ])))
+            }
+        }
+
+    {
+        Command = command "release" { work }
+        Work = work
+        Manifest = manifest
+        Produced = produced
+        Attempts = attempts
+        Handled = handled
+        Reported = reported
+    }
+
+[<Tests>]
+let vertical =
+    testList "slice" [
+        test "a CLI input reaches a producer, whose value outlives the retries of the consumer that failed on it" {
+            let slice = slice ()
+
+            Expect.equal (quietly (fun () -> slice.Command.Parse("--tag v9.9.9").Invoke())) 1
+                "an exit code the consumer rejects fails the invocation"
+
+            Expect.equal slice.Produced.Count 1 "the producer ran once, outside the scope the retries repeat"
+            Expect.sequenceEqual slice.Attempts [ "v9.9.9"; "v9.9.9"; "v9.9.9" ]
+                "each of the three attempts read the value the option asked the producer for"
+
+            match slice.Handled |> List.ofSeq with
+            | [ context ] ->
+                Expect.equal context.Scope "publish" "the consumer's handler names the consumer"
+
+                match context.Primary with
+                | ValueSome failure ->
+                    match failure.Cause with
+                    | FailureCause.Command (_, exitCode, _) -> Expect.equal exitCode 3 "and carries the code the command exited with"
+                    | other -> failtestf "the consumer failed on an exit code; got %A" other
+                | ValueNone -> failtest "the consumer's failure should reach its handler"
+
+                Expect.equal (context.TryGetOutput slice.Manifest) (ValueSome { Package = "partas"; Version = "v9.9.9" })
+                    "the handler reads the typed value the producer published"
+            | other -> failtestf "the consumer should report once; got %i" other.Length
+
+            match slice.Reported |> List.ofSeq with
+            | [ context ] ->
+                Expect.equal context.Scope "release" "the pipeline reports under its own name"
+                Expect.equal [ for report in context.Nested -> report.Name ] [ "manifest"; "publish" ]
+                    "carrying the scopes the run executed, the producer's own stage among them"
+            | other -> failtestf "the pipeline should report once; got %i" other.Length
+
+            let recorded = ScopeReports.all slice.Work.Reports
+
+            Expect.equal [ for report in recorded -> report.Name, report.Outcome ]
+                [ "manifest", StageOutcome.Succeeded
+                  "publish", StageOutcome.Failed (FailureCause.summarise (FailureCause.Command (Cmd.toLogString (ProcessFixture.command [ "text"; "3" ]), 3, ValueNone))) ]
+                "the run leaves a report per scope, each carrying what that scope did"
+        }
+
+        test "the same command under --help and --explain runs no producer, no process and no handler" {
+            let slice = slice ()
+            // `--help` belongs to the root command, which is where a command built this way is invoked from.
+            let root = System.CommandLine.RootCommand "build"
+            root.Subcommands.Add slice.Command
+
+            Expect.equal (quietly (fun () -> root.Parse("release --help").Invoke())) 0 "help succeeds"
+            Expect.equal (quietly (fun () -> root.Parse("release --explain").Invoke())) 0 "explain succeeds"
+
+            Expect.isEmpty slice.Produced "neither path executes the producer, so neither starts its process"
+            Expect.isEmpty slice.Attempts "nor the consumer that reads it"
+            Expect.isEmpty slice.Handled "and a run that never failed reports to nobody"
+            Expect.isEmpty slice.Reported "at either scope"
         }
     ]

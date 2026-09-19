@@ -55,7 +55,7 @@ open Partas.Build.ExternalAnnotations
 (**
 # External Annotations — F# surface
 
-[The overview](../) covers what external annotations are and why a sidecar is the only
+[The overview](index.md) covers what external annotations are and why a sidecar is the only
 reliable way to ship them. This page is the F# API, for a build CLI that would rather own the behaviour than
 shell out to `partas-annotations`.
 
@@ -209,5 +209,5 @@ a `MetadataLoadContext` and an open `PEReader` over the assembly.
 
 ## Recipes
 
-Concrete end-to-end setups are on the [recipes page](../external-annotations-recipes/).
+Concrete end-to-end setups are on the [recipes page](external-annotations-recipes.md).
 *)

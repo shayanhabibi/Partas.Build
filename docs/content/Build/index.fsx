@@ -341,7 +341,7 @@ let testAll =
 
 (**
 The same works one layer up: a `pipeline` is a value, and a `command` can run several of them in declaration
-order. [Composing reusable blocks](composition/) goes further — nesting, lists of blocks, and stages that
+order. [Composing reusable blocks](composition.fsx) goes further — nesting, lists of blocks, and stages that
 carry their own inputs.
 
 ### Nameless Pipelines
@@ -565,25 +565,21 @@ Three things it does not cover:
 
 ## Baked: the batteries
 
-`Partas.Build.Baked` is the layer of things every build CLI ends up writing anyway — the common options, ready made and described, under `Baked.Input` (options) and `Baked.Argument`
-(positional arguments):
+`Partas.Build.Baked` is the layer of things every build CLI ends up writing anyway, ready made and described.
+It ships as its own package. Each declaration is a `BuildOption<'T>` carrying both forms: `.option` is the flag,
+`.argument` the positional equivalent.
 
 | | |
 |---|---|
-| `Baked.Input.DotNet.config` | `--configuration`/`-c`, parsed to a `Configuration` DU and restricted to `Debug`/`Release` |
-| `Baked.Input.DotNet.configString` | the same option left as a string |
-| `Baked.Input.NuGet.apiKey` | `--nuget-key`/`--nuget`, help name `APIKEY` |
-| `Baked.Input.NuGet.apiKeyOrEnv` | the same, defaulting to `$NUGET_API_KEY` |
-| `Baked.Input.Project.target [ … ]` | `--project`/`-p`, one or more, restricted to the names given |
-| `Baked.Input.Versioning.bump` | `--bump`, parsed to a `Bump` DU |
-| `Baked.Argument.Versioning.bump` | the same as a positional argument, defaulting to `patch` |
-| `Baked.Input.CI.isCI` | `--ci`, defaulting to true when the environment looks like CI |
+| `Baked.Dotnet.config` | `configuration`/`-c`, over `release`/`r`/`debug`/`d` case-insensitively, as `string option` |
+| `Baked.NuGet.apiKey` | `nuget-key`/`--nuget`/`-k`, help name `APIKEY`, defaulting to `$NUGET_API_KEY` |
+| `Baked.SemVer.bump` | `bump`, parsed to a `Bump` DU over `major\|minor\|patch\|alpha\|beta\|rc\|preview\|<SEMVER>`, defaulting to `patch` |
+| `Baked.Common.isCI` | `--ci`, defaulting to true when the environment looks like CI |
 
-They are `ActionInput` values like any other, so they bind in an `inputs` CE exactly as a hand-rolled option
-does:
+`BuildOption.map`, `.mapOpt` and `.mapArg` apply an `Input.*` combinator to both forms, or to one. Both forms
+are `ActionInput` values like any other, so they bind in an `inputs` CE exactly as a hand-rolled option does:
 *)
 
-// TODO - update docs
 let packaging =
     input {
         let! config = Baked.Dotnet.config.option
@@ -600,40 +596,24 @@ let packaging =
 (**
 ### Versioning a project file
 
-`Baked.Version` is semantic-version arithmetic over the `Bump` DU, and `Baked.IO` applies it to a project file.
-A bump command is then a stage that binds the two inputs and edits the projects it was given:
+`Baked.SemVer.Version` is semantic-version arithmetic over the `Bump` DU, and `Baked.SemVer.Version.IO` applies
+it to a project file. The `bump` stage itself is ready made: it binds `--ci` and skips itself when that is set,
+and it takes the projects to edit as an `InputSpec<string list>`, so the CLI decides what `--project` accepts.
 
 ```fsharp
-let bump =
-    input {
-        let! bump = Baked.Argument.Versioning.bump
-        and! projects = Baked.Input.Project.target [ "MyLib"; "MyLib.Tool" ]
-        and! ci = Baked.Input.CI.isCI
-
-        return stage "bump" {
-            when' (not ci)
-
-            run (fun (_: StageContext) ->
-                projects
-                |> List.map (fun project ->
-                    match Baked.IO.bumpVersion (pathOf project) bump with
-                    | Ok (previous, next) -> printfn $"{project}: {previous} -> {next}"; Ok ()
-                    | Error error -> Error error.Message)
-                |> List.tryPick (function Error error -> Some (Error error) | Ok () -> None)
-                |> Option.defaultValue (Ok ()))
-        }
-    }
+let bumpAsArgument = Baked.SemVer.Stages.bumpArgument Options.projects   // <command> minor -p MyLib
+let bumpAsOption   = Baked.SemVer.Stages.bumpOption Options.projects     // <command> --bump minor -p MyLib
 ```
 
-`IO.writeVersion` rewrites `<Version>` and `<AssemblyVersion>` in the first `PropertyGroup`, adding either
-element if it is absent, and answers what `<Version>` held before. It saves without the `<?xml ?>` declaration
+`Baked.SemVer.Version.IO.writeVersion` rewrites `<Version>` and `<AssemblyVersion>` in the first
+`PropertyGroup`, adding either element if it is absent, and answers what `<Version>` held before. It saves without the `<?xml ?>` declaration
 and byte-order mark `XDocument.Save` would otherwise introduce, so a bump reads as a one-line diff.
 
 The two properties are not the same string. `<Version>` is the package version and moves however you bump it;
 `<AssemblyVersion>` only takes the major. Letting the assembly version move on a patch bump breaks anything not
 rebuilt in the same pass with `Could not load file or assembly '<name>, Version=…'`.
 
-Pair it with `Baked.Input.CI.isCI`, as above, and versions are bumped locally and committed rather than
+Pair it with `Baked.Common.isCI`, as above, and versions are bumped locally and committed rather than
 invented on a runner: CI packs whatever the project file carries.
 
 The arithmetic itself:
@@ -701,5 +681,5 @@ the stage and use `runSensitive $"…"` inside it as normal.
 
 ## API reference
 
-The [API reference](../reference/) is generated from the XML documentation on each custom operation.
+The [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) is generated from the XML documentation on each custom operation.
 *)

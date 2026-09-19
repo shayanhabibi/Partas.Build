@@ -41,7 +41,7 @@ let bump =
             )
         )
 /// <summary>
-/// Semantic version arithmetic for <see cref="T:Partas.Build.Baked.Types.Versioning.Bump"/>.
+/// Semantic version arithmetic for <see cref="T:Partas.Build.Baked.SemVer.Bump"/>.
 /// </summary>
 /// <remarks>
 /// Build metadata (<c>+sha</c>) is dropped, and a pre-release tag is read as <c>label.number</c>:
@@ -148,7 +148,7 @@ module Version =
         /// <remarks>
         /// Both are written in one pass so the project file states its own identity outright, rather than leaving
         /// <c>AssemblyVersion</c> to be derived by an MSBuild rule somewhere up the directory tree. See
-        /// <see cref="M:Partas.Build.Baked.Version.assembly"/> for why the two are not the same string.
+        /// <see cref="M:Partas.Build.Baked.SemVer.Version.assembly(System.String)"/> for why the two are not the same string.
         /// </remarks>
         let writeVersion (projPath: string) (versionMap: string option -> string) =
             let projFile = FileInfo(projPath)
@@ -171,7 +171,7 @@ module Version =
 
         /// <summary>Applies bump to the project's <c>&lt;Version&gt;</c>, in place.</summary>
         /// <returns>The version before and after the bump.</returns>
-        /// <remarks>A project with no <c>&lt;Version&gt;</c> is bumped from <see cref="F:Partas.Build.Baked.Version.zero"/>.</remarks>
+        /// <remarks>A project with no <c>&lt;Version&gt;</c> is bumped from <see cref="P:Partas.Build.Baked.SemVer.Version.zero"/>.</remarks>
         let bumpVersion projPath bump =
             let mutable next = zero
 
@@ -188,7 +188,7 @@ module Stages =
     /// <paramref name="bumpSource"/> and <paramref name="projects"/> arrive as sources rather than as read
     /// values because <c>InputSpec</c> is applicative: a spec built inside <c>return</c> nests as
     /// <c>InputSpec&lt;InputSpec&lt;_&gt;&gt;</c>, and the inner <c>Inputs</c> are then unreachable without a
-    /// <c>ParseResult</c> — the circularity the whole design exists to avoid (<c>PLAN.md</c>, finding 5).
+    /// <c>ParseResult</c> — the circularity the whole design exists to avoid (<c>notes/PLAN.md</c>, finding 5).
     /// Every source is therefore bound in one <c>let!</c>/<c>and!</c> group here, and the callers below vary
     /// only which spec they hand in.
     /// </remarks>
@@ -217,10 +217,6 @@ module Stages =
     /// <summary>
     /// The bump kind as an argument - `&lt;command> minor -p src/Foo` - defaulting to a patch when omitted.
     /// </summary>
-    /// <param name="allProjects">
-    /// List of paths to projects you want to bump if the project input includes "all" or is empty.
-    /// Can be kept empty otherwise
-    /// </param>
     /// <param name="projects">
     /// The input spec for the project path(s) to bump.
     /// </param>
@@ -231,10 +227,6 @@ module Stages =
     /// The bump kind as an option - `&lt;command> --bump minor -p src/Foo`.
     /// No action if option is not present. Defaults to patch.
     /// </summary>
-    /// <param name="allProjects">
-    /// List of paths to projects you want to bump if the project input includes "all" or is empty.
-    /// Can be kept empty otherwise
-    /// </param>
     /// <param name="projects">
     /// The input spec for the project path(s) to bump.
     /// </param>

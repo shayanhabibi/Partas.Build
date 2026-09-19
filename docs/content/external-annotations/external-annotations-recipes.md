@@ -6,8 +6,8 @@ index: 3
 
 # External Annotations — Recipes
 
-Concrete setups. Background is on the [overview](../); the F# API is
-[here](../external-annotations-api/).
+Concrete setups. Background is on the [overview](index.md); the F# API is
+[here](external-annotations-api.fsx).
 
 ## Ship annotations from a repo you own
 
@@ -170,7 +170,9 @@ let main argv =
     }
 ```
 
-> If not using `Partas.Build`, use function calls to `generateOnlyTo` and `verifyOnlyTo`.
+> The generator itself, `Partas.ExternalAnnotations.generate` and `generateWith`, has no dependency on
+> Partas.Build, so a CLI built on something else calls it directly. The verify check does have one, so
+> such a CLI shells out to `partas-annotations verify`.
 
 Then pin *that* as the generator, and pack-time generation goes through your CLI:
 

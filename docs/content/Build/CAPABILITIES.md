@@ -7,8 +7,8 @@ order: 1
 # Capabilities
 
 Every custom operation on the four builders, every `Input` combinator, and the `Cmd` argument helpers — one
-line each. Use it to find the name; the [API reference](../../reference/) has the full signature and
-remarks for each, and [Composing reusable blocks](../composition/) has worked examples.
+line each. Use it to find the name; the [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) has the full signature and
+remarks for each, and [Composing reusable blocks](composition.fsx) has worked examples.
 
 ## How settings resolve
 
@@ -37,8 +37,9 @@ Three names, and their meaning shifts with the builder they sit on.
 | `pipeline` | the whole pipeline run | each stage's default | each step's default |
 | `command` / `rootCommand` | pipeline default for the whole run | pipeline default for each stage | pipeline default for each step |
 
-All three accept `int<second>`, `float` seconds, or a `TimeSpan`, except on `command`, which takes `int`
-seconds or a `TimeSpan`.
+The unit each builder takes differs. On `pipeline` all three accept `int<second>`, `float` seconds or a
+`TimeSpan`. On `stage` they accept plain `int` seconds, `float` seconds or a `TimeSpan`, and on
+`command`/`rootCommand` `int` seconds or a `TimeSpan`.
 
 ## Stage operations
 
@@ -48,6 +49,7 @@ Available inside `stage`, and inside `whenStage`, which accepts everything `stag
 |---|---|
 | `run` | Adds a step. Takes a literal command line, a `Cmd`, or a function of the `StageContext` returning `unit`, `int`, `Result<unit, string>`, a `Cmd`, an `Async<_>` or a `Task<_>` of any of those, optionally wrapped in `option` |
 | `runSensitive` | Adds a step from an interpolated command line with every hole masked as `***` wherever the library prints it |
+| `runOperation` | Adds a step from an `Operation<unit>`, with an optional label for `--explain`. Runs under the stage's working directory, environment, acceptable exit codes and output routing |
 | `runHttpHealthCheck` | Adds a step that polls a URL until it answers or the stage is cancelled |
 | `echo` | Adds a step that prints a message through the stage's output sink |
 | `when'` | Runs the stage only when a `bool` holds, or only when a given `StageContext` succeeds |
@@ -326,6 +328,7 @@ Shaping combinators, all `ActionInput<'T> -> ActionInput<'T>` and all pipeable:
 | `Input.hidden`                                                      | Keeps it out of help output                                                                                               |
 | `Input.allowMultipleArgumentsPerToken`                              | Lets one identifier token carry several values                                                                            |
 | `Input.acceptOnlyFromAmong`                                         | Restricts to a set of legal strings, ordinally                                                                            |
+| `Input.addCompletion` / `Input.addCompletions`                      | Adds tab-completion suggestions without restricting what is accepted                                                      |
 | `Input.mapFromAmong<'T> [ "key", value ]`                           | An option over a known set, each key bound to a typed value                                                               |
 | `Input.mapFromAmongWith<'T> comparer`                               | `mapFromAmong` under an explicit `StringComparer`                                                                         |
 | `Input.mapFromMany` / `mapFromManyWith`                             | The repeatable forms, binding `'T list`                                                                                   |
@@ -404,31 +407,31 @@ splitting on a separator.
 
 ## `Baked`
 
-Ready-made declarations for the options every build CLI ends up wanting. `Baked.Input.*` are options,
-`Baked.Argument.*` the positional equivalents.
+Ready-made declarations for the options every build CLI ends up wanting. They ship in their own package,
+`Partas.Build.Baked`, under `Partas.Build.Baked`.
+
+Each declaration is a `BuildOption<'T>` carrying both forms: `.option` is the flag, `.argument` the positional
+equivalent. `BuildOption.map`, `.mapOpt` and `.mapArg` apply an `Input.*` combinator to both forms or to one.
 
 | Value | What it declares |
 |---|---|
-| `Baked.Input.NuGet.apiKey` | `--nuget-key` (alias `--nuget`) as `string option` |
-| `Baked.Input.NuGet.apiKeyOrEnv` | The same, defaulting to the `NUGET_API_KEY` environment variable |
-| `Baked.Input.DotNet.config` | `--configuration` (alias `-c`) as `Configuration option`, restricted to `Debug`/`Release` |
-| `Baked.Input.DotNet.configString` | The same as `string option` |
-| `Baked.Input.Versioning.bump` | `--bump` as `Bump option`, over `major\|minor\|patch\|alpha\|beta\|rc\|preview\|<SEMVER>`, defaulting to `Patch` |
-| `Baked.Input.Project.target targets` | `--project` (alias `-p`) as `string list`, restricted to `targets` |
-| `Baked.Input.CI.isCI` | `--ci`, defaulting to true when any of the usual CI environment variables is set |
+| `Baked.NuGet.apiKey` | `nuget-key` (aliases `--nuget`, `-k`) as `string option`, defaulting to the `NUGET_API_KEY` environment variable |
+| `Baked.Dotnet.config` | `configuration` (alias `-c`) as `string option`, over `release`/`r`/`debug`/`d` case-insensitively |
+| `Baked.SemVer.bump` | `bump` as `Bump option`, over `major\|minor\|patch\|alpha\|beta\|rc\|preview\|<SEMVER>`, defaulting to `Patch` |
+| `Baked.Common.isCI` | `--ci`, defaulting to true when any of the usual CI environment variables is set |
 
 | Function | What it does |
 |---|---|
-| `Baked.Version.apply bump version` | Semantic version arithmetic over a `Bump` |
-| `Baked.Version.assembly version` | The assembly version that goes with a package version: its major, and nothing else |
-| `Baked.IO.writeVersion` / `Baked.IO.setVersion` | Rewrites `<Version>` and `<AssemblyVersion>` in a project file |
-| `Baked.IO.bumpVersion projPath bump` | Applies a bump to a project file in place, answering the versions before and after |
-| `Baked.Pipelines.bumpArgument allProjects projects` | A `bump` stage taking the bump kind as a positional argument |
-| `Baked.Pipelines.bumpOption allProjects projects` | The same with the bump kind as `--bump` |
+| `Baked.SemVer.Version.apply bump version` | Semantic version arithmetic over a `Bump` |
+| `Baked.SemVer.Version.assembly version` | The assembly version that goes with a package version: its major, and nothing else |
+| `Baked.SemVer.Version.IO.writeVersion` / `setVersion` | Rewrites `<Version>` and `<AssemblyVersion>` in a project file |
+| `Baked.SemVer.Version.IO.bumpVersion projPath bump` | Applies a bump to a project file in place, answering the versions before and after |
+| `Baked.SemVer.Stages.bumpArgument projects` | A `bump` stage taking the bump kind as a positional argument |
+| `Baked.SemVer.Stages.bumpOption projects` | The same with the bump kind as `--bump` |
 
 ## Reference
 
-- [Overview](../build-overview/) — the layers, and a first pipeline.
-- [Composing reusable blocks](../composition/) — blocks, nesting, and composition across files.
-- [Stage CE run overloads](../computation-expression-operations/).
-- [API reference](../../reference/) — full signatures and remarks.
+- [Overview](build-overview.fsx) — the layers, and a first pipeline.
+- [Composing reusable blocks](composition.fsx) — blocks, nesting, and composition across files.
+- [Stage CE run overloads](computation-expression-operations.fsx).
+- [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) — full signatures and remarks.

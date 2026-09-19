@@ -56,7 +56,7 @@ open Partas.Build.Internal
 (**
 # Composing reusable blocks
 
-[The guide](../) introduces one stage at a time. This page is the other half: building a library of
+[The guide](index.fsx) introduces one stage at a time. This page is the other half: building a library of
 reusable *blocks* — stages that carry their own CLI inputs — and assembling them into pipelines and commands.
 
 Every snippet here is compiled when the docs are built, except the two file listings under
@@ -390,7 +390,7 @@ let conditional =
         Blocks.build "MyLib.fsproj"
 
         if includeDocs then
-            stage "docs" { run "dotnet fsdocs build" }
+            stage "docs" { run "dotnet run --project docs/docs.fsproj -- build" }
     }
 
 (**
@@ -472,7 +472,8 @@ open Partas.Build
 
 module Options =
     let target =
-        Input.choices<string> "--target" [ "node", "node"; "browser", "browser" ]
+        Input.option<string> "--target"
+        |> Input.mapFromAmong [ "node", "node"; "browser", "browser" ]
         |> Input.def "node"
         |> Input.desc "Runtime the wire layer is generated for"
 
@@ -542,6 +543,6 @@ because they exist, and one process resolves packages once.
 
 ## Reference
 
-- [Guide](../) — steps, conditions, inputs, output, timeouts, `Baked`.
-- [API reference](../../reference/) — every custom operation, from its XML documentation.
+- [Guide](index.fsx) — steps, conditions, inputs, output, timeouts, `Baked`.
+- [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) — every custom operation, from its XML documentation.
 *)

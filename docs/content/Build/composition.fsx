@@ -56,17 +56,17 @@ open Partas.Build.Internal
 (**
 # Composing reusable blocks
 
-[The guide](index.fsx) introduces one stage at a time. This page is the other half: building a library of
-reusable *blocks* — stages that carry their own CLI inputs — and assembling them into pipelines and commands.
+[The guide](index.fsx) introduces one stage at a time. This page builds a library of reusable *blocks* —
+stages that carry their own CLI inputs — and assembles them into pipelines and commands.
 
-Every snippet here is compiled when the docs are built, except the two file listings under
-*Composition across files*, which are two separate scripts.
+Every snippet compiles when the docs build, except the two file listings under *Composition across files*,
+which are separate scripts.
 
 ## The shape of a block
 
-A block is a function returning a stage. If it needs no CLI flag it returns a `StageContext`; if it does, it
-returns an `InputSpec<StageContext>` from an `input { }` CE. Both are ordinary values, and both are yieldable
-anywhere a stage is.
+A block is a function returning a stage. It returns a plain `StageContext` when it needs no CLI flag, or an
+`InputSpec<StageContext>` from an `input { }` CE when it does. Both are ordinary values and both are
+yieldable anywhere a stage is.
 *)
 
 module Options =
@@ -113,8 +113,8 @@ module Blocks =
 (**
 ## Yielding blocks
 
-A pipeline takes them in declaration order and unions the options they declare. It does not matter that
-`clean` is a bare stage and the other two are specs — mix them freely:
+A pipeline takes blocks in declaration order and unions the options they declare, whether a block is a bare
+stage or a spec:
 *)
 
 let one =
@@ -127,13 +127,12 @@ let one =
     }
 
 (**
-`one` is an `InputSpec<PipelineContext>` declaring `--quick`, `--configuration` and `--verbose` exactly once
-each, because `build` and `restore` between them named those three.
+`one` is an `InputSpec<PipelineContext>` declaring `--quick`, `--configuration` and `--verbose` exactly once,
+contributed by `build` and `restore`.
 
 ## Loops and lists
 
-A `for` loop over a collection works, and so does yielding a whole list. The two differ only in where the
-collection comes from:
+A `for` loop and a yielded list both work; they differ only in where the collection comes from:
 *)
 
 let projects = [ "MyLib.fsproj"; "MyLib.Tool.fsproj"; "MyLib.Tests.fsproj" ]
@@ -151,11 +150,11 @@ let listed =
     }
 
 (**
-Both forms union the inputs of every element, so `looped` still declares `--configuration` and `--verbose`
-once between three stages.
+Both forms union the inputs of every element: `looped` still declares `--configuration` and `--verbose` once
+across three stages.
 
-The list form is what to reach for when a custom operation would otherwise force `yield!`, which F# refuses to
-mix with custom operations (`FS3086`):
+Reach for the list form when a custom operation would otherwise force `yield!`, which F# refuses to mix with
+custom operations (`FS3086`):
 
 ```fsharp
 // FS3086
@@ -165,12 +164,12 @@ pipeline "p" { yield! blocks; timeout 60.0 }
 pipeline "p" { [ yield! blocks ] }
 ```
 
-## Nesting, and inputs lifting through it
+## Nesting
 
-A stage nested inside another stage is one step of its parent, so blocks group without a separate concept —
-and an input declared at any depth surfaces on the command that runs the pipeline.
+A stage nested inside another stage is one step of its parent, so blocks group with no separate concept, and
+an input declared at any depth surfaces on the command running the pipeline.
 
-Here the innermost stage is the only thing that names `--configuration`, and it is three levels down:
+Here the innermost stage, three levels down, is the only thing that names `--configuration`:
 *)
 
 let deep =
@@ -200,10 +199,9 @@ let deep =
     }
 
 (**
-`ci --help` lists `--quick`, `--configuration` and `--verbose`. Nothing registered them; the stages that read
-them did.
+`ci --help` lists `--quick`, `--configuration` and `--verbose`; the stages that read them registered them.
 
-Settings placed *after* a nested block still apply to the enclosing stage, so ordering is free:
+A setting placed *after* a nested block still applies to the enclosing stage, so ordering is free:
 *)
 
 let settingsAfter =
@@ -216,8 +214,8 @@ let settingsAfter =
 (**
 ## Blocks that take blocks
 
-Because a block is a value, a block factory can take other blocks as arguments. This is the usual way to build
-a house style — a wrapper that adds retries, timing, teardown or a condition to whatever it is given:
+A block is a value, so a block factory can take other blocks as arguments — the usual way to build a house
+style: a wrapper adding retries, timing, teardown or a condition to whatever it receives.
 *)
 
 /// Wraps stages in a named group with a shared timeout, and a teardown that always runs.
@@ -235,8 +233,8 @@ let grouped =
     }
 
 (**
-When the stages being wrapped carry inputs, the wrapper takes an `InputSpec` list and returns an `InputSpec`.
-The `input` CE is what joins them:
+When the wrapped stages carry inputs, the wrapper takes an `InputSpec` list and returns an `InputSpec`, joined
+through the `input` CE:
 *)
 
 let inputGroup name (seconds: int) (blocks: InputSpec<StageContext> list) = input {
@@ -254,12 +252,12 @@ let inputGrouped =
     }
 
 (**
-`InputSpec.sequence` turns a list of specs into one spec of a list, unioning the inputs; `InputSpec.traverse fn
-items` is the same over a mapping. They are the two functions to know when writing this kind of wrapper.
+`InputSpec.sequence` turns a list of specs into one spec of a list, unioning the inputs. `InputSpec.traverse fn
+items` does the same over a mapping.
 
 ## Adding an input of the wrapper's own
 
-A wrapper can bind flags the wrapped blocks know nothing about. Bind them alongside the sequenced blocks:
+A wrapper can bind flags the wrapped blocks know nothing about, alongside the sequenced blocks:
 *)
 
 let skipTests = Input.option<bool> "--skip-tests" |> Input.desc "Build the tests but do not run them"
@@ -289,9 +287,9 @@ let tested =
 
 ## What does not compose: a block returning a block's spec
 
-There is one shape the CE cannot express, and it is worth recognising on sight. A block that binds inputs
-returns an `InputSpec<StageContext>`. If a *second* `input { }` builds one of those inside its own `return`,
-the result is an `InputSpec<InputSpec<StageContext>>`, and nothing downstream accepts it:
+One shape the CE cannot express is worth recognising on sight. A block that binds inputs returns an
+`InputSpec<StageContext>`. A *second* `input { }` that builds one of those inside its own `return` produces an
+`InputSpec<InputSpec<StageContext>>`, which nothing downstream accepts:
 
 ```fsharp
 // Does not work. `bumpBlock` is itself an `input { }`, so `return` wraps a spec inside a spec.
@@ -301,16 +299,14 @@ let bumpFromArgument project = input {
 }
 ```
 
-There is no `InputSpec.flatten`, and there cannot be a sound one. Flattening means reading the inner spec's
-`Inputs`, which only exist once its `Read` has run, which needs the `ParseResult` that those very inputs were
-supposed to configure. That circularity is the thing `InputSpec` exists to break, which is also why `input`
-has no `Bind`: a sequential `let!` fails with `FS0708` rather than compiling into an option set that cannot
-be registered.
+There is no `InputSpec.flatten`. Flattening would read the inner spec's `Inputs`, which exist only once its
+`Read` runs, and `Read` needs the `ParseResult` those inputs configure — the circularity `InputSpec` exists to
+break, and why `input` has no `Bind`: a sequential `let!` fails with `FS0708` instead of compiling into an
+option set that cannot be registered.
 
-The rule that follows is that **binding is a layer boundary**. One layer binds; the layers above harvest.
-So when two blocks share a body but differ in where a value comes from, pass the *source* in as an
-`InputSpec` rather than passing a read value out as one — the shared body keeps its single `let!`/`and!`
-group and the callers vary only the spec they hand over:
+**Binding is a layer boundary**: one layer binds, the layers above harvest. When two blocks share a body but
+differ in where a value comes from, pass the *source* in as an `InputSpec` instead of passing a read value out
+as one. The shared body keeps one `let!`/`and!` group; callers vary only the spec they hand over:
 *)
 
 module Sources =
@@ -338,9 +334,9 @@ let bumpFromOption project =
     bumpBlock source project
 
 (**
-`InputSpec.ofInput` lifts a bare `ActionInput` into a spec and `InputSpec.map` adapts its value, so a source
-can be defaulted or reshaped before it is handed over. Both commands below declare `--configuration`; only
-one of them declares the argument, and only the other declares `--bump`:
+`InputSpec.ofInput` lifts a bare `ActionInput` into a spec; `InputSpec.map` adapts its value, so a source can
+be defaulted or reshaped before being handed over. Both commands below declare `--configuration`; one declares
+the argument, the other declares `--bump`:
 *)
 
 let bumping =
@@ -348,14 +344,13 @@ let bumping =
       command "release" { bumpFromOption "MyLib.fsproj" } ]
 
 (**
-The same rule covers the simpler case where a helper needs no source of its own: give it the already-read
-values as plain arguments and let the caller do all the binding. Either way, an `input { }` nested inside a
-`return` is always the error.
+The same rule covers a helper needing no source of its own: give it the already-read values as plain
+arguments and let the caller bind. An `input { }` nested inside a `return` is always the error.
 
 ## Commands over stages
 
-A command does not need an explicit `pipeline`. Yield stages straight into it and they become one implicit
-pipeline that takes the command's name and description:
+A command needs no explicit `pipeline`. Stages yielded straight into it become one implicit pipeline that
+takes the command's name and description:
 *)
 
 let flat =
@@ -367,20 +362,20 @@ let flat =
     }
 
 (**
-Consecutive stages share that one pipeline — its settings, its run and its `whenStage` cross-references. A
-command can also mix them with explicit pipelines, and declaration order is preserved.
+Consecutive stages share that one pipeline, its settings, its run and its `whenStage` cross-references. A
+command can also mix implicit and explicit pipelines; declaration order is preserved.
 
-`addInput` covers the remainder: a flag the command should expose that no stage happens to bind.
+`addInput` covers the remainder: a flag the command should expose that no stage binds.
 
-A command also takes the pipeline settings themselves - `workingDir`, `envVars`, the timeouts, the output
-operations, the hooks, `post`, `verbosity` - and hands them to every pipeline it runs, including the implicit
-one above. They are defaults: a pipeline that sets the same thing for itself keeps its own value. See
+A command also takes the pipeline settings themselves — `workingDir`, `envVars`, the timeouts, the output
+operations, the hooks, `post`, `verbosity` — and hands them to every pipeline it runs, including the implicit
+one. They are defaults: a pipeline that sets the same thing keeps its own value. See
 [command-level defaults](index.html#Command-level-defaults).
 
 ## Conditional assembly
 
-An `if` with no `else` is fine around a whole stage or block — the untaken branch contributes nothing. (Custom
-operations are the exception; F# forbids those under an `if`.)
+An `if` with no `else` is fine around a whole stage or block; the untaken branch contributes nothing. Custom
+operations are the exception, since F# forbids those under an `if`.
 *)
 
 let includeDocs = System.Environment.GetEnvironmentVariable "DOCS" = "1"
@@ -394,8 +389,8 @@ let conditional =
     }
 
 (**
-For a condition that is only known after parsing, bind it and branch inside the `input` CE, which is ordinary
-F# and so has no such restriction:
+Bind and branch inside the `input` CE for a condition known only after parsing; it is ordinary F# with no
+such restriction:
 *)
 
 let maybeClean = input {
@@ -409,7 +404,7 @@ let maybeClean = input {
 (**
 ## Putting it together
 
-A small but complete build, assembled entirely from blocks:
+A small, complete build assembled entirely from blocks:
 *)
 
 let mainCommand argv =
@@ -454,16 +449,15 @@ adds `--skip-tests` and `--quick`, `release` gets what its blocks declare.
 
 ## Composition across files
 
-A `Command` is an ordinary value, and `Yield` takes one. So a script that owns a slice of the build exposes
-its commands as a binding, and any other script `#load`s the file and yields the binding.
+A `Command` is an ordinary value and `Yield` takes one. A script that owns a slice of the build exposes its
+commands as a binding; another script `#load`s the file and yields the binding.
 
 Two rules make it work:
 
 1. **The command tree is a value.** Bind it with `let`; do not `exit` it at the point of definition.
 2. **The `rootCommand` invocation is gated.** `#load` executes the loaded script top to bottom, so an
-   ungated `exit (rootCommand … )` takes over the loading script's process. `Args.scriptName ()` answers the
-   filename the process was launched with, which is the loaded script's own name only when it is the one
-   being run.
+   ungated `exit (rootCommand … )` takes over the loading script's process. `Args.scriptName ()` returns the
+   filename the process launched with — the loaded script's own name only when it is the one running.
 
 ```fsharp
 // tools/generate-wire.fsx
@@ -509,19 +503,19 @@ exit (
     })
 ```
 
-`dotnet fsi build.fsx -- generate ast --help` lists `--target` with its two legal values, and
-`dotnet fsi tools/generate-wire.fsx -- generate ast --help` prints the same thing, from the same declaration.
+`dotnet fsi build.fsx -- generate ast --help` lists `--target` with its two legal values; `dotnet fsi
+tools/generate-wire.fsx -- generate ast --help` prints the same thing, from the same declaration.
 
 ### The module name `#load` gives a file
 
-F# derives it from the filename: the first letter is capitalised, everything else is kept, and any character
-illegal in an identifier forces double backticks. `tools/generate-wire.fsx` therefore becomes
-`` `Generate-wire` ``, not `GenerateWire` and not `Generate_wire`. Check it once per file: an `open` of the
-wrong guess fails to compile, naming the module you wrote rather than the one that exists.
+F# derives the module name from the filename, capitalising the first letter and wrapping the whole in double
+backticks if a character is illegal in an identifier. `tools/generate-wire.fsx` becomes `` `Generate-wire` ``,
+not `GenerateWire` or `Generate_wire`. An `open` of the wrong guess fails to compile, naming a module that
+does not exist.
 
 ### Names must be unique among siblings
 
-`System.CommandLine` builds a lookup keyed by command name, so yielding the loaded `generate` command into
+`System.CommandLine` builds a lookup keyed by command name. Yielding the loaded `generate` command into
 another command also called `generate` throws
 `ArgumentException: An item with the same key has already been added. Key: generate`. Yield it at a level
 where its name is free, or wrap it in a differently-named parent:
@@ -535,11 +529,10 @@ command "wire" {
 
 ### What this replaces
 
-Without it, a build split across four scripts is one script with a `--only <string>` flag whose legal values
-live in its description string, the four layer names spelled once in the flag and once in the `match` that
-dispatches on it with nothing checking that the two agree, and four `fsi` startups with four NuGet resolutions
-for a run that touches all four. Here the four names are the four `command` bindings, `--help` lists them
-because they exist, and one process resolves packages once.
+Without it, four scripts collapse into one with a `--only <string>` flag: the four layer names spelled once
+in the flag and once in a dispatching `match`, nothing checking the two agree, and four `fsi` startups each
+resolving NuGet for a run touching all four. Composition gives four `command` bindings instead — `--help`
+lists them because they exist, and one process resolves packages once.
 
 ## Reference
 

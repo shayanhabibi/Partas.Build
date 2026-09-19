@@ -58,11 +58,9 @@ open Partas.Build.Internal
 
 ## Stage
 
-> Unless stated otherwise all examples are within a `stage` computation.
+> Unless stated otherwise, every example runs inside a `stage` computation.
 
-The computation expression operation for a step has a variety of overloads.
-As the most overloaded operation, it is the only one that really requires separate
-documentation.
+`run` takes a step and has more overloads than any other operation, which is why it gets its own page.
 
 *)
 (*** hide ***)
@@ -72,11 +70,11 @@ let _ = stage "stage" {
 (**
 ### `run`
 
-> When returning a `string`-like value, the value is run as a command.
+> A returned `string`-like value runs as a command.
 >
-> When returning an `int`-like value, the value is treated as an exit code.
+> A returned `int`-like value is an exit code.
 >
-> When returning, or running a command, the overload would usually have a `?cancellationToken: CancellationToken` parameter.
+> An overload that returns or runs a command usually takes an optional `?cancellationToken: CancellationToken`.
 
 ##### `buildStep: StageContext -> BuildStep`
 

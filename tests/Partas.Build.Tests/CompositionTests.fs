@@ -225,6 +225,19 @@ let tests =
 
             sharedBy "retry" 1
             sharedBy "runSensitive" 1
+
+            // `run` keeps one mirrored pair, over `StageContext -> BuildStep`: it is the only `run` taking no
+            // optional argument, and a lambda whose return type the call site leaves open resolves through it.
+            let shared, retained =
+                builder.GetMethods()
+                |> Array.filter (fun method -> method.Name = "run")
+                |> Array.partition (fun method -> method.IsGenericMethodDefinition)
+
+            Expect.equal shared.Length 18 "every argument shape but one should have a single implementation"
+            Expect.equal retained.Length 2 "the deferred-step overload should keep its mirrored pair"
+
+            for method in retained do
+                Expect.equal method.DeclaringType builder "the retained pair belongs to the stage builder itself"
         }
 
         test "a moved run operation runs its step in every builder state" {
@@ -244,6 +257,22 @@ let tests =
                 (lines |> Seq.filter (fun line -> line.Contains "moved") |> Seq.length)
                 2
                 "the command should run once from the plain stage and once from the materialized one"
+        }
+
+        test "a moved run operation runs a context-derived step in every builder state" {
+            let config = configuration ()
+            let reads = ref 0
+            let calls = ref 0
+            let touch (_: StageContext) = lock calls (fun () -> calls.Value <- calls.Value + 1)
+
+            let plain: StageContext = stage "plain" { run touch }
+            let spec: InputSpec<StageContext> = stage "spec" { countingBlock reads "child" config; run touch }
+            let built = pipeline "moved step" { plain; spec.Read (parse spec.Inputs "") }
+
+            Expect.equal calls.Value 0 "declaring the step should run nothing"
+            capturingOut (fun () -> PipelineContext.run built) |> ignore
+
+            Expect.equal calls.Value 2 "the step should run once from the plain stage and once from the materialized one"
         }
 
         // ---------------------------------------------------------------- producers and their consumers

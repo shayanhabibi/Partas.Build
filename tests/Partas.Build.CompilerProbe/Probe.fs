@@ -178,6 +178,41 @@ let private tests = testList "compiler probe" [
         let parsed = parse around.Inputs
         Expect.equal ((around.Read parsed).Steps |> List.length) 3 "every command and the child are steps of the materialized stage"
     }
+
+    test "a step derived from the stage context runs in every representation across the assembly boundary" {
+        let config = configuration ()
+        let calls = ref 0
+        let touch (_: StageContext) = calls.Value <- calls.Value + 1
+
+        let child name = {
+            Inputs = [ config :> ActionInput ]
+            Read = fun _ -> stage name { echo "child" }
+        }
+
+        // No annotation on any binding: the functions below are what fixes the type.
+        let plain = stage "plain" { run touch }
+        let derived = stage "derived" { run (fun (_: StageContext) -> "dotnet --version") }
+        let prepared = stage "prepared" { run (fun (_: StageContext) -> Cmd.create "dotnet" "--version") }
+        let awaited = stage "awaited" { run (fun (_: StageContext) -> async { return Cmd.create "dotnet" "--version" }) }
+        let reported = stage "reported" { run (fun (_: StageContext) -> Ok(Cmd.create "dotnet" "--version"): Result<Cmd, string>) }
+        let indexed = stage "indexed" { run (fun (_: StageContext) (_: StageContext) (_: StepIndex) -> async { return Ok(): Result<unit, string> }) }
+        let before = stage "before" { run touch; child "a" }
+        let after = stage "after" { child "b"; run (fun (_: StageContext) -> Some "dotnet --version") }
+        let around = stage "around" { run touch; child "c"; run (fun (_: StageContext) -> async { return 0 }) }
+
+        Expect.equal (requiresStage plain) "plain" "a flexible step leaves a stage a StageContext"
+        Expect.equal (requiresStage derived) "derived" "a derived command line leaves a stage a StageContext"
+        Expect.equal (requiresStage prepared) "prepared" "a derived command leaves a stage a StageContext"
+        Expect.equal (requiresStage awaited) "awaited" "an awaited command leaves a stage a StageContext"
+        Expect.equal (requiresStage reported) "reported" "a reported command leaves a stage a StageContext"
+        Expect.equal (requiresStage indexed) "indexed" "a step reading its own index leaves a stage a StageContext"
+        Expect.equal (requiresSpec before |> List.length) 1 "a step before an input-aware child keeps the specification"
+        Expect.equal (requiresSpec after |> List.length) 1 "a step after an input-aware child keeps the specification"
+        Expect.equal (requiresSpec around |> List.length) 1 "steps on both sides of a child keep the specification"
+
+        Expect.equal calls.Value 0 "declaring a step invokes nothing"
+        Expect.equal ((around.Read (parse around.Inputs)).Steps |> List.length) 3 "both steps and the child are steps of the materialized stage"
+    }
 ]
 
 [<EntryPoint>]

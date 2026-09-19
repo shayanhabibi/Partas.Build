@@ -210,11 +210,11 @@
 - Files: `Builders/StageSettings.fs`, `Builders/Stage.fs`, relevant XML fragments, compiler probe, `CompositionTests.fs`.
 - Consumes: T1's verified mapping and the working runtime surface.
 - Produces: one implementation per state-preserving stage setting, with genuinely distinct argument overloads retained.
-- [ ] Inventory plain/input-aware mirror pairs; classify each as state-preserving, argument conversion, or representation-changing.
-- [ ] Move state-preserving stage settings into the shared base in small groups.
-- [ ] After each group, run relevant composition tests and the separate Debug/Release consumer.
-- [ ] Verify member docs and user-facing completion attributes; hide support machinery rather than DSL operations.
-- [ ] Record any operation retained as an overload pair and the compiler/semantic reason.
+- [x] Inventory plain/input-aware mirror pairs; classify each as state-preserving, argument conversion, or representation-changing. (task-T8a-report.md's table; task-T8b-report.md's pipeline-side count.)
+- [x] Move state-preserving stage settings into the shared base in small groups. (T8a groups 1-3 in `Builders/StageSettings.fs`; T8b groups 1-3 in the new `Builders/PipelineSettings.fs`.)
+- [x] After each group, run relevant composition tests and the separate Debug/Release consumer. (Each T8a/T8b group report records `CompositionTests`/`PipelineTests` and both `CompilerProbe` configurations green.)
+- [x] Verify member docs and user-facing completion attributes; hide support machinery rather than DSL operations. (T8c's completion-attribute sweep: no `[<CustomOperation>]` member carries `EditorBrowsable`; `StageMap`/`SRTPStageBuilderRunner`/`PipelineMap` are `Never`, `StageSettingsBuilder`/`PipelineSettingsBuilder` are `Advanced`.)
+- [x] Record any operation retained as an overload pair and the compiler/semantic reason. (`timeout`/`timeoutForStage`/`timeoutForStep`/`workingDir` keep distinct argument types under one generic member each, task-T8b-report.md; `run (StageContext -> BuildStep)` stays a non-generic mirrored pair on `StageBuilder` — moving it into the generic base, or reordering it against the flexible-signature overload, both raise FS0041 against four existing call sites, task-T8a-report.md.)
 - Completion: duplicate setting implementations are reduced without erasing type distinctions or changing existing call-site results.
 
 ## T9 — Document limitations and run full acceptance
@@ -223,12 +223,12 @@
 - Files: README, capabilities docs, XML docs, build integration, both execution-plan files.
 - Consumes: implemented behavior and recorded compiler/test evidence.
 - Produces: documented supported surface and reproducible acceptance evidence.
-- [ ] Document checked/attempted capture, static dependencies, handle identity, scope retry ownership, skips, and handler behavior.
-- [ ] Document supported parallel arrangements and diagnostics for unsupported cases.
-- [ ] Add a migration example moving command work out of `InputSpec.Read`; preserve the applicative CLI layer.
-- [ ] Run focused suites, both library configurations, all library target builds, compiler consumers, and full repository acceptance.
-- [ ] Inspect the final diff for accidental changes to existing command defaults, input discovery, or output routing.
-- [ ] Record results and limitations; mark tasks complete only when their stated outcomes are observed.
+- [x] Document checked/attempted capture, static dependencies, handle identity, scope retry ownership, skips, and handler behavior. (T9a, merged at 0fbea79; task-T9a-report.md.)
+- [x] Document supported parallel arrangements and diagnostics for unsupported cases. (T9a, merged at 0fbea79; task-T9a-report.md.)
+- [x] Add a migration example moving command work out of `InputSpec.Read`; preserve the applicative CLI layer. (T9a, merged at 0fbea79; task-T9a-report.md's "Migrating work out of `InputSpec.Read`" section.)
+- [x] Run focused suites, both library configurations, all library target builds, compiler consumers, and full repository acceptance. (See the "Verification commands" section and the T8/T9 evidence-log entry below; Linux coverage not run locally, recorded rather than claimed.)
+- [x] Inspect the final diff for accidental changes to existing command defaults, input discovery, or output routing. (See the T8/T9 evidence-log entry below; no drift found.)
+- [x] Record results and limitations; mark tasks complete only when their stated outcomes are observed. (This checklist and the T8/T9 evidence-log entry below.)
 - Completion: all accepted contracts have tests or compiler evidence; deferred behavior is explicitly documented, not silently approximated.
 
 ## Verification commands

@@ -711,6 +711,58 @@ now runs an `Operation`, and `Operations.fs` needs `Cmd` and `CmdRunner`.
 `CmdRunner.outputPolicy` and `CmdRunner.announceKill`. `CmdRunner.run` is those four plus the code it already
 had, and its behaviour is unchanged.
 
+## Implemented surface (T8)
+
+### `PipelineMap` and `PipelineSettingsBuilder`
+
+`src/Partas.Build/Builders/PipelineSettings.fs` (new), namespace `Partas.Build.Internal`, as the compiler
+reports it:
+
+```fsharp
+[<EditorBrowsable(EditorBrowsableState.Never)>]
+type PipelineMap =
+    static member Map: build: BuildPipeline * update: (PipelineContext -> PipelineContext) -> BuildPipeline
+    static member Map: spec: InputSpec<BuildPipeline> * update: (PipelineContext -> PipelineContext) -> InputSpec<BuildPipeline>
+    static member inline Apply: state: ^State * update: (PipelineContext -> PipelineContext) -> ^State
+
+[<EditorBrowsable(EditorBrowsableState.Never); CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module PipelineMap =
+    val inline mapPipeline: update: (PipelineContext -> PipelineContext) -> state: ^State -> ^State
+
+[<EditorBrowsable(EditorBrowsableState.Advanced)>]
+type PipelineSettingsBuilder =
+    new: unit -> PipelineSettingsBuilder
+    [<CustomOperation>] member inline description: state: ^State * desc: string -> ^State
+    // 26 further members of the same shape, one per pipeline setting: timeout/timeoutForStage/
+    // timeoutForStep/workingDir keep their existing argument-type overload sets, generic in ^State;
+    // every other setting collapses to one member.
+```
+
+`PipelineBuilder` (`Builders/Pipeline.fs`) inherits `PipelineSettingsBuilder`; the 27 mirrored pairs it declared
+at `6093b93` (54 `[<CustomOperation>]` members, one `BuildPipeline` and one `InputSpec<BuildPipeline>` each) are
+gone from `Pipeline.fs`, which now declares zero custom operations of its own. `PipelineBuilder`'s
+representation-changing members (`Yield`/`Zero`/`YieldFrom`/`Delay`/`Combine`/`For`/`Run`) are unchanged and stay
+where they were, since `PipelineMap.Map` only covers the two states a settings update can see: `BuildPipeline`
+and `InputSpec<BuildPipeline>`. The `unit` state `Delay(unit -> unit)` produces and the `BuildStageIsActive`
+state a yielded condition produces reach no custom operation and need no `Map` overload.
+
+`timeout`, `timeoutForStage` and `timeoutForStep` keep three members each (`int<second>`, `float`, `TimeSpan`)
+and `workingDir` keeps two (`string`, `IO.DirectoryInfo`), all now generic in `^State`: the argument types are
+genuinely distinct, so the mirror collapses but the overload set does not. `Builders/Stage.fs` keeps one
+retained pair outside its own generic base: `run (build: BuildStage, buildStep: StageContext -> BuildStep)` and
+its `InputSpec<BuildStage>` mirror stay non-generic members of `StageBuilder`, because moving either one into
+the generic base, or reordering it against the flexible-signature `run (step)` overload, ties both against that
+overload under FS0041 at four existing call sites (`ConditionsTests.fs`, `FailureTests.fs`, `CommandTests.fs`,
+`SummaryTests.fs`).
+
+### Compile order
+
+`Builders/PipelineSettings.fs` compiles after `Builders/Conditions.fs` and before `Builders/Pipeline.fs`:
+`PipelineSettingsBuilder`'s members need `BuildStageIsActive` from `Conditions.fs`, and `PipelineBuilder`
+inherits `PipelineSettingsBuilder`. `Builders/StageSettings.fs` gained `StepFnSignature` and
+`SRTPStageBuilderRunner`, moved unchanged from `Builders/Stage.fs`; `StageBuilder` no longer needs an
+`and`-recursive declaration with either one.
+
 ## Evidence and limits
 
 - Verified against the real library by T1, and reproducible from the repository:

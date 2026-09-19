@@ -47,6 +47,7 @@ let private finish (name: string) (build: BuildPipeline) =
 /// <c>InputSpec&lt;PipelineContext></c> and the inputs of every stage are unioned into it.
 /// </remarks>
 type PipelineBuilder(name: string) =
+    inherit PipelineSettingsBuilder()
     // =================================================================
     //                              Run
     // =================================================================
@@ -226,48 +227,6 @@ type PipelineBuilder(name: string) =
         ([<InlineIfLambda>] build: BuildPipeline, path: string): BuildPipeline
         = build >> fun ctx -> { ctx with WorkingDir = ValueSome path }
 
-    /// <summary>Stops each step prefixing its console output with the stage and step index.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
-    [<CustomOperation>] member inline _.
-        noPrefixForStep
-        ([<InlineIfLambda>] build: BuildPipeline, ?flag: bool): BuildPipeline
-        = build >> fun ctx -> { ctx with NoPrefixForStep = defaultArg flag true }
-
-    /// <summary>Stops redirecting child process stdout/stderr, letting them write to the console directly.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
-    [<CustomOperation>] member inline _.
-        noStdRedirectForStep
-        ([<InlineIfLambda>] build: BuildPipeline, ?flag: bool): BuildPipeline
-        = build >> fun ctx -> { ctx with NoStdRedirectForStep = defaultArg flag true }
-
-    /// <summary>Sends the output of every stage's steps somewhere other than the console.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
-    [<CustomOperation>] member inline _.
-        outputTo
-        ([<InlineIfLambda>] build: BuildPipeline, output: StageOutput): BuildPipeline
-        = build >> fun ctx -> { ctx with Output = ValueSome output }
-
-    /// <summary>Drops the output of every stage's steps.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
-    [<CustomOperation>] member inline _.
-        silentOutput
-        ([<InlineIfLambda>] build: BuildPipeline): BuildPipeline
-        = build >> fun ctx -> { ctx with Output = ValueSome StageOutput.Silent }
-
-    /// <summary>Holds every stage's step output back, lifting it into the error message when a step fails.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
-    [<CustomOperation>] member inline _.
-        captureOutput
-        ([<InlineIfLambda>] build: BuildPipeline, ?capture: OutputCapture): BuildPipeline
-        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Captured(defaultArg capture (OutputCapture.create()))) }
-
-    /// <summary>Hands each line of step output to <paramref name="write"/> as it arrives.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
-    [<CustomOperation>] member inline _.
-        redirectOutput
-        ([<InlineIfLambda>] build: BuildPipeline, [<InlineIfLambda>] write: StdStream -> string -> unit): BuildPipeline
-        = build >> fun ctx -> { ctx with Output = ValueSome(StageOutput.Redirect write) }
-
     /// <summary>Runs a function immediately before each stage of the pipeline.</summary>
     /// <include file="../xmldoc/pipeline.xml" path="/pipeline/hooks/*"/>
     [<CustomOperation>] member inline _.
@@ -386,42 +345,6 @@ type PipelineBuilder(name: string) =
         workingDir
         (spec: InputSpec<BuildPipeline>, path: string): InputSpec<BuildPipeline>
         = InputSpec.map (fun (build: BuildPipeline) -> this.workingDir(build, path)) spec
-    /// <summary>Stops each step prefixing its console output with the stage and step index.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        noPrefixForStep
-        (spec: InputSpec<BuildPipeline>, ?flag: bool): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.noPrefixForStep(build, ?flag = flag)) spec
-    /// <summary>Stops redirecting child process stdout/stderr, letting them write to the console directly.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        noStdRedirectForStep
-        (spec: InputSpec<BuildPipeline>, ?flag: bool): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.noStdRedirectForStep(build, ?flag = flag)) spec
-    /// <summary>Sends the output of every stage's steps somewhere other than the console.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        outputTo
-        (spec: InputSpec<BuildPipeline>, output: StageOutput): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.outputTo(build, output)) spec
-    /// <summary>Drops the output of every stage's steps.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        silentOutput
-        (spec: InputSpec<BuildPipeline>): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.silentOutput build) spec
-    /// <summary>Holds every stage's step output back, lifting it into the error message when a step fails.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        captureOutput
-        (spec: InputSpec<BuildPipeline>, ?capture: OutputCapture): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.captureOutput(build, ?capture = capture)) spec
-    /// <summary>Hands each line of step output to <paramref name="write"/> as it arrives.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        redirectOutput
-        (spec: InputSpec<BuildPipeline>, [<InlineIfLambda>] write: StdStream -> string -> unit): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.redirectOutput(build, write)) spec
     /// <summary>Runs a function immediately before each stage of the pipeline.</summary>
     /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
     [<CustomOperation>] member inline this.
@@ -446,30 +369,7 @@ type PipelineBuilder(name: string) =
         onFailure
         (spec: InputSpec<BuildPipeline>, handler: FailureHandler): InputSpec<BuildPipeline>
         = InputSpec.map (fun (build: BuildPipeline) -> this.onFailure(build, handler)) spec
-    [<CustomOperation>] member inline _.
-        verbosity
-        ([<InlineIfLambda>] build: BuildPipeline, verbosity: Verbosity): BuildPipeline
-        = build >> fun ctx -> { ctx with Verbosity = ValueSome verbosity }
-    [<CustomOperation>] member inline _.
-        verbose
-        ([<InlineIfLambda>] build: BuildPipeline): BuildPipeline
-        = build >> fun ctx -> { ctx with Verbosity = ValueSome Verbosity.Verbose }
-    [<CustomOperation>] member inline _.
-        quiet
-        ([<InlineIfLambda>] build: BuildPipeline): BuildPipeline
-        = build >> fun ctx -> { ctx with Verbosity = ValueSome Verbosity.Quiet }
-    [<CustomOperation>] member inline this.
-        verbosity
-        (build: InputSpec<BuildPipeline>, verbosity: Verbosity): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.verbosity(build, verbosity)) build
-    [<CustomOperation>] member inline this.
-        verbose
-        (build: InputSpec<BuildPipeline>): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.verbose(build)) build
-    [<CustomOperation>] member inline this.
-        quiet
-        (build: InputSpec<BuildPipeline>): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.quiet(build)) build
+
 /// <summary>Folds ready-made stages into one unnamed pipeline.</summary>
 /// <remarks>
 /// This is what a <c>command</c> does with stages yielded straight into it: they become the stages of a single

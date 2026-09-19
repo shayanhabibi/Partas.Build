@@ -16,6 +16,25 @@ let private parentNames (ctx: PipelineContext) = [
         | ValueNone -> "none"
 ]
 
+let private isSilent (output: StageOutput voption) =
+    match output with
+    | ValueSome StageOutput.Silent -> true
+    | _ -> false
+
+/// Asserts that each named operation survives on `PipelineBuilder` exactly once, inherited and generic in the state.
+let private expectOneImplementation (names: string list) =
+    let builder = typeof<Partas.Build.PipelineBuilder.PipelineBuilder>
+
+    for name in names do
+        let found = builder.GetMethods() |> Array.filter (fun method -> method.Name = name)
+
+        Expect.equal found.Length 1 $"the mirrored {name} pair should collapse into one operation"
+        Expect.isTrue found[0].IsGenericMethodDefinition $"the surviving {name} should be generic in the builder state"
+        Expect.notEqual found[0].DeclaringType builder $"the surviving {name} should be inherited from the shared settings builder"
+        Expect.isNull
+            (System.Attribute.GetCustomAttribute(found[0], typeof<System.ComponentModel.EditorBrowsableAttribute>))
+            $"the operation {name} should stay visible to completion"
+
 let private options () =
     Input.option<string> "--configuration" |> Input.def "Debug",
     Input.option<bool> "--quick" |> Input.def false,
@@ -182,5 +201,55 @@ let tests =
             | Some ex ->
                 Expect.isNotNull ex.InnerException "the pipeline should carry the stage's exception as its cause"
                 Expect.equal ex.InnerException.Message "boom" "the cause should be the exception the step raised"
+        }
+
+        // ---------------------------------------------------------------- settings shared across builder states
+        test "the output settings land on the pipeline in both representations" {
+            let config, _, _ = options ()
+
+            let declaring = input {
+                let! cfg = config
+                return stage "compile" { run (fun (_: StageContext) -> ignore cfg) }
+            }
+
+            let plain: PipelineContext =
+                pipeline "plainOutput" {
+                    silentOutput
+                    verbosity Verbosity.Quiet
+                    noPrefixForStep
+                    stage "restore" { run noop }
+                }
+
+            let spec: InputSpec<PipelineContext> =
+                pipeline "specOutput" {
+                    noStdRedirectForStep
+                    declaring
+                    silentOutput
+                    verbose
+                }
+
+            let built = spec.Read (parse spec.Inputs "")
+
+            Expect.isTrue (isSilent plain.Output) "a plain pipeline should record the output sink"
+            Expect.equal plain.Verbosity (ValueSome Verbosity.Quiet) "a plain pipeline should record the verbosity"
+            Expect.isTrue plain.NoPrefixForStep "a plain pipeline should record the prefix flag"
+
+            Expect.isTrue (isSilent built.Output) "an input-aware pipeline should record the output sink"
+            Expect.equal built.Verbosity (ValueSome Verbosity.Verbose) "an input-aware pipeline should record the verbosity"
+            Expect.isTrue built.NoStdRedirectForStep "a setting before the declaring stage should reach the pipeline"
+        }
+
+        test "one output setting implementation serves every pipeline builder state" {
+            expectOneImplementation [
+                "captureOutput"
+                "noPrefixForStep"
+                "noStdRedirectForStep"
+                "outputTo"
+                "quiet"
+                "redirectOutput"
+                "silentOutput"
+                "verbose"
+                "verbosity"
+            ]
         }
     ]

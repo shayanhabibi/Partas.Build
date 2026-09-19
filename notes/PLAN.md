@@ -4,8 +4,9 @@ Working document. Kept at the repository root rather than under `docs/`, because
 `fsdocs` renders every `.md` under `docs/` into the published site and this is
 internal.
 
-Status: **agreed in principle, not yet implemented.** To be revised before work
-starts. Every claim marked *verified* was checked against the compiler.
+Status: **implemented.** All seven phases shipped; what follows is the record of
+the design and of what each phase did. Every claim marked *verified* was checked
+against the compiler.
 
 ## Goal
 

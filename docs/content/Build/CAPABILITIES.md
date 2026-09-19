@@ -6,30 +6,29 @@ order: 1
 
 # Capabilities
 
-Every custom operation on the four builders, every `Input` combinator, and the `Cmd` argument helpers — one
-line each. Use it to find the name; the [API reference](reference/index.html) has the full signature and
-remarks for each, and [Composing reusable blocks](composition.html) has worked examples.
+One line per custom operation on the four builders, per `Input` combinator, and per `Cmd` argument helper. The
+[API reference](https://shayanhabibi.github.io/Partas.Build/reference/) has full signatures and remarks.
+[Composing reusable blocks](composition.fsx) has worked examples.
 
 ## How settings resolve
 
-A stage setting is answered by walking upward: the stage itself, then its parent stage, then the parent's
-parent, then the pipeline. The first level that set the thing wins, so `workingDir` on a pipeline covers every
-stage under it and a nested stage overrides it for itself and its own children. This applies to `workingDir`,
-`envVars`, the timeouts, `acceptExitCodes`, the output sink, `noPrefixForStep`, `noStdRedirectForStep` and
-`verbosity`.
+A stage setting resolves by walking upward: the stage, its parent stage, the parent's parent, then the
+pipeline. The first level that sets it wins, so a pipeline's `workingDir` covers every stage under it, and a
+nested stage overrides it for itself and its children. This applies to `workingDir`, `envVars`, the timeouts,
+`acceptExitCodes`, the output sink, `noPrefixForStep`, `noStdRedirectForStep` and `verbosity`.
 
 Conditions are the exception. `when'`, `whenEnvVar`, `whenBranch` and the platform operations **conjoin**: a
 second condition on the same stage narrows it to the logical AND of both. Use `whenAny { }` to widen.
 
 A command's copies of the pipeline settings are **defaults**, not overrides: they reach every pipeline the
-command runs, but only where that pipeline left the setting alone, whichever order the two were written in.
-`noPrefixForStep` and `noStdRedirectForStep` are plain bools with no unset state: a pipeline setting either one
-to the same value `PipelineContext.create` already gives it reads back identically to a pipeline that never
-touched it, so the command default overwrites it in that case too.
+command runs, but only where that pipeline left the setting alone, regardless of write order.
+`noPrefixForStep` and `noStdRedirectForStep` are plain bools with no unset state, so a pipeline setting either
+one to the value `PipelineContext.create` already gives it is indistinguishable from leaving it untouched — the
+command default overwrites it either way.
 
 ## Timeouts
 
-Three names, and their meaning shifts with the builder they sit on.
+Three names. Meaning shifts with the builder they sit on.
 
 | Builder | `timeout` | `timeoutForStage` | `timeoutForStep` |
 |---|---|---|---|
@@ -37,8 +36,10 @@ Three names, and their meaning shifts with the builder they sit on.
 | `pipeline` | the whole pipeline run | each stage's default | each step's default |
 | `command` / `rootCommand` | pipeline default for the whole run | pipeline default for each stage | pipeline default for each step |
 
-All three accept `int<second>`, `float` seconds, or a `TimeSpan`, except on `command`, which takes `int`
-seconds or a `TimeSpan`.
+The unit differs by builder:
+- `pipeline` — `int<second>`, `float` seconds or a `TimeSpan`
+- `stage` — plain `int` seconds, `float` seconds or a `TimeSpan`
+- `command` / `rootCommand` — `int` seconds or a `TimeSpan`
 
 ## Stage operations
 
@@ -48,6 +49,7 @@ Available inside `stage`, and inside `whenStage`, which accepts everything `stag
 |---|---|
 | `run` | Adds a step. Takes a literal command line, a `Cmd`, or a function of the `StageContext` returning `unit`, `int`, `Result<unit, string>`, a `Cmd`, an `Async<_>` or a `Task<_>` of any of those, optionally wrapped in `option` |
 | `runSensitive` | Adds a step from an interpolated command line with every hole masked as `***` wherever the library prints it |
+| `runOperation` | Adds a step from an `Operation<unit>`, with an optional label for `--explain`. Runs under the stage's working directory, environment, acceptable exit codes and output routing |
 | `runHttpHealthCheck` | Adds a step that polls a URL until it answers or the stage is cancelled |
 | `echo` | Adds a step that prints a message through the stage's output sink |
 | `when'` | Runs the stage only when a `bool` holds, or only when a given `StageContext` succeeds |
@@ -79,14 +81,14 @@ Available inside `stage`, and inside `whenStage`, which accepts everything `stag
 | `verbosity` | How much of the pipeline's own log this stage prints. Takes `Verbosity.Quiet`, `Normal` or `Verbose` |
 | `verbose` / `quiet` | `verbosity Verbose` and `verbosity Quiet` |
 
-A stage nested inside another stage is one step of its parent. Stages nest to any depth, and a block is just
-a value that a `stage`, a `pipeline` or a `command` can yield.
+A stage nested inside another is one step of its parent. Stages nest to any depth. A block is a value that
+`stage`, `pipeline` or `command` can yield.
 
 ### Running a command from inside a step
 
-`run` and `runSensitive` cover the common case of a command whose own exit code is the whole result. A step
-built with `run (fun ctx -> ...)` reaches for one of these `Operation<'T>` functions when it needs the
-command's output as a value:
+`run` and `runSensitive` cover the case where a command's exit code is the whole result. A step built with
+`run (fun ctx -> ...)` reaches for one of these `Operation<'T>` functions when it needs the command's output as
+a value:
 
 | Function | What it does |
 |---|---|
@@ -94,9 +96,9 @@ command's output as a value:
 | `executeCapture cmd` | Runs `cmd`, capturing stdout and stderr instead of streaming them. Fails on an unaccepted exit code the same way `execute` does, with the captured `CommandResult` attached to the failure as evidence |
 | `attemptCapture cmd` | Runs `cmd`, capturing stdout and stderr, and always answers the `CommandResult` — an unaccepted exit code included. A process-start failure and a cancellation remain outcomes of their own, never a `CommandResult`; only a process that ran to completion produces one, and branching on its exit code is the caller's |
 
-Captured stdout and stderr are the child's raw bytes, ahead of any prefix or other display formatting, and are
-application data that can hold secrets: printing a successful capture is the caller's decision, not something
-`executeCapture` or `attemptCapture` does on its own.
+Captured stdout and stderr are the child's raw bytes, ahead of any prefix or display formatting — application
+data that can hold secrets. Printing a successful capture is the caller's decision. Neither `executeCapture`
+nor `attemptCapture` does it automatically.
 
 ## Pipeline operations
 
@@ -125,13 +127,13 @@ of the command that runs it.
 | `verbose` / `quiet` | `verbosity Verbose` and `verbosity Quiet` |
 | `onFailure` | Registers a handler that runs once per failed run, after the handlers of every stage of that run. See [Failure handlers](#failure-handlers) |
 
-Not carried by `command`/`rootCommand` as a pipeline default: a command's `onFailure` would have to reach a
-failure of `InputSpec.Read` or of CLI parsing, ahead of every pipeline it runs, which nothing observes today.
+`command`/`rootCommand` carries no `onFailure` default. Such a default would have to cover a failure of
+`InputSpec.Read` or of CLI parsing, ahead of every pipeline it runs. Nothing observes that failure today.
 
 ## Producers and dependencies
 
 A `Producer<'T>` is a typed, named unit of deferred work with its own CLI inputs and its own prerequisites.
-Declaring one registers its identity and harvests those inputs; nothing runs until a consumer schedules it.
+Declaring one registers its identity and harvests those inputs. Nothing runs until a consumer schedules it.
 
 | Function | What it does |
 |---|---|
@@ -145,61 +147,60 @@ Declaring one registers its identity and harvests those inputs; nothing runs unt
 | `Stage.consuming name dependencies execute` | A stage whose one step is `execute` run over `dependencies`, with no CLI inputs of its own |
 | `Stage.consumingWith name inputs dependencies execute` | The same, plus CLI inputs the stage itself declares |
 
-A producer's handle carries an identity allocated when it is declared; two declarations sharing a name and
-arguments are distinct producers with distinct results. Depending on the same handle from more than one
-consumer runs it once per invocation and shares that one result. An unlisted producer required by a stage runs
-immediately before that stage, after its own prerequisites; listing it explicitly (`Producer.stage`, or yielding
-it into a pipeline) fixes its position instead. A consumer running under a `parallel'` or
-`shuffleExecuteSequence` scope reads a value published before that scope began; placing a producer inside such
-a scope is rejected at validation, naming the producer and the scope.
+A producer's handle carries an identity allocated when declared. Two declarations sharing a name and arguments
+are distinct producers with distinct results. Depending on the same handle from more than one consumer runs it
+once per invocation and shares that result. An unlisted producer required by a stage runs immediately before
+that stage, after its own prerequisites. Listing it explicitly (`Producer.stage`, or yielding it into a
+pipeline) fixes its position instead. A consumer running under a `parallel'` or `shuffleExecuteSequence` scope
+reads a value published before that scope began. Placing a producer inside such a scope fails validation,
+naming the producer and the scope.
 
 A required producer that is skipped or fails leaves its consumers skipped, carrying a dependency reason. An
-`Option`/`ValueOption` result models an intentional absence, distinct from a producer that failed, that a
-consumer can handle directly. Retrying a consumer through `retry` reuses the successful results of producers
-outside the retried scope; a producer owned by the retried scope itself gets a fresh result on each attempt,
-and a failed attempt leaves no value for a later attempt to read.
+`Option`/`ValueOption` result models an intentional absence, distinct from a failed producer, and a consumer
+can handle it directly. Retrying a consumer through `retry` reuses the successful results of producers outside
+the retried scope. A producer owned by the retried scope gets a fresh result on each attempt, and a failed
+attempt leaves no value for the next one to read.
 
 ## Failure handlers
 
 `onFailure` registers a `FailureContext -> unit` handler on a `stage` or a `pipeline`. It runs once per failed
 execution of that scope, after the scope exhausts its `retry` attempts, and inner handlers run before outer
-ones — a stage's handler before the pipeline's. A stage a retry recovers, or a cancelled one, keeps its handlers
-back: a stage's own `timeout` and `timeoutForStep` are failures of that stage, while an ancestor's token, the
-pipeline's, or the invocation's is a cancellation and runs no handler.
+ones — a stage's handler before the pipeline's. A recovered retry, or a cancelled stage, runs no handler. A
+stage's own `timeout` and `timeoutForStep` count as failures of that stage. A cancellation from an ancestor's
+token, the pipeline's, or the invocation's runs no handler.
 
-The handler reads `FailureContext.Primary`/`.Secondary` for the causes recorded and
-`FailureContext.TryGetOutput producer` for a value the invocation has already published — a lookup restricted to
-already-published values, answering `ValueNone` for a producer that has not run. An exception out of a handler
-is one more cause of the same scope; the original failure stays the primary, and successful reporting preserves
-it. A failing handler triggers no second run of itself.
+The handler reads `FailureContext.Primary`/`.Secondary` for the causes recorded, and
+`FailureContext.TryGetOutput producer` for a value the invocation has already published — answering `ValueNone`
+for a producer that has not run. An exception out of a handler becomes one more cause of the same scope. The
+original failure stays primary, and successful reporting preserves it. A failing handler triggers no second run
+of itself.
 
 Known limitations:
 
-- A handler is synchronous and unbounded: there is no cleanup operation and no cleanup budget separate from the
-  handler's own body.
-- `onFailure` has no equivalent on `command`/`rootCommand`; a failure of `InputSpec.Read` or of CLI parsing
+- A handler is synchronous and unbounded, with no cleanup operation or budget separate from its own body.
+- `onFailure` has no equivalent on `command`/`rootCommand`. A failure of `InputSpec.Read` or of CLI parsing
   reaches no handler.
-- A stage with no `timeoutForStep` runs its steps under the attempt's own cancellation source rather than a
-  budget of its own; a step still recorded as in flight when its scope unwinds is left with its sources
-  undisposed rather than raced against a straggler that may still read them.
-- `FailureCause.summarise`, used in `ScopeReports`, keeps only the first line of a multi-line capture — later
-  lines are lost from the report, not merely hidden from the one-line rendering.
+- A stage with no `timeoutForStep` runs its steps under the attempt's own cancellation source, not a budget of
+  its own. A step still in flight when its scope unwinds keeps its sources undisposed, rather than racing a
+  straggler that may still read them.
+- `FailureCause.summarise`, used in `ScopeReports`, keeps only the first line of a multi-line capture. Later
+  lines are lost from the report, not merely hidden from the rendering.
 - `OperationFailedException`'s message is written by hand for each `FailureCause` case rather than through
   `FailureCause.describe`, so the two can drift.
 - `whenStageSucceeds` (the body of `whenStage`) reads the policy-folded outcome of the condition stage: one
   carrying `continueStageOnFailure` reports itself as succeeded even where it failed.
-- The gate that places an unlisted producer immediately before a `whenStage` consumer evaluates that consumer's
-  condition stage a second time, in addition to the evaluation `whenStage` performs on its own.
+- The gate placing an unlisted producer immediately before a `whenStage` consumer evaluates that consumer's
+  condition stage a second time, beyond `whenStage`'s own evaluation.
 - `PipelineContext.run`, called directly rather than through a command's own invocation, skips
   `DependencyPlan.validate`: an arrangement validation would reject — a producer inside a `parallel'` scope,
   say — runs instead of failing up front.
 
 ## Migrating work out of `InputSpec.Read`
 
-`InputSpec<'T>.Read` is a projection: `ParseResult -> 'T`, called once per invocation to bind the CLI values a
-stage declared. Effects belong in a step or in a producer, not in `Read` itself — a `Read` that shells out or
-writes a file runs on every path that resolves inputs, `--help` and `--explain` included, since resolution
-happens ahead of the check for either flag.
+`InputSpec<'T>.Read` is a projection, `ParseResult -> 'T`, called once per invocation to bind the CLI values a
+stage declared. Effects belong in a step or a producer, not in `Read`: a `Read` that shells out or writes a
+file runs on every path that resolves inputs, `--help` and `--explain` included, since resolution happens ahead
+of the flag check.
 
 Before, doing the work inside `Read`:
 
@@ -237,12 +238,12 @@ let publish =
     }
 ```
 
-`Read` now binds only the option; `--help` and `--explain` resolve it without running `fetchManifest` or
-`deploy`, since a producer runs only where its consumer is scheduled and never on either of those paths. The
-consumer's `retry` repeats the deploy alone — `manifest` is required, not retried, so a failing deploy re-reads
-the same published value rather than re-fetching it — and its `onFailure` reads that same value back out of the
-failure it is given. The CLI layer stays applicative: `tag` is still an ordinary `ActionInput<string>`, readable
-without a `ParseResult`, exactly as before.
+`Read` now binds only the option. `--help` and `--explain` resolve it without running `fetchManifest` or
+`deploy`, since a producer runs only where its consumer is scheduled. The consumer's `retry` repeats the deploy
+alone: `manifest` is required, not retried, so a failing deploy re-reads the same published value rather than
+re-fetching it. Its `onFailure` reads that same value back out of the failure it is given. The CLI layer stays
+applicative: `tag` is still an ordinary `ActionInput<string>`, readable without a `ParseResult`, exactly as
+before.
 
 ## Command operations
 
@@ -272,14 +273,14 @@ three marked as root-only.
 | `invocationConfiguration` | **Root only.** A `System.CommandLine` `InvocationConfiguration` |
 
 A command yields stages directly — `command "test" { Stages.restore; Stages.test }` — and consecutive stages
-become one implicit pipeline carrying the command's name and description. `Command.pipeline { }` is the same
-pipeline written out, for when it needs the pipeline-level settings; `pipeline "name" { }` is for when several
-pipelines run under one command, or when one needs a name of its own.
+become one implicit pipeline carrying the command's name and description. `Command.pipeline { }` is that same
+pipeline written out, for when it needs pipeline-level settings. `pipeline "name" { }` is for several pipelines
+under one command, or a pipeline that needs its own name.
 
 ## Condition builders
 
-`whenAll { }`, `whenAny { }` and `whenNot { }` take these; each yields a single condition to a stage. An empty
-`whenAll`/`whenNot` is always active, an empty `whenAny` never is.
+`whenAll { }`, `whenAny { }` and `whenNot { }` take these. Each yields a single condition to a stage. An empty
+`whenAll`/`whenNot` is always active. An empty `whenAny` never is.
 
 | Operation | What it does |
 |---|---|
@@ -289,9 +290,9 @@ pipelines run under one command, or when one needs a name of its own.
 | `platformWindows` / `platformLinux` / `platformOSX` | The running platform. Pass `false` to invert |
 | `platform` | The same over an `OSPlatform` value |
 
-`whenEnv { }` describes one environment variable in place of a wall of overloads, with `name`, `description`,
-`value`, `acceptValues` and `optional`. `whenStage "name" { }` runs a stage for its result — everything
-`stage` accepts is accepted there, and the stage runs for real, side effects included.
+`whenEnv { }` describes one environment variable in place of a wall of overloads: `name`, `description`,
+`value`, `acceptValues` and `optional`. `whenStage "name" { }` runs a stage for its result — everything `stage`
+accepts is accepted, and the stage runs for real, side effects included.
 
 `whenSome value build` and `whenOk value build` are functions rather than operations. Each returns a
 `StageContext list`: the stage built from the bound value, or `[]`. The absent case is an empty list, not an
@@ -326,6 +327,7 @@ Shaping combinators, all `ActionInput<'T> -> ActionInput<'T>` and all pipeable:
 | `Input.hidden`                                                      | Keeps it out of help output                                                                                               |
 | `Input.allowMultipleArgumentsPerToken`                              | Lets one identifier token carry several values                                                                            |
 | `Input.acceptOnlyFromAmong`                                         | Restricts to a set of legal strings, ordinally                                                                            |
+| `Input.addCompletion` / `Input.addCompletions`                      | Adds tab-completion suggestions without restricting what is accepted                                                      |
 | `Input.mapFromAmong<'T> [ "key", value ]`                           | An option over a known set, each key bound to a typed value                                                               |
 | `Input.mapFromAmongWith<'T> comparer`                               | `mapFromAmong` under an explicit `StringComparer`                                                                         |
 | `Input.mapFromMany` / `mapFromManyWith`                             | The repeatable forms, binding `'T list`                                                                                   |
@@ -360,9 +362,10 @@ let build (projects: InputSpec<string list>) = input {
 | `InputSpec.traverse` | `sequence` over the results of a mapping |
 | `InputSpec.union` | Concatenates input lists, keeping the first occurrence of each |
 
-The `input { let! … and! … return … }` CE is the usual way to build one. It is applicative: bind every source
-in a single `let!`/`and!` group. A sequential second `let!` is a compile error (`FS0708`) because the input set
-has to be readable before anything is parsed. An `input { }` nested inside another's `return` produces an
+The `input { let! … and! … return … }` CE is the usual way to build one; `inputs` is the same builder under
+a second name (`src/Partas.Build/Builders/Inputs.fs` binds both). It is applicative: bind every source
+in a single `let!`/`and!` group. A sequential second `let!` is a compile error (`FS0708`): the input set must
+be readable before anything is parsed. An `input { }` nested inside another's `return` produces an
 `InputSpec<InputSpec<_>>`, which nothing accepts — pass the *source* in as an `InputSpec` instead.
 
 ## `Cmd`
@@ -404,31 +407,31 @@ splitting on a separator.
 
 ## `Baked`
 
-Ready-made declarations for the options every build CLI ends up wanting. `Baked.Input.*` are options,
-`Baked.Argument.*` the positional equivalents.
+Ready-made declarations for the options every build CLI ends up wanting. They ship in their own package,
+`Partas.Build.Baked`.
+
+Each declaration is a `BuildOption<'T>` carrying both forms: `.option` is the flag, `.argument` the positional
+equivalent. `BuildOption.map`, `.mapOpt` and `.mapArg` apply an `Input.*` combinator to both forms or to one.
 
 | Value | What it declares |
 |---|---|
-| `Baked.Input.NuGet.apiKey` | `--nuget-key` (alias `--nuget`) as `string option` |
-| `Baked.Input.NuGet.apiKeyOrEnv` | The same, defaulting to the `NUGET_API_KEY` environment variable |
-| `Baked.Input.DotNet.config` | `--configuration` (alias `-c`) as `Configuration option`, restricted to `Debug`/`Release` |
-| `Baked.Input.DotNet.configString` | The same as `string option` |
-| `Baked.Input.Versioning.bump` | `--bump` as `Bump option`, over `major\|minor\|patch\|alpha\|beta\|rc\|preview\|<SEMVER>`, defaulting to `Patch` |
-| `Baked.Input.Project.target targets` | `--project` (alias `-p`) as `string list`, restricted to `targets` |
-| `Baked.Input.CI.isCI` | `--ci`, defaulting to true when any of the usual CI environment variables is set |
+| `Baked.NuGet.apiKey` | `nuget-key` (aliases `--nuget`, `-k`) as `string option`, defaulting to the `NUGET_API_KEY` environment variable |
+| `Baked.Dotnet.config` | `configuration` (alias `-c`) as `string option`, over `release`/`r`/`debug`/`d` case-insensitively |
+| `Baked.SemVer.bump` | `bump` as `Bump option`, over `major\|minor\|patch\|alpha\|beta\|rc\|preview\|<SEMVER>`, defaulting to `Patch` |
+| `Baked.Common.isCI` | `--ci`, defaulting to true when any of the usual CI environment variables is set |
 
 | Function | What it does |
 |---|---|
-| `Baked.Version.apply bump version` | Semantic version arithmetic over a `Bump` |
-| `Baked.Version.assembly version` | The assembly version that goes with a package version: its major, and nothing else |
-| `Baked.IO.writeVersion` / `Baked.IO.setVersion` | Rewrites `<Version>` and `<AssemblyVersion>` in a project file |
-| `Baked.IO.bumpVersion projPath bump` | Applies a bump to a project file in place, answering the versions before and after |
-| `Baked.Pipelines.bumpArgument allProjects projects` | A `bump` stage taking the bump kind as a positional argument |
-| `Baked.Pipelines.bumpOption allProjects projects` | The same with the bump kind as `--bump` |
+| `Baked.SemVer.Version.apply bump version` | Semantic version arithmetic over a `Bump` |
+| `Baked.SemVer.Version.assembly version` | The assembly version that goes with a package version: its major, and nothing else |
+| `Baked.SemVer.Version.IO.writeVersion` / `setVersion` | Rewrites `<Version>` and `<AssemblyVersion>` in a project file |
+| `Baked.SemVer.Version.IO.bumpVersion projPath bump` | Applies a bump to a project file in place, answering the versions before and after |
+| `Baked.SemVer.Stages.bumpArgument projects` | A `bump` stage taking the bump kind as a positional argument |
+| `Baked.SemVer.Stages.bumpOption projects` | The same with the bump kind as `--bump` |
 
 ## Reference
 
-- [Overview](build-overview.html) — the layers, and a first pipeline.
-- [Composing reusable blocks](composition.html) — blocks, nesting, and composition across files.
-- [Stage CE run overloads](computation-expression-operations.html).
-- [API reference](reference/index.html) — full signatures and remarks.
+- [Overview](build-overview.fsx) — the layers, and a first pipeline.
+- [Composing reusable blocks](composition.fsx) — blocks, nesting, and composition across files.
+- [Stage CE run overloads](computation-expression-operations.fsx).
+- [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) — full signatures and remarks.

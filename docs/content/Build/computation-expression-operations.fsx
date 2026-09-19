@@ -8,20 +8,35 @@ order: 4
 
 (*** hide ***)
 // The sources are #load-ed rather than #r-ing a built DLL, for two reasons: the guide then type-checks against
-// the code as written instead of against the last build, and nothing holds a file lock — `fsdocs watch --eval`
-// keeps a loaded assembly open for its whole lifetime, which on Windows makes rebuilding the library fail.
+// the code as written instead of against the last build, and nothing holds a file lock — a #r-ed assembly stays
+// loaded for the lifetime of the site watcher (`dotnet run --project Build.fsproj -- docs --watch`), which on
+// Windows makes rebuilding the library fail.
 // Keep this list in the same order as the <Compile> items in Partas.Build.fsproj.
 #r "nuget: FSharp.Control.AsyncSeq, 4.15.0"
 #r "nuget: FsToolkit.ErrorHandling, 5.2.0"
 #r "nuget: System.CommandLine, 2.0.11"
 #r "nuget: Spectre.Console, 0.57.2"
+#load "../../../src/Partas.Build.Cmd/Execution.fs"
 #load "../../../src/Partas.Build.Cmd/Program.fs"
 #load "../../../src/Partas.Build/System.CommandLine/Aliases.fs"
 #load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
-#load "../../../src/Partas.Build/Types.fs"
+#load "../../../src/Partas.Build/Exceptions.fs"
+#load "../../../src/Partas.Build/Output.fs"
+#load "../../../src/Partas.Build/Environment.fs"
+#load "../../../src/Partas.Build/Timing.fs"
+#load "../../../src/Partas.Build/Producer.fs"
+#load "../../../src/Partas.Build/Failures.fs"
+#load "../../../src/Partas.Build/Conductors.fs"
+#load "../../../src/Partas.Build/Conductors.Runners.fs"
 #load "../../../src/Partas.Build/Process.fs"
+#load "../../../src/Partas.Build/Operations.fs"
+#load "../../../src/Partas.Build/Dependencies.fs"
+#load "../../../src/Partas.Build/DependencyPlan.fs"
+#load "../../../src/Partas.Build/ExecutionState.fs"
+#load "../../../src/Partas.Build/Builders/StageSettings.fs"
 #load "../../../src/Partas.Build/Builders/Stage.fs"
 #load "../../../src/Partas.Build/Builders/Conditions.fs"
+#load "../../../src/Partas.Build/Builders/PipelineSettings.fs"
 #load "../../../src/Partas.Build/Builders/Pipeline.fs"
 #load "../../../src/Partas.Build/Builders/Inputs.fs"
 #load "../../../src/Partas.Build/Explain.fs"
@@ -43,11 +58,9 @@ open Partas.Build.Internal
 
 ## Stage
 
-> Unless stated otherwise all examples are within a `stage` computation.
+> Unless stated otherwise, every example runs inside a `stage` computation.
 
-The computation expression operation for a step has a variety of overloads.
-As the most overloaded operation, it is the only one that really requires separate
-documentation.
+`run` takes a step and has more overloads than any other operation, which is why it gets its own page.
 
 *)
 (*** hide ***)
@@ -57,11 +70,11 @@ let _ = stage "stage" {
 (**
 ### `run`
 
-> When returning a `string`-like value, the value is run as a command.
+> A returned `string`-like value runs as a command.
 >
-> When returning an `int`-like value, the value is treated as an exit code.
+> A returned `int`-like value is an exit code.
 >
-> When returning, or running a command, the overload would usually have a `?cancellationToken: CancellationToken` parameter.
+> An overload that returns or runs a command usually takes an optional `?cancellationToken: CancellationToken`.
 
 ##### `buildStep: StageContext -> BuildStep`
 

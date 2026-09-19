@@ -8,8 +8,8 @@ index: 1
 
 ReSharper and Rider read code annotations — `[<LanguageInjection>]`, `[<NotNull>]`, `[<StringFormatMethod>]`
 and the rest — from two places: an assembly's own metadata, and an **external annotations** sidecar named
-`<AssemblyName>.ExternalAnnotations.xml` sitting next to the assembly. The sidecar is honoured regardless of
-what the assembly's metadata says.
+`<AssemblyName>.ExternalAnnotations.xml` next to the assembly. The sidecar is honoured regardless of the
+assembly's metadata.
 
 `Partas.ExternalAnnotations` generates that sidecar from the attributes already in your assembly and ships it
 inside `lib/<tfm>/` of your NuGet package, so the annotations survive a binary reference.
@@ -17,10 +17,8 @@ inside `lib/<tfm>/` of your NuGet package, so the annotations survive a binary r
 ## Why it exists
 
 `Partas.Solid` carries ~596 `[<LanguageInjection>]` attributes on F# optional type extensions, and **none of
-them reached consumers**:
-
-- ReSharper's code-annotation support is C#-first, and its handling of F# extension members — which compile to
-  mangled static methods — is idiosyncratic.
+them reached consumers**: ReSharper's code-annotation support is C#-first, and its handling of F# extension
+members — which compile to mangled static methods — is idiosyncratic.
 
 A sidecar sidesteps both. A Rider 2026.2 harness established what actually injects across a binary reference:
 
@@ -30,8 +28,8 @@ A sidecar sidesteps both. A Rider 2026.2 harness established what actually injec
 | mangled F# extension setter, **member**-level | **yes** |
 | mangled F# extension setter, parameter-level | no |
 
-The generator therefore emits at member level wherever the attribute sits on a member, which is what makes all
-596 sites resolve.
+The generator therefore emits at member level wherever the attribute sits on a member. That makes all 596
+sites resolve.
 
 ## The pieces
 
@@ -41,10 +39,10 @@ The generator therefore emits at member level wherever the attribute sits on a m
 | `Partas.Build.ExternalAnnotations` | Partas.Build stages and commands over the generator, plus the MSBuild `.targets` as an embedded resource and a packed `build/` asset. |
 | `Partas.ExternalAnnotations.Tool` | The `partas-annotations` dotnet tool: a `rootCommand` over the library's three commands. |
 
-The tool is what MSBuild shells out to during pack — see [the F# surface](external-annotations-api.html) if you
-would rather own the behaviour in your own build.
+The tool is what MSBuild shells out to during pack. See [the F# surface](external-annotations-api.fsx) to own
+the behaviour in your own build instead.
 
-Your assembly is never loaded for execution and its target framework is irrelevant: any tool host produces
+Your assembly is never loaded for execution and its target framework is irrelevant. Any tool host produces
 byte-identical output from any assembly.
 
 ## Quick start
@@ -61,8 +59,8 @@ dotnet pack -c Release
 dotnet partas-annotations verify --package bin/Release/My.Lib.1.0.0.nupkg --min-members 1
 ```
 
-That is the whole loop. After `init`, every pack is correct — `dotnet pack`, CI, and Rider's Pack button
-alike — because the logic lives in the repository rather than in a build script.
+That is the whole loop. After `init`, every pack is correct — `dotnet pack`, CI and Rider's Pack button
+alike — because the logic lives in the repository, not in a build script.
 
 ### The three commands
 
@@ -80,10 +78,10 @@ partas-annotations init     [--directory PATH] [--annotations-tool COMMAND] [--f
 
 ## What the targets file does
 
-`Directory.Build.targets` hooks `TargetsForTfmSpecificContentInPackage`, which runs **once per inner build**, so
-`$(TargetFramework)` is the real TFM even when multi-targeting and each TFM's `lib/` folder gets annotations
-generated from *its own* assembly. (A plain `<None Pack="true" PackagePath="lib\$(TargetFramework)\">` does not
-work: `None` items are evaluated in the outer build, where `$(TargetFramework)` is empty.)
+`Directory.Build.targets` hooks `TargetsForTfmSpecificContentInPackage`, which runs **once per inner build**.
+`$(TargetFramework)` is the real TFM even when multi-targeting, so each TFM's `lib/` folder gets annotations
+generated from *its own* assembly. A plain `<None Pack="true" PackagePath="lib\$(TargetFramework)\">` does not
+work: `None` items are evaluated in the outer build, where `$(TargetFramework)` is empty.
 
 Per inner build, in order:
 
@@ -105,32 +103,31 @@ Two injection routes, and both may be active at once without duplicate-import wa
 2. `dotnet pack -p:CustomAfterMicrosoftCommonTargets=<absolute path to the targets file>` — for projects you
    cannot commit into. `ExternalAnnotations.packArgs` builds that argument.
 
-`Exec` runs with `ContinueOnError="WarnAndContinue"`: a missing or unrestored tool degrades to packing the
-committed file rather than failing your build.
+`Exec` runs with `ContinueOnError="WarnAndContinue"`. A missing or unrestored tool degrades to packing the
+committed file instead of failing your build.
 
 ## Behaviour to know
 
 - **`init` is a developer command, not a CI stage.** The file it writes is ordinary build configuration, meant
   to be reviewed and committed.
-- **Generation happens at pack time**, from the assembly being packed, in the same invocation — so it is also
-  correct for Rider's Pack button, not only for packs that went through a build stage.
+- **Generation happens at pack time**, from the assembly being packed, in the same invocation. That makes it
+  correct for Rider's Pack button too, not only for packs that went through a build stage.
 - **A committed file is a valid fallback.** With no tool available, commit
-  `ExternalAnnotations/<AssemblyName>.ExternalAnnotations.xml` and packs are correct, with no warnings.
+  `ExternalAnnotations/<AssemblyName>.ExternalAnnotations.xml` and packs stay correct, with no warnings.
 - **A failed generation never ships the last good run's file.** The targets delete their own previous output
   first and use the generated file only on exit code `0`.
 - **Skips warn and continue.** Pass `--strict` to fail instead, in a pipeline with a known-good count.
 
 ## Known limits
 
-- Parameter-level annotations on mangled F# extension members did not inject in the Rider 2026.2 harness, so
-  put them on the member if you need them to take effect today. They are still **generated** — the sidecar is
-  correct, the limitation is on the consuming side, and an annotation already in the file starts working the
-  day that is fixed.
+- Parameter-level annotations on mangled F# extension members did not inject in the Rider 2026.2 harness; put
+  them on the member instead. They are still **generated**: the sidecar is correct, the limitation is on the
+  consuming side, and an annotation already in the file starts working once that is fixed.
 - Generic parameters are annotated too, on both types and methods (`<typeparameter>`). A nested type
-  redeclares its enclosing type's generic parameters as its own, attributes included, so those are skipped —
-  `Outer<T>.Inner<U>` gets `U` only, which is what the source declares.
-- Several attributes on one parameter share a single `<parameter>` element rather than getting one each, which
-  is what ~99.5% of ReSharper's own shipped annotation files do. Both forms occur in those files, so both are
+  redeclares its enclosing type's generic parameters as its own, attributes included, so those are skipped:
+  `Outer<T>.Inner<U>` gets `U` only, matching the source.
+- Several attributes on one parameter share a single `<parameter>` element rather than getting one each,
+  matching ~99.5% of ReSharper's own shipped annotation files. Both forms occur in those files, so both are
   accepted.
 - Annotations on property getters are inert in ReSharper; they are still emitted.
 - The generator collects the whole `JetBrains.Annotations` namespace. Narrow it with `--attribute` or

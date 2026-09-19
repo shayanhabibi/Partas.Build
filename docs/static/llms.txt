@@ -2,14 +2,14 @@
 
 > An F# build-pipeline DSL whose stages declare the CLI options they read. Commands derive their
 > System.CommandLine option set from the pipelines they activate, so options, validation and help text
-> are generated from the pipeline definition rather than registered by hand. Runs from a `.fsx` script
-> with no build project.
+> come from the pipeline definition instead of manual registration. Runs from a `.fsx` script or a build
+> project.
 
 ## Start here
 
-- [Capabilities](https://shayanhabibi.github.io/Partas.Build/CAPABILITIES.html): every operation and Input combinator, one line each
-- [Index](https://shayanhabibi.github.io/Partas.Build/index.html): the layers, and a first pipeline
-- [Composition](https://shayanhabibi.github.io/Partas.Build/composition.html): nesting stages, and reusing commands across files
+- [Capabilities](https://shayanhabibi.github.io/Partas.Build/build/capabilities/): every operation and Input combinator, one line each
+- [Index](https://shayanhabibi.github.io/Partas.Build/build/): the layers, and a first pipeline
+- [Composition](https://shayanhabibi.github.io/Partas.Build/build/composition/): nesting stages, and reusing commands across files
 
 ## Ask the script rather than reading it
 
@@ -18,7 +18,6 @@ flags those stages bind. `<script> <command> --help` is the authority on what a 
 
 ## Optional
 
-- [Build overview](https://shayanhabibi.github.io/Partas.Build/build-overview.html)
-- [CE operations](https://shayanhabibi.github.io/Partas.Build/computation-expression-operations.html)
-- [API reference](https://shayanhabibi.github.io/Partas.Build/reference/index.html)
-- [Full bundle](https://shayanhabibi.github.io/Partas.Build/llms-full.txt): every page above, inlined as plain text
+- [Build overview](https://shayanhabibi.github.io/Partas.Build/build/build-overview/)
+- [CE operations](https://shayanhabibi.github.io/Partas.Build/build/computation-expression-operations/)
+- [API reference](https://shayanhabibi.github.io/Partas.Build/reference/)

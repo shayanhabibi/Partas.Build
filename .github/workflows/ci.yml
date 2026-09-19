@@ -55,9 +55,9 @@ jobs:
         uses: actions/setup-dotnet@v3
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      # The `docs` command restores, runs fsdocs, and merges docs/llms.txt's curated header over the
-      # llms.txt/llms-full.txt fsdocs generates — the one implementation of that merge, run the same way
-      # here as for a local build.
+      # The `docs` command restores, builds the Nacara site in docs/docs.fsproj, and merges
+      # docs/static/llms.txt's curated header over output/llms.txt — the one implementation of that merge,
+      # run the same way here as for a local build.
       - name: Generate documentation
         run: dotnet run --project Build.fsproj -- docs
       - name: Upload documentation

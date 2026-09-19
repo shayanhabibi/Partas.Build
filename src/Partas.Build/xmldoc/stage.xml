@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <stage>
   <timeout>
-    <remarks>Accepts <c>int&lt;second></c>, <c>float</c> seconds, or a <c>TimeSpan</c>. All are converted internally to a <c>TimeSpan</c>. If the stage exceeds this timeout, it is cancelled.</remarks>
+    <remarks>Accepts <c>int</c> seconds, <c>float</c> seconds, or a <c>TimeSpan</c>. All are converted internally to a <c>TimeSpan</c>. If the stage exceeds this timeout, it is cancelled.</remarks>
   </timeout>
   <retry>
     <remarks>
@@ -18,7 +18,7 @@
     </remarks>
   </retry>
   <timeoutForStep>
-    <remarks>Accepts <c>int&lt;second></c>, <c>float</c> seconds, or a <c>TimeSpan</c>. All are converted internally to a <c>TimeSpan</c>. If any step exceeds this timeout, that step is cancelled.</remarks>
+    <remarks>Accepts <c>int</c> seconds, <c>float</c> seconds, or a <c>TimeSpan</c>. All are converted internally to a <c>TimeSpan</c>. If any step exceeds this timeout, that step is cancelled.</remarks>
   </timeoutForStep>
   <parallel>
     <remarks>

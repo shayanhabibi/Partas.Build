@@ -6,8 +6,8 @@ index: 3
 
 # External Annotations — Recipes
 
-Concrete setups. Background is on the [overview](external-annotations.html); the F# API is
-[here](external-annotations-api.html).
+Concrete setups. Background is on the [overview](index.md); the F# API is
+[here](external-annotations-api.fsx).
 
 ## Ship annotations from a repo you own
 
@@ -25,7 +25,7 @@ CI needs `dotnet tool restore` before `dotnet pack`; nothing else changes.
 ## Scope annotations to one project
 
 A repo with a packable library, a test project and three samples wants the targets file next to the library,
-not at the root — MSBuild takes the first `Directory.Build.targets` it finds walking up, so this leaves
+not at the root. MSBuild takes the first `Directory.Build.targets` it finds walking up, so this leaves
 everything else untouched:
 
 ```shell
@@ -50,11 +50,11 @@ git add src/My.Lib/ExternalAnnotations src/My.Lib/Directory.Build.targets
 ```
 
 Packs are correct today, with no tool and no warnings. Output is BOM-free and stably sorted, so regenerating it
-produces a reviewable diff rather than a whole-file churn. Switch to generation later by re-running `init` with
+produces a reviewable diff, not whole-file churn. Switch to generation later by re-running `init` with
 `--annotations-tool ... --force`.
 
-Caveat: a committed file is only as fresh as the last time you ran that command. Regenerate it in the same
-change that adds or moves annotated members.
+A committed file is only as fresh as the last time you ran that command. Regenerate it in the same change that
+adds or moves annotated members.
 
 ## Multi-targeted packages
 
@@ -68,7 +68,7 @@ unzip -l bin/Release/My.Lib.1.0.0.nupkg | grep ExternalAnnotations
 ```
 
 If both files are byte-identical *and* your TFMs expose different surfaces, something is pointing every inner
-build at one path — check `PartasExternalAnnotationsFile`, which overrides the per-TFM default.
+build at one path. Check `PartasExternalAnnotationsFile`, which overrides the per-TFM default.
 
 ## Pack a project you cannot commit into
 
@@ -80,7 +80,7 @@ dotnet pack -c Release \
   -p:PartasExternalAnnotationsTool="dotnet partas-annotations"
 ```
 
-The path must be absolute — MSBuild otherwise resolves it per project. From a pipeline, use `packArgs`, which
+The path must be absolute; MSBuild otherwise resolves it per project. From a pipeline, use `packArgs`, which
 absolutises it for you. Write the file out first with `writeTargets` if it is not already in your repo.
 
 ## Gate CI on the annotation count
@@ -123,9 +123,9 @@ Under MSBuild:
 <PartasExternalAnnotationsTool>dotnet partas-annotations</PartasExternalAnnotationsTool>
 ```
 
-`--strict` cannot be appended there — the targets build the whole `generate` command line — so for a strict
-pack, generate in the pipeline with `generateTo` (which binds `--strict`) and point
-`PartasExternalAnnotationsFile` at its output.
+`--strict` cannot be appended there: the targets build the whole `generate` command line. For a strict pack,
+generate in the pipeline with `generateTo` (which binds `--strict`) and point `PartasExternalAnnotationsFile`
+at its output.
 
 ## Narrowing the attribute set
 
@@ -170,7 +170,9 @@ let main argv =
     }
 ```
 
-> If not using `Partas.Build`, use function calls to `generateOnlyTo` and `verifyOnlyTo`.
+> The generator itself, `Partas.ExternalAnnotations.generate` and `generateWith`, has no dependency on
+> Partas.Build, so a CLI built on something else calls it directly. The verify check does have one; such a
+> CLI shells out to `partas-annotations verify` instead.
 
 Then pin *that* as the generator, and pack-time generation goes through your CLI:
 
@@ -192,7 +194,7 @@ printfn $"%d{gen.MemberCount} members / %d{gen.SiteCount} sites / %d{gen.TypeSca
 gen.PrintfMembers ()
 ```
 
-`PrintfMembers` prints each member's XML doc id with its sites and decoded attribute arguments — the fastest way
+`PrintfMembers` prints each member's XML doc id with its sites and decoded attribute arguments: the fastest way
 to tell "the attribute is not where I thought it was" from "the sidecar is not reaching Rider".
 
 ## Troubleshooting

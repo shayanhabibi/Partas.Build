@@ -317,4 +317,50 @@ let tests =
             expectOneImplementation [ "envVars"; "acceptExitCodes" ]
             expectOverloadsOnly [ "timeout", 3; "timeoutForStage", 3; "timeoutForStep", 3; "workingDir", 2 ]
         }
+
+        test "the lifecycle settings land on the pipeline in both representations" {
+            let config, _, _ = options ()
+
+            let declaring = input {
+                let! cfg = config
+                return stage "compile" { run (fun (_: StageContext) -> ignore cfg) }
+            }
+
+            let teardown = stage "teardown" { run noop }
+            let handler: FailureHandler = ignore
+
+            let plain: PipelineContext =
+                pipeline "plainLifecycle" {
+                    description "a plain pipeline"
+                    runBeforeEachStage ignore
+                    runAfterEachStage ignore
+                    post [ teardown ]
+                    onFailure handler
+                    stage "restore" { run noop }
+                }
+
+            let spec: InputSpec<PipelineContext> =
+                pipeline "specLifecycle" {
+                    description "a declaring pipeline"
+                    declaring
+                    runBeforeEachStage ignore
+                    runAfterEachStage ignore
+                    post [ teardown ]
+                    onFailure handler
+                }
+
+            let built = spec.Read (parse spec.Inputs "")
+
+            Expect.equal plain.Description (ValueSome "a plain pipeline") "a plain pipeline should record the description"
+            Expect.equal [ for stage in plain.PostStages -> stage.Name ] [ "teardown" ] "a plain pipeline should record the post stage"
+            Expect.equal plain.OnFailure.Length 1 "a plain pipeline should record the handler"
+
+            Expect.equal built.Description (ValueSome "a declaring pipeline") "a setting before the declaring stage should reach the pipeline"
+            Expect.equal [ for stage in built.PostStages -> stage.Name ] [ "teardown" ] "an input-aware pipeline should record the post stage"
+            Expect.equal built.OnFailure.Length 1 "an input-aware pipeline should record the handler"
+        }
+
+        test "one lifecycle setting implementation serves every pipeline builder state" {
+            expectOneImplementation [ "description"; "onFailure"; "post"; "runAfterEachStage"; "runBeforeEachStage" ]
+        }
     ]

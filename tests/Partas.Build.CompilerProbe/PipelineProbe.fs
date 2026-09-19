@@ -119,4 +119,61 @@ let tests = testList "pipeline compiler probe" [
         Expect.equal (after.Read (parse after.Inputs)).TimeoutForStep (ValueSome (TimeSpan.FromSeconds 5.0)) "a setting after a declaring stage reaches the pipeline"
         Expect.equal (after.Read (parse after.Inputs)).AcceptableExitCodes (set [ 0; 3 ]) "a setting after a declaring stage reaches the pipeline"
     }
+
+    test "the inherited lifecycle settings serve both representations across an assembly boundary" {
+        let config = configuration ()
+
+        let child name: InputSpec<StageContext> = {
+            Inputs = [ config :> ActionInput ]
+            Read = fun _ -> stage name { echo "child" }
+        }
+
+        let teardown = stage "teardown" { echo "teardown" }
+        let handler: FailureHandler = fun _ -> ()
+
+        let plain: PipelineContext =
+            pipeline "plain" {
+                description "a plain pipeline"
+                runBeforeEachStage ignore
+                runAfterEachStage ignore
+                post [ teardown ]
+                onFailure handler
+                stage "one" { echo "one" }
+            }
+
+        let before: InputSpec<PipelineContext> =
+            pipeline "before" {
+                description "before a declaring stage"
+                onFailure handler
+                child "a"
+            }
+
+        let after: InputSpec<PipelineContext> =
+            pipeline "after" {
+                child "b"
+                description "after a declaring stage"
+                runBeforeEachStage ignore
+                runAfterEachStage ignore
+                post [ teardown ]
+                onFailure handler
+            }
+
+        Expect.equal (requiresPipeline plain) "plain" "a pipeline declaring nothing stays a plain context"
+        Expect.equal (requiresSpec before).Length 1 "a setting before a declaring stage keeps the specification"
+        Expect.equal (requiresSpec after).Length 1 "a setting after a declaring stage keeps the specification"
+
+        Expect.equal plain.Description (ValueSome "a plain pipeline") "a plain pipeline keeps the setting"
+        Expect.equal plain.OnFailure.Length 1 "a plain pipeline keeps the handler"
+        Expect.equal [ for stage in plain.PostStages -> stage.Name ] [ "teardown" ] "a plain pipeline keeps the post stage"
+
+        Expect.equal
+            (before.Read (parse before.Inputs)).Description
+            (ValueSome "before a declaring stage")
+            "a setting before a declaring stage reaches the pipeline"
+        Expect.equal
+            [ for stage in (after.Read (parse after.Inputs)).PostStages -> stage.Name ]
+            [ "teardown" ]
+            "a setting after a declaring stage reaches the pipeline"
+        Expect.equal (after.Read (parse after.Inputs)).OnFailure.Length 1 "a setting after a declaring stage reaches the pipeline"
+    }
 ]

@@ -1,8 +1,6 @@
 ﻿[<AutoOpen>]
 module Partas.Build.PipelineBuilder
 
-open System
-open Spectre.Console
 open Partas.Build
 open Partas.Build.Internal
 
@@ -40,11 +38,11 @@ let private finish (name: string) (build: BuildPipeline) =
 /// Builds a pipeline from stages.
 /// </summary>
 /// <remarks>
-/// Members come in two flavours: one over <c>BuildPipeline</c>, and one over
-/// <c>InputSpec&lt;BuildPipeline></c> for pipelines containing at least one stage that declares CLI inputs.
 /// A pipeline declaring nothing stays a plain <c>PipelineContext</c> and runs without a <c>ParseResult</c>;
 /// as soon as one stage is an <c>InputSpec&lt;StageContext></c> the pipeline becomes an
-/// <c>InputSpec&lt;PipelineContext></c> and the inputs of every stage are unioned into it.
+/// <c>InputSpec&lt;PipelineContext></c> and the inputs of every stage are unioned into it. The members that
+/// change representation — <c>Yield</c>, <c>Delay</c>, <c>Combine</c>, <c>For</c>, <c>Run</c> — come in one
+/// flavour per representation; the settings inherited from <c>PipelineSettingsBuilder</c> are generic in it.
 /// </remarks>
 type PipelineBuilder(name: string) =
     inherit PipelineSettingsBuilder()
@@ -137,76 +135,6 @@ type PipelineBuilder(name: string) =
         InputSpec.map (fun rest -> build >> rest) (fn()) |> withBuildInputs name build
     member inline _.For(spec: InputSpec<BuildPipeline>, [<InlineIfLambda>] fn: unit -> InputSpec<BuildPipeline>): InputSpec<BuildPipeline> =
         InputSpec.map2 (>>) spec (fn())
-
-    /// <summary>Sets the description shown for the pipeline.</summary>
-    [<CustomOperation>] member inline _.
-        description
-        ([<InlineIfLambda>] build: BuildPipeline, desc): BuildPipeline
-        = build >> fun ctx -> { ctx with Description = ValueSome desc }
-    /// <summary>Runs a function immediately before each stage of the pipeline.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/hooks/*"/>
-    [<CustomOperation>] member inline _.
-        runBeforeEachStage
-        ([<InlineIfLambda>] build: BuildPipeline, [<InlineIfLambda>] fn: StageContext -> unit): BuildPipeline
-        = build >> fun ctx -> { ctx with RunBeforeEachStage = fn }
-
-    /// <summary>Runs a function immediately after each stage of the pipeline.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/hooks/*"/>
-    [<CustomOperation>] member inline _.
-        runAfterEachStage
-        ([<InlineIfLambda>] build: BuildPipeline, [<InlineIfLambda>] fn: StageContext -> unit): BuildPipeline
-        = build >> fun ctx -> { ctx with RunAfterEachStage = fn }
-
-    /// <summary>Sets the stages that run after the main stages, whether or not the pipeline succeeded.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/postStages/*"/>
-    [<CustomOperation>] member inline _.
-        post
-        ([<InlineIfLambda>] build: BuildPipeline, stages: StageContext list): BuildPipeline
-        = build >> fun ctx -> { ctx with PostStages = stages }
-
-    /// <summary>Registers a handler to run when the pipeline fails.</summary>
-    /// <remarks>
-    /// It runs once per failed run, after the handlers of every stage of that run, and takes the failure the
-    /// pipeline ends with as its primary cause. A run a cancellation ended — the pipeline's own timeout, or the
-    /// console — runs none.
-    /// </remarks>
-    [<CustomOperation("onFailure")>] member inline _.
-        onFailure
-        ([<InlineIfLambda>] build: BuildPipeline, handler: FailureHandler): BuildPipeline
-        = build >> fun ctx -> { ctx with OnFailure = ctx.OnFailure @ [ handler ] }
-
-    // Mirrors of every setting above, for a pipeline that has already picked up a stage declaring inputs.
-    // Without these, placing a setting *after* such a stage is an overload error rather than a no-op.
-    /// <summary>Sets the description shown for the pipeline.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        description
-        (spec: InputSpec<BuildPipeline>, desc: string): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.description(build, desc)) spec
-    /// <summary>Runs a function immediately before each stage of the pipeline.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        runBeforeEachStage
-        (spec: InputSpec<BuildPipeline>, [<InlineIfLambda>] fn: StageContext -> unit): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.runBeforeEachStage(build, fn)) spec
-    /// <summary>Runs a function immediately after each stage of the pipeline.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        runAfterEachStage
-        (spec: InputSpec<BuildPipeline>, [<InlineIfLambda>] fn: StageContext -> unit): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.runAfterEachStage(build, fn)) spec
-    /// <summary>Sets the stages that run after the main stages, whether or not the pipeline succeeded.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        post
-        (spec: InputSpec<BuildPipeline>, stages: StageContext list): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.post(build, stages)) spec
-    /// <summary>Registers a handler to run when the pipeline fails.</summary>
-    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
-    [<CustomOperation("onFailure")>] member inline this.
-        onFailure
-        (spec: InputSpec<BuildPipeline>, handler: FailureHandler): InputSpec<BuildPipeline>
-        = InputSpec.map (fun (build: BuildPipeline) -> this.onFailure(build, handler)) spec
 
 /// <summary>Folds ready-made stages into one unnamed pipeline.</summary>
 /// <remarks>

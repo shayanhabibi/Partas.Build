@@ -45,6 +45,12 @@ module PipelineMap =
 [<EditorBrowsable(EditorBrowsableState.Advanced)>]
 type PipelineSettingsBuilder() =
 
+    /// <summary>Sets the description shown for the pipeline.</summary>
+    [<CustomOperation>] member inline _.
+        description
+        (state: ^State, desc: string): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with Description = ValueSome desc }) state
+
     /// <summary>Sets the total timeout for the entire pipeline execution.</summary>
     /// <include file="../xmldoc/pipeline.xml" path="/pipeline/timeoutUnits/*"/>
     /// <include file="../xmldoc/pipeline.xml" path="/pipeline/pipelineDefault/*"/>
@@ -195,3 +201,35 @@ type PipelineSettingsBuilder() =
         quiet
         (state: ^State): ^State
         = PipelineMap.mapPipeline (fun ctx -> { ctx with Verbosity = ValueSome Verbosity.Quiet }) state
+
+    /// <summary>Runs a function immediately before each stage of the pipeline.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/hooks/*"/>
+    [<CustomOperation>] member inline _.
+        runBeforeEachStage
+        (state: ^State, [<InlineIfLambda>] fn: StageContext -> unit): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with RunBeforeEachStage = fn }) state
+
+    /// <summary>Runs a function immediately after each stage of the pipeline.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/hooks/*"/>
+    [<CustomOperation>] member inline _.
+        runAfterEachStage
+        (state: ^State, [<InlineIfLambda>] fn: StageContext -> unit): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with RunAfterEachStage = fn }) state
+
+    /// <summary>Sets the stages that run after the main stages, whether or not the pipeline succeeded.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/postStages/*"/>
+    [<CustomOperation>] member inline _.
+        post
+        (state: ^State, stages: StageContext list): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with PostStages = stages }) state
+
+    /// <summary>Registers a handler to run when the pipeline fails.</summary>
+    /// <remarks>
+    /// It runs once per failed run, after the handlers of every stage of that run, and takes the failure the
+    /// pipeline ends with as its primary cause. A run a cancellation ended — the pipeline's own timeout, or the
+    /// console — runs none.
+    /// </remarks>
+    [<CustomOperation("onFailure")>] member inline _.
+        onFailure
+        (state: ^State, handler: FailureHandler): ^State
+        = PipelineMap.mapPipeline (fun ctx -> { ctx with OnFailure = ctx.OnFailure @ [ handler ] }) state

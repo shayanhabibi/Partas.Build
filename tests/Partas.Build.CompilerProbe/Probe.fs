@@ -150,6 +150,34 @@ let private tests = testList "compiler probe" [
         Expect.equal (reshaped.Read published) (Ok "v1+2") "a composed specification reshapes its value applicatively"
         Expect.equal calls.Value 0 "reading published values invokes no callback"
     }
+
+    test "a command line runs in every representation across the assembly boundary" {
+        let config = configuration ()
+        let secret = "s3cret"
+
+        let child name = {
+            Inputs = [ config :> ActionInput ]
+            Read = fun _ -> stage name { echo "child" }
+        }
+
+        // No annotation on any binding: the functions below are what fixes the type.
+        let plain = stage "plain" { run "dotnet --version" }
+        let prepared = stage "prepared" { run (Cmd.create "dotnet" "--version") }
+        let masked = stage "masked" { runSensitive $"dotnet nuget push -k {secret}" }
+        let before = stage "before" { run "dotnet" "--version"; child "a" }
+        let after = stage "after" { child "b"; run (cmd $"dotnet --version") }
+        let around = stage "around" { runSensitive $"dotnet nuget push -k {secret}"; child "c"; run "dotnet --version" }
+
+        Expect.equal (requiresStage plain) "plain" "a command line leaves a stage a StageContext"
+        Expect.equal (requiresStage prepared) "prepared" "a prepared command leaves a stage a StageContext"
+        Expect.equal (requiresStage masked) "masked" "a masked command line leaves a stage a StageContext"
+        Expect.equal (requiresSpec before |> List.length) 1 "a command before an input-aware child keeps the specification"
+        Expect.equal (requiresSpec after |> List.length) 1 "a command after an input-aware child keeps the specification"
+        Expect.equal (requiresSpec around |> List.length) 1 "a masked command reaches the input-aware representation too"
+
+        let parsed = parse around.Inputs
+        Expect.equal ((around.Read parsed).Steps |> List.length) 3 "every command and the child are steps of the materialized stage"
+    }
 ]
 
 [<EntryPoint>]

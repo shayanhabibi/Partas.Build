@@ -2,6 +2,8 @@ namespace Partas.Build.Internal
 
 open System
 open System.ComponentModel
+open System.Threading
+open FsToolkit.ErrorHandling
 open Partas.Build
 
 /// <summary>Applies a state-preserving update to whichever representation a stage builder state currently holds.</summary>
@@ -276,3 +278,58 @@ type StageSettingsBuilder() =
         (state: ^State, msg: string): ^State
         = this.echo(state, fun _ -> msg)
 
+
+    /// <summary>Adds a step that runs <paramref name="exe"/> with <paramref name="args"/>.</summary>
+    /// <remarks><paramref name="exe"/> is taken as given; <paramref name="args"/> is split on whitespace, honouring quotes.</remarks>
+    /// <param name="state">The stage to add the step to.</param>
+    /// <param name="exe">The executable to run.</param>
+    /// <param name="args">The arguments to pass to the executable.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the step.</param>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, exe: string, args: string, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let command = Cmd.create exe args
+            let step = CmdRunner.step (fun _ -> Async.singleton command) cancellationToken
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), step) ] }) state
+
+    /// <summary>Adds a step that runs a whole command line.</summary>
+    /// <remarks>
+    /// The line is split on whitespace, honouring <c>"</c> and <c>'</c>: convenient, but lossy for anything with
+    /// awkward quoting. Interpolate instead — <c>run $"dotnet build {project}"</c> — and each hole becomes exactly
+    /// one argument, whatever it contains.
+    /// </remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, command: string, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let command = Cmd.ofString command
+            let step = CmdRunner.step (fun _ -> Async.singleton command) cancellationToken
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), step) ] }) state
+
+    /// <summary>Adds a step that runs a prepared command.</summary>
+    /// <remarks>Pair with <c>cmd</c> to keep interpolation holes intact: <c>run (cmd $"dotnet build {project}")</c>.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, command: Cmd, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let step = CmdRunner.step (fun _ -> Async.singleton command) cancellationToken
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), step) ] }) state
+
+    /// <summary>Adds a step that runs an interpolated command line without printing what the holes contained.</summary>
+    /// <remarks>
+    /// Each hole is one argument and each hole is masked, so escaping and masking come from the same mechanism:
+    /// <c>runSensitive $"docker login -u {user} -p {password}"</c> passes the password through untouched and logs
+    /// it as <c>***</c>.
+    /// <para>
+    /// The single generic member is what keeps the <c>string</c> -> <c>FormattableString</c> conversion available:
+    /// F# applies it only while one overload is in play, so a mirrored pair would reject <c>runSensitive $"..."</c>.
+    /// </para>
+    /// </remarks>
+    [<CustomOperation>]
+    member inline _.runSensitive(state: ^State, command: FormattableString, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let command = Cmd.ofFormattable true command
+            let step = CmdRunner.step (fun _ -> Async.singleton command) cancellationToken
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), step) ] }) state

@@ -209,16 +209,41 @@ let tests =
             Expect.equal ((spec.Read (parse spec.Inputs "")).Retry) 0 "an input-aware stage clamps the same way"
         }
 
-        test "one retry implementation serves every builder state" {
+        test "one implementation of a shared operation serves every builder state" {
             let builder = typeof<Partas.Build.StageBuilder.StageBuilder>
-            let retries = builder.GetMethods() |> Array.filter (fun method -> method.Name = "retry")
 
-            Expect.equal retries.Length 1 "the mirrored pair should collapse into one operation"
-            Expect.isTrue retries[0].IsGenericMethodDefinition "the surviving operation should be generic in the builder state"
-            Expect.notEqual retries[0].DeclaringType builder "the surviving operation should be inherited from the shared settings builder"
-            Expect.isNull
-                (System.Attribute.GetCustomAttribute(retries[0], typeof<System.ComponentModel.EditorBrowsableAttribute>))
-                "the operation itself should stay visible to completion"
+            let sharedBy name expected =
+                let found = builder.GetMethods() |> Array.filter (fun method -> method.Name = name)
+                Expect.equal found.Length expected $"%s{name} should collapse its mirrored pairs into %d{expected} overload(s)"
+
+                for method in found do
+                    Expect.isTrue method.IsGenericMethodDefinition $"%s{name} should be generic in the builder state"
+                    Expect.notEqual method.DeclaringType builder $"%s{name} should be inherited from the shared settings builder"
+                    Expect.isNull
+                        (System.Attribute.GetCustomAttribute(method, typeof<System.ComponentModel.EditorBrowsableAttribute>))
+                        $"%s{name} should stay visible to completion"
+
+            sharedBy "retry" 1
+            sharedBy "runSensitive" 1
+        }
+
+        test "a moved run operation runs its step in every builder state" {
+            let config = configuration ()
+            let reads = ref 0
+            let lines = ResizeArray<string>()
+            let write _ (line: string) = lock lines (fun () -> lines.Add line)
+            let echoed = ProcessFixture.command [ "echo"; "moved" ]
+
+            let plain: StageContext = stage "plain" { redirectOutput write; run echoed }
+            let spec: InputSpec<StageContext> = stage "spec" { countingBlock reads "child" config; redirectOutput write; run echoed }
+            let built = pipeline "moved run" { plain; spec.Read (parse spec.Inputs "") }
+
+            capturingOut (fun () -> PipelineContext.run built) |> ignore
+
+            Expect.equal
+                (lines |> Seq.filter (fun line -> line.Contains "moved") |> Seq.length)
+                2
+                "the command should run once from the plain stage and once from the materialized one"
         }
 
         // ---------------------------------------------------------------- producers and their consumers

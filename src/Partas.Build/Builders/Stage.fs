@@ -209,43 +209,6 @@ and [<EB(advanced)>]
         = build >> fun ctx ->
         { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, fun ctx i -> async { return! buildStep ctx ctx i }) ] }
 
-    /// <summary>Adds a step that runs <paramref name="exe"/> with <paramref name="args"/>.</summary>
-    /// <remarks><paramref name="exe"/> is taken as given; <paramref name="args"/> is split on whitespace, honouring quotes.</remarks>
-    /// <param name="build">The stage to add the step to.</param>
-    /// <param name="exe">The executable to run.</param>
-    /// <param name="args">The arguments to pass to the executable.</param>
-    /// <param name="cancellationToken">A cancellation token that can be used to cancel the step.</param>
-    [<CustomOperation>] member _.
-        run
-        (build: BuildStage, exe: string, args: string, ?cancellationToken: CancellationToken): BuildStage
-        = build >> fun ctx ->
-        let cancellationToken = defaultArg cancellationToken CancellationToken.None
-        let command = Cmd.create exe args
-        { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), CmdRunner.step (fun _ -> Async.singleton command) cancellationToken) ] }
-
-    /// <summary>Adds a step that runs a whole command line.</summary>
-    /// <remarks>
-    /// The line is split on whitespace, honouring <c>"</c> and <c>'</c>: convenient, but lossy for anything with
-    /// awkward quoting. Interpolate instead — <c>run $"dotnet build {project}"</c> — and each hole becomes exactly
-    /// one argument, whatever it contains.
-    /// </remarks>
-    [<CustomOperation>] member _.
-        run
-        (build: BuildStage, command: string, ?cancellationToken: CancellationToken): BuildStage
-        = build >> fun ctx ->
-        let cancellationToken = defaultArg cancellationToken CancellationToken.None
-        let command = Cmd.ofString command
-        { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), CmdRunner.step (fun _ -> Async.singleton command) cancellationToken) ] }
-
-    /// <summary>Adds a step that runs a prepared command.</summary>
-    /// <remarks>Pair with <c>cmd</c> to keep interpolation holes intact: <c>run (cmd $"dotnet build {project}")</c>.</remarks>
-    [<CustomOperation>] member _.
-        run
-        (build: BuildStage, command: Cmd, ?cancellationToken: CancellationToken): BuildStage
-        = build >> fun ctx ->
-        let cancellationToken = defaultArg cancellationToken CancellationToken.None
-        { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), CmdRunner.step (fun _ -> Async.singleton command) cancellationToken) ] }
-
     /// <summary>Adds a step that runs a command line derived from the stage context.</summary>
     /// <remarks>The command line string is split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
     [<CustomOperation>] member this.
@@ -374,19 +337,6 @@ and [<EB(advanced)>]
         let cancellationToken = defaultArg cancellationToken CancellationToken.None
         { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepResultOption (buildCmd >> Async.singleton) cancellationToken) ] }
 
-    /// <summary>Adds a step that runs an interpolated command line without printing what the holes contained.</summary>
-    /// <remarks>
-    /// Each hole is one argument and each hole is masked, so escaping and masking come from the same mechanism:
-    /// <c>runSensitive $"docker login -u {user} -p {password}"</c> passes the password through untouched and logs
-    /// it as <c>***</c>.
-    /// </remarks>
-    [<CustomOperation>] member _.
-        runSensitive
-        (build: BuildStage, command: FormattableString, ?cancellationToken: CancellationToken): BuildStage
-        = build >> fun ctx ->
-        let cancellationToken = defaultArg cancellationToken CancellationToken.None
-        let command = Cmd.ofFormattable true command
-        { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), CmdRunner.step (fun _ -> Async.singleton command) cancellationToken) ] }
     /// <summary>Adds a step with flexible signature support.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/run/*"/>
     [<CustomOperation>] member inline _.
@@ -423,27 +373,6 @@ and [<EB(advanced)>]
         run
         (spec: InputSpec<BuildStage>, buildStep: StageContext -> BuildStep): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.run(build, buildStep)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        run
-        (spec: InputSpec<BuildStage>, exe: string, args: string, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.run(build, exe, args, ?cancellationToken = cancellationToken)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        run
-        (spec: InputSpec<BuildStage>, command: string, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.run(build, command, ?cancellationToken = cancellationToken)) spec
-
-    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
-    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
-    [<CustomOperation>] member inline this.
-        run
-        (spec: InputSpec<BuildStage>, command: Cmd, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
-        = InputSpec.map (fun (build: BuildStage) -> this.run(build, command, ?cancellationToken = cancellationToken)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
@@ -544,11 +473,6 @@ and [<EB(advanced)>]
         run
         (spec: InputSpec<BuildStage>, step: StageContext -> Result<Cmd option, string>, ?cancellationToken: CancellationToken): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.run(build, step, ?cancellationToken = cancellationToken)) spec
-
-    // `runSensitive` deliberately has no mirror. Its argument is a `FormattableString`, and F# only applies the
-    // `string` -> `FormattableString` conversion when a single overload is in play: adding a second one turns
-    // `runSensitive $"docker login -p {password}"` - the whole point of the operation - into an overload error.
-    // Bind the input outside the stage instead, so the stage itself stays a plain `BuildStage`.
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>

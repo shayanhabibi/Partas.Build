@@ -101,6 +101,18 @@ and StageContext = {
     StepBuffer: OutputCapture voption
     ShuffleExecuteSequence: bool
     ParentContext: StageParent voption
+    /// <summary>The handlers to run when this stage fails, in registration order.</summary>
+    /// <remarks>
+    /// Each runs once per failed execution of the stage, after that execution exhausts its retries. A
+    /// cancellation reaching the stage from an ancestor or from the invocation runs none of them.
+    /// </remarks>
+    OnFailure: FailureHandler list
+    /// <summary>Where this stage sits in the run.</summary>
+    /// <remarks>
+    /// Set by <c>StageContext.run</c> on the value the stage's sub-stages take as their parent, the way
+    /// <c>TimingOrder</c> is. <c>ScopeAddress.root</c> before the stage runs.
+    /// </remarks>
+    Address: ScopeAddress
     /// <summary>The ordinal this stage took from the pipeline's <c>StageTimings</c> when it started.</summary>
     /// <remarks>
     /// Set on the value the stage's sub-stages take as their parent, so that a timing records whose child it
@@ -128,6 +140,12 @@ and PipelineContext = {
     PostStages: StageContext list
     RunBeforeEachStage: StageContext -> unit
     RunAfterEachStage: StageContext -> unit
+    /// <summary>The handlers to run when the pipeline fails, in registration order.</summary>
+    /// <remarks>
+    /// Each runs once per failed run, after the handlers of every stage of that run, and observes the failure
+    /// the pipeline ends with. A cancelled run — its own timeout, or the console — runs none of them.
+    /// </remarks>
+    OnFailure: FailureHandler list
     /// <summary>What each stage of the run took, filled in as the stages finish.</summary>
     /// <remarks>
     /// A nested stage records itself here too, reaching the pipeline through <c>ParentContext</c>. A condition
@@ -207,6 +225,8 @@ module StageContext =
             StepBuffer = ValueNone
             ShuffleExecuteSequence = false
             ParentContext = ValueNone
+            OnFailure = []
+            Address = ScopeAddress.root
             TimingOrder = ValueNone
             Steps = []
         }
@@ -420,6 +440,7 @@ module PipelineContext =
             PostStages = []
             RunBeforeEachStage = noStageHook
             RunAfterEachStage = noStageHook
+            OnFailure = []
             Timings = StageTimings.create()
             Reports = ScopeReports.create()
             Producers = ExecutionState.create()
@@ -789,6 +810,12 @@ module StageContext =
     let inline addLabelledStepFn (label: string) ([<InlineIfLambda>] step: BuildStep) stage = addStep (Step.StepFn(ValueSome label, step)) stage
     let inline addOperation (label: string voption) ([<InlineIfLambda>] operation: RuntimeContext -> Async<StepOutcome>) stage =
         addStep (Step.Operation(label, operation)) stage
+    /// <summary>Registers <paramref name="handler"/> to run when the stage fails, after the handlers already
+    /// registered on it.</summary>
+    /// <param name="handler" />
+    /// <param name="stage" />
+    let inline addFailureHandler ([<InlineIfLambda>] handler: FailureHandler) (stage: StageContext) =
+        { stage with OnFailure = stage.OnFailure @ [ handler ] }
     /// Conjoins a condition onto a stage. <c>--explain</c> reports a skip caused by it without a reason.
     let inline addPredicate ([<InlineIfLambda>] condition: BuildStageIsActive) stage = addPredicateBecause ValueNone condition stage
     let inline addEnvVars (kvs: seq<string * string>) (stage: StageContext) = { stage with EnvVars = kvs |> Seq.fold (fun state (k, v) -> Map.add k v state) stage.EnvVars }

@@ -44,6 +44,22 @@ module ProducerExecution =
     let prepare (producer: ProducerRef) parseResult values: Result<Operation<obj>, string> =
         producer.Prepare parseResult values |> Result.map unbox<Operation<obj>>
 
+/// <summary>Reading a producer's published value off a failure.</summary>
+/// <remarks>Extends <see cref="T:Partas.Build.FailureContext"/>, which compiles ahead of
+/// <see cref="T:Partas.Build.Producer`1"/> and holds the values untyped.</remarks>
+[<AutoOpen>]
+module FailureOutputs =
+    type FailureContext with
+        /// <summary>The value <paramref name="producer"/> published, where the invocation still holds one of
+        /// the type the handle declares.</summary>
+        /// <remarks>
+        /// A lookup over the values already published: a producer that has not run answers <c>ValueNone</c> and
+        /// stays unrun, and so does one whose value a retried scope discarded.
+        /// </remarks>
+        /// <param name="producer" />
+        member this.TryGetOutput(producer: Producer<'T>): 'T voption =
+            ProducerValues.tryGet<'T> producer.Id this.Published
+
 /// <summary>The prerequisites of one piece of work, and the typed value their results read as.</summary>
 /// <remarks>
 /// Composition is applicative: <c>Read</c> receives the values a scope has published.

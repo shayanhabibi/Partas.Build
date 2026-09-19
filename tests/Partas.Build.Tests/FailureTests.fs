@@ -7,6 +7,7 @@
 module Partas.Build.Tests.FailureTests
 
 open System
+open System.Threading
 open Expecto
 open Partas.Build
 open Partas.Build.Internal
@@ -213,5 +214,251 @@ let tests =
                     | FailureCause.Command (_, exitCode, _) -> Expect.equal exitCode 3 "the pipeline's cause is the code the process exited with"
                     | other -> failtestf "the cause should be the command's; got %A" other
                 | other -> failtestf "the pipeline should carry the structured cause; got %A" other
+        }
+    ]
+
+/// <summary>What a scope's own failure handlers observe, and when they run at all.</summary>
+/// <remarks>
+/// A handler is the structured counterpart of reading the log: every assertion here reads a
+/// <see cref="T:Partas.Build.FailureContext"/>.
+/// </remarks>
+[<Tests>]
+let handlers =
+    /// A step that sleeps past any timeout a test gives its stage.
+    let sleeping = fun (_: StageContext) -> async { do! Async.Sleep 30000 }
+
+    testList "handlers" [
+        test "a handler runs once, after the stage has exhausted its retries" {
+            let attempts = ResizeArray<int>()
+            let handled = ResizeArray<FailureContext>()
+
+            let built =
+                stage "flaky" {
+                    retry 2
+                    onFailure handled.Add
+                    run (fun (_: StageContext) ->
+                        attempts.Add attempts.Count
+                        Error "no")
+                }
+
+            let report = quietly (fun () -> reportStage built)
+
+            Expect.equal attempts.Count 3 "a retry of two gives three attempts"
+            Expect.equal handled.Count 1 "the handler runs once for the failed execution rather than once per attempt"
+            Expect.equal handled[0].Scope "flaky" "the handler is told which scope failed"
+            Expect.equal handled[0].Address.Names [ "flaky" ] "and where that scope sits in the run"
+            Expect.equal handled[0].Outcome report.Outcome "and what the scope reported"
+
+            match handled[0].Primary with
+            | ValueSome failure -> Expect.equal failure.Cause (FailureCause.Reported "no") "the primary cause is the last attempt's"
+            | ValueNone -> failtest "a failed scope hands its handler the cause it failed with"
+
+            Expect.isEmpty handled[0].Secondary "one failing step leaves one cause"
+        }
+
+        test "a stage a retry recovers runs no handler" {
+            let mutable attempts = 0
+            let mutable handled = 0
+
+            let built =
+                stage "flaky" {
+                    retry 1
+                    onFailure (fun _ -> handled <- handled + 1)
+                    run (fun (_: StageContext) ->
+                        attempts <- attempts + 1
+                        if attempts = 1 then Error "not yet" else Ok())
+                }
+
+            let report = quietly (fun () -> reportStage built)
+
+            Expect.equal attempts 2 "the second attempt ran"
+            Expect.isFalse (ScopeReport.failed report) "and succeeded"
+            Expect.equal handled 0 "a scope that ends successfully runs no handler"
+        }
+
+        test "handlers run inner before outer, each naming its own scope" {
+            let order = ResizeArray<string>()
+
+            let built =
+                stage "outer" {
+                    onFailure (fun context -> order.Add $"outer:%s{ScopeAddress.text context.Address}")
+                    stage "inner" {
+                        onFailure (fun context -> order.Add $"inner:%s{ScopeAddress.text context.Address}")
+                        run (fun (_: StageContext) -> Error "inner said no")
+                    }
+                }
+
+            quietly (fun () -> reportStage built) |> ignore
+
+            Expect.sequenceEqual order [ "inner:outer/inner"; "outer:outer" ]
+                "the scope nearest the failure reports first, and each address names the scopes enclosing it"
+        }
+
+        test "an inner handler runs during an outer attempt the retry then recovers" {
+            let mutable attempts = 0
+            let mutable inner = 0
+            let mutable outer = 0
+
+            let built =
+                stage "outer" {
+                    retry 1
+                    onFailure (fun _ -> outer <- outer + 1)
+                    stage "inner" {
+                        onFailure (fun _ -> inner <- inner + 1)
+                        run (fun (_: StageContext) ->
+                            attempts <- attempts + 1
+                            if attempts = 1 then Error "not yet" else Ok())
+                    }
+                }
+
+            let report = quietly (fun () -> reportStage built)
+
+            Expect.isFalse (ScopeReport.failed report) "the second attempt of the enclosing stage succeeded"
+            Expect.equal inner 1 "the inner scope failed once and reported it once"
+            Expect.equal outer 0 "the scope the retry recovered reports nothing"
+        }
+
+        test "a handler that raises leaves one more cause and keeps the original primary" {
+            let mutable entered = 0
+
+            let built =
+                stage "release" {
+                    onFailure (fun _ ->
+                        entered <- entered + 1
+                        raise (InvalidOperationException "the reporter is down"))
+                    run (fun (_: StageContext) -> Error "unsigned")
+                }
+
+            let report = quietly (fun () -> reportStage built)
+
+            Expect.equal entered 1 "a handler is not entered again for its own failure"
+
+            match report.Failures with
+            | [ primary; secondary ] ->
+                Expect.equal primary.Cause (FailureCause.Reported "unsigned") "the scope's own cause stays primary"
+                Expect.equal secondary.Index StepFailure.NoStep "a handler is no step of its scope"
+                Expect.equal secondary.Label (ValueSome FailureContext.HandlerLabel) "and says so"
+
+                match secondary.Cause with
+                | FailureCause.Raised error -> Expect.equal error.Message "the reporter is down" "the handler's exception is the evidence"
+                | other -> failtestf "a handler failure should retain its exception; got %A" other
+            | other -> failtestf "the scope's cause and the handler's should both be recorded; got %A" other
+
+            match report.Outcome with
+            | StageOutcome.Failed error -> Expect.equal error "unsigned" "the outcome still reads the original failure"
+            | other -> failtestf "the stage should be recorded as failed; got %A" other
+        }
+
+        test "a pipeline handler runs after the handlers of its stages and reads the pipeline's own failure" {
+            let order = ResizeArray<string>()
+            let observed = ResizeArray<FailureContext>()
+
+            let work =
+                pipeline "release" {
+                    quiet
+                    onFailure (fun context ->
+                        order.Add "pipeline"
+                        observed.Add context)
+                    stage "sign" {
+                        onFailure (fun _ -> order.Add "sign")
+                        run (fun (_: StageContext) -> Error "unsigned")
+                    }
+                }
+
+            quietly (fun () ->
+                try PipelineContext.run work
+                with :? PipelineFailedException -> ())
+
+            Expect.sequenceEqual order [ "sign"; "pipeline" ] "the pipeline reports after every stage of the run"
+
+            match observed |> List.ofSeq with
+            | [ context ] ->
+                Expect.equal context.Scope "release" "the pipeline handler names the pipeline"
+
+                match context.Primary with
+                | ValueSome failure -> Expect.equal failure.Cause (FailureCause.Reported "unsigned") "and reads the failure the run ended with"
+                | ValueNone -> failtest "the pipeline's failure should reach its handler"
+
+                Expect.equal [ for report in context.Nested -> report.Name ] [ "sign" ] "alongside the reports of the stages it ran"
+            | other -> failtestf "one pipeline handler invocation should be recorded; got %i" other.Length
+        }
+
+        test "a cancellation reaching a stage from the invocation runs no handler" {
+            let mutable handled = 0
+            use cancellation = new CancellationTokenSource 500
+
+            let built =
+                stage "slow" {
+                    onFailure (fun _ -> handled <- handled + 1)
+                    run sleeping
+                }
+
+            let report = quietly (fun () -> StageContext.run built (StageIndex.Stage 0) cancellation.Token)
+
+            Expect.isTrue (ScopeReport.failed report) "a cancelled stage did not succeed"
+            Expect.equal handled 0 "the token that fired belongs to the invocation, which is no failure of the stage"
+        }
+
+        test "a stage's own timeout is its failure, and reaches its handler as one" {
+            let handled = ResizeArray<FailureContext>()
+
+            let built =
+                stage "slow" {
+                    timeout 1.0
+                    onFailure handled.Add
+                    run sleeping
+                }
+
+            quietly (fun () -> reportStage built) |> ignore
+
+            match handled |> List.ofSeq with
+            | [ context ] ->
+                match context.Primary with
+                | ValueSome failure -> Expect.equal failure.Cause FailureCause.TimedOut "the stage's own budget expired"
+                | ValueNone -> failtest "a timed-out stage should hand its handler the timeout"
+            | other -> failtestf "one handler invocation should be recorded; got %i" other.Length
+        }
+
+        test "a step timeout of the stage's own is its failure, and reaches its handler as one" {
+            let handled = ResizeArray<FailureContext>()
+
+            let built =
+                stage "slow" {
+                    timeoutForStep 1.0
+                    onFailure handled.Add
+                    run sleeping
+                }
+
+            quietly (fun () -> reportStage built) |> ignore
+
+            match handled |> List.ofSeq with
+            | [ context ] ->
+                match context.Primary with
+                | ValueSome failure -> Expect.equal failure.Cause FailureCause.TimedOut "the step budget the stage set expired"
+                | ValueNone -> failtest "a stage whose step budget expired should hand its handler the timeout"
+            | other -> failtestf "one handler invocation should be recorded; got %i" other.Length
+        }
+
+        test "a pipeline timeout cancels its stages and runs no handler" {
+            let mutable stageHandled = 0
+            let mutable pipelineHandled = 0
+
+            let work =
+                pipeline "release" {
+                    quiet
+                    timeout 1.0
+                    onFailure (fun _ -> pipelineHandled <- pipelineHandled + 1)
+                    stage "slow" {
+                        onFailure (fun _ -> stageHandled <- stageHandled + 1)
+                        run sleeping
+                    }
+                }
+
+            quietly (fun () ->
+                try PipelineContext.run work
+                with :? PipelineCancelledException -> ())
+
+            Expect.equal stageHandled 0 "the pipeline's budget is no failure of the stage it cancels"
+            Expect.equal pipelineHandled 0 "and a cancelled run is no failure of the pipeline"
         }
     ]

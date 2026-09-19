@@ -17,13 +17,20 @@ module StageContext =
             Logging.PipelineFailed.print message
             raise (PipelineFailedException message)
 
-    /// The step an operation is executing in, while it is executing.
+    /// The step one attempt is executing, while it is executing.
     [<Struct>]
     type internal InFlightStep = {
         index: int
         label: string voption
         prefix: string
     }
+
+    /// <summary>The steps of one attempt that have started and not finished, by step index.</summary>
+    /// <remarks>
+    /// A cancelled <c>async</c> runs neither a handler nor a continuation, so a step a token ended stays here
+    /// until the attempt has unwound, which is what lets the attempt say which steps its own timeout ended.
+    /// </remarks>
+    type internal InFlightSteps = System.Collections.Concurrent.ConcurrentDictionary<int, InFlightStep>
 
     /// <summary>Where one attempt of a stage collects what its steps produce.</summary>
     /// <remarks>
@@ -55,7 +62,7 @@ module StageContext =
                 List.ofSeq evidence.failures, List.ofSeq evidence.nested, List.ofSeq evidence.exns)
 
     type internal StepHandlerParameters = {
-        operationInFlight: InFlightStep voption ref
+        inFlight: InFlightSteps
         stage: StageContext
         stepStage: StageContext
         parallelism: int voption
@@ -133,15 +140,26 @@ module StageContext =
         let evidence = StepEvidence.create()
         // Assigned in the `finally` below, on every path out of the stage.
         let mutable reported = Unchecked.defaultof<ScopeReport>
+        // Whether what ended this stage was a cancellation rather than a failure of its own. A cancelled
+        // scope runs no failure handler.
+        let mutable cancelled = false
         let isActive = stage.IsActive stage
         let pipeline = getParentPipeline stage
         let timings = Internal.getTimings pipeline index stage
         let reports = Internal.getReports pipeline index stage
-        // Sub-stages read their parent's ordinal off the value given to them as `ParentContext`.
+        // Where this stage sits in the run. A condition stage belongs to the condition that runs it and takes
+        // the address of the stage it decides, which nothing records.
+        let address =
+            let enclosing = mapStageParentContext ScopeAddress.root _.Address stage
+            match index with
+            | StageIndex.Condition -> enclosing
+            | StageIndex.Stage ordinal
+            | StageIndex.Step ordinal -> ScopeAddress.child ordinal stage.Name enclosing
+        // Sub-stages read their parent's address and ordinal off the value given to them as `ParentContext`.
         let stage =
             match timings with
-            | Some(_, _, order) -> { stage with TimingOrder = ValueSome order }
-            | None -> stage
+            | Some(_, _, order) -> { stage with Address = address; TimingOrder = ValueSome order }
+            | None -> { stage with Address = address }
 
         let stageSw = Stopwatch.StartNew()
 
@@ -202,10 +220,11 @@ module StageContext =
                 | None -> ()
 
                 let mutable isStageSoftCancelled = false
+                // Whether an exception escaped this attempt's steps, which is what a timeout of any budget
+                // arrives as.
+                let mutable escaped = false
 
-                // The step the operation this attempt is inside belongs to, while it is inside one. A value
-                // still here once the attempt has unwound belongs to an operation a token ended.
-                let operationInFlight: InFlightStep voption ref = ref ValueNone
+                let inFlight = InFlightSteps()
 
                 use stepErrorCts = new CancellationTokenSource()
                 use linkedStepErrorCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, stepErrorCts.Token)
@@ -240,17 +259,21 @@ module StageContext =
 
                         try
                             try
-                            return! stepHandler {
-                                operationInFlight = operationInFlight
-                                stage = stage
-                                stepStage = stepStage
-                                parallelism = parallelism
-                                i = i
-                                escapedPrefix = escapedPrefix
-                                linkedStepCts = linkedStepCts
-                                evidence = evidence
-                                stepErrorCts = stepErrorCts
-                            } step
+                                inFlight[i] <- { index = i; label = Internal.getStepLabel step; prefix = escapedPrefix }
+                                let! outcome =
+                                    stepHandler {
+                                        inFlight = inFlight
+                                        stage = stage
+                                        stepStage = stepStage
+                                        parallelism = parallelism
+                                        i = i
+                                        escapedPrefix = escapedPrefix
+                                        linkedStepCts = linkedStepCts
+                                        evidence = evidence
+                                        stepErrorCts = stepErrorCts
+                                    } step
+                                inFlight.TryRemove i |> ignore
+                                return outcome
                             with
                             | :? PipelineCancelledException as ex ->
                                 raise ex
@@ -259,17 +282,20 @@ module StageContext =
                                 raise ex
                                 return false
                             | :? StepSoftCancelledException as ex ->
+                                inFlight.TryRemove i |> ignore
                                 $"{escapedPrefix} {Markup.escape ex.Message}"
                                 |> Markup.yellow
                                 |> nprintn stage
                                 return true
                             | :? StageSoftCancelledException as ex ->
+                                inFlight.TryRemove i |> ignore
                                 $"{escapedPrefix} {Markup.escape ex.Message}"
                                 |> Markup.yellow
                                 |> nprintn stage
                                 isStageSoftCancelled <- true
                                 return true
                             | ex ->
+                                inFlight.TryRemove i |> ignore
                                 $"{escapedPrefix} raised an exception."
                                 |> Markup.red
                                 |> printn
@@ -309,11 +335,12 @@ module StageContext =
                             |> AsyncSeq.iterAsync asyncHandler
                     Async.RunSynchronously(ts, cancellationToken = linkedCts.Token)
                 with
-                | :? PipelineCancelledException as ex -> FAIL(); raise ex
+                | :? PipelineCancelledException as ex -> FAIL(); cancelled <- true; raise ex
                 | :? PipelineFailedException as ex -> FAIL(); raise ex
                 | _ when isStageSoftCancelled -> SUCCESS()
                 | ex ->
                     FAIL()
+                    escaped <- true
                     if linkedCts.Token.IsCancellationRequested && not stepErrorCts.IsCancellationRequested then
                         $"{buildCurrentStepPrefix stage |> Markup.escape}> stage is cancelled or timed-out."
                         |> Markup.yellow
@@ -324,24 +351,36 @@ module StageContext =
                         |> printn
                         AnsiConsole.WriteException ex
 
-                // Which token fired decides this, and only the runner holds both: `cts` is the budget this
-                // stage was given, so its expiry is a failure of this stage and reports
-                // `FailureCause.TimedOut`. `ct` belongs to an ancestor and `stepErrorCts` to stage policy;
-                // an operation either of those ended stays a cancellation, reported as one above.
-                match operationInFlight.Value with
-                | ValueSome inFlight when
-                    cts.IsCancellationRequested
+                // Which token fired decides this, and only the runner holds them: `cts` is the budget this
+                // stage was given and `stepCts` the budget it gave each of its steps, so an expiry of either
+                // is a failure of this stage and reports `FailureCause.TimedOut`. `ct` belongs to an ancestor
+                // and `stepErrorCts` to stage policy; a step either of those ended stays a cancellation,
+                // reported as one above. Every step still in flight when the attempt unwound is one the
+                // expiry ended, which a `parallel'` stage has several of.
+                if
+                    escaped
+                    && (cts.IsCancellationRequested || stepCts.IsCancellationRequested)
                     && not ct.IsCancellationRequested
                     && not stepErrorCts.IsCancellationRequested
-                    ->
+                then
                     let message = FailureCause.describe FailureCause.TimedOut
-                    let line = if parallelism.IsNone && getNoPrefixForStep stage then message else $"{inFlight.prefix} {message}"
+                    let timedOut =
+                        match inFlight.Values |> Seq.sortBy _.index |> List.ofSeq with
+                        // A budget that expired between two steps leaves the stage itself as the whole of the
+                        // evidence, and the stage carries no step index.
+                        | [] -> [ { index = StepFailure.NoStep; label = ValueNone; prefix = buildCurrentStepPrefix stage } ]
+                        | steps -> steps
+
                     FAIL()
-                    printError stage line
-                    evidence |> StepEvidence.addFailure { Index = inFlight.index; Label = inFlight.label; Cause = FailureCause.TimedOut }
-                    if not stage.ContinueStageOnFailure then
-                        evidence |> StepEvidence.addExceptions [ Exception line ]
-                | _ -> ()
+
+                    for step in timedOut do
+                        let line = if parallelism.IsNone && getNoPrefixForStep stage then message else $"{step.prefix} {message}"
+                        printError stage line
+                        evidence |> StepEvidence.addFailure { Index = step.index; Label = step.label; Cause = FailureCause.TimedOut }
+                        if not stage.ContinueStageOnFailure then
+                            evidence |> StepEvidence.addExceptions [ Exception line ]
+                elif escaped && ct.IsCancellationRequested then
+                    cancelled <- true
 
                 if not isSuccess && retriesLeft > 0 && not cts.IsCancellationRequested && not ct.IsCancellationRequested then
                     $"%s{getNamePath stage |> Markup.escape} failed. Retrying, {retriesLeft} attempt(s) left."
@@ -359,12 +398,27 @@ module StageContext =
 
             reported <- {
                 Name = stage.Name
+                Address = address
                 Outcome = Internal.getOutcome isActive isSuccess exns failures
                 Propagates = not (stage.ContinueStageOnFailure || isSuccess)
                 Failures = failures
                 Exceptions = exns
                 Nested = nested
             }
+
+            // Once per failed execution of this stage, after its retries and after the handlers of every
+            // scope nested in it, which finished here before this one did. A handler that raises leaves one
+            // more cause, and the stage keeps the outcome it already reported.
+            if ScopeReport.failed reported && not (cancelled || ct.IsCancellationRequested) then
+                let published = pipeline |> Option.map (_.Producers >> ExecutionState.values) |> Option.defaultValue ProducerValues.empty
+
+                match FailureContext.runHandlers stage.OnFailure (FailureContext.ofReport published reported) with
+                | [] -> ()
+                | raised ->
+                    for failure in raised do
+                        printError stage (FailureCause.describe failure.Cause)
+
+                    reported <- { reported with Failures = reported.Failures @ raised }
 
             timings
             |> Option.iter (Internal.handleTimings stage reported.Outcome stageSw)
@@ -400,16 +454,11 @@ module StageContext =
             // A structured outcome becomes a string here and nowhere earlier: the
             // print site is the only reader that needs one.
             | Step.Operation(label, operation) -> async {
-                // A cancelled `async` runs neither a handler nor a continuation,
-                // so an operation ended by a token leaves its step behind here
-                // and the attempt classifies it once the run has unwound.
-                args.operationInFlight.Value <- ValueSome { index = args.i; label = label; prefix = args.escapedPrefix }
                 let! outcome =
                     operation {
                         Stage = args.stepStage
                         StepIndex = LanguagePrimitives.Int32WithMeasure args.i
                     }
-                args.operationInFlight.Value <- ValueNone
 
                 match outcome with
                 | StepOutcome.Completed -> return true
@@ -537,6 +586,25 @@ module PipelineContext =
 
         if cts.IsCancellationRequested then
             raise (PipelineCancelledException "Cancelled by console")
+
+        // Once per failed run, after every stage of it has reported to its own handlers. The failure the
+        // pipeline ends with is the first that reached it, whichever scope produced it.
+        if hasErrors || pipelineExns.Count > 0 then
+            let propagated = ScopeReports.propagated this.Reports
+            let exns = List.ofSeq pipelineExns
+
+            let context: FailureContext = {
+                Scope = this.Name
+                Address = ScopeAddress.root
+                Outcome = StageContext.Internal.getOutcome true false exns propagated
+                Failures = propagated
+                Exceptions = exns
+                Nested = ScopeReports.stages this.Reports
+                Published = ExecutionState.values this.Producers
+            }
+
+            for failure in FailureContext.runHandlers this.OnFailure context do
+                PipelineContext.printError this (FailureCause.describe failure.Cause)
 
         if pipelineExns.Count > 0 then
             for exn in pipelineExns do

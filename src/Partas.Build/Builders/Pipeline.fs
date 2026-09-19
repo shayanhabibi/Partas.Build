@@ -289,6 +289,17 @@ type PipelineBuilder(name: string) =
         ([<InlineIfLambda>] build: BuildPipeline, stages: StageContext list): BuildPipeline
         = build >> fun ctx -> { ctx with PostStages = stages }
 
+    /// <summary>Registers a handler to run when the pipeline fails.</summary>
+    /// <remarks>
+    /// It runs once per failed run, after the handlers of every stage of that run, and takes the failure the
+    /// pipeline ends with as its primary cause. A run a cancellation ended — the pipeline's own timeout, or the
+    /// console — runs none.
+    /// </remarks>
+    [<CustomOperation("onFailure")>] member inline _.
+        onFailure
+        ([<InlineIfLambda>] build: BuildPipeline, handler: FailureHandler): BuildPipeline
+        = build >> fun ctx -> { ctx with OnFailure = ctx.OnFailure @ [ handler ] }
+
     // Mirrors of every setting above, for a pipeline that has already picked up a stage declaring inputs.
     // Without these, placing a setting *after* such a stage is an overload error rather than a no-op.
     /// <summary>Sets the description shown for the pipeline.</summary>
@@ -429,6 +440,12 @@ type PipelineBuilder(name: string) =
         post
         (spec: InputSpec<BuildPipeline>, stages: StageContext list): InputSpec<BuildPipeline>
         = InputSpec.map (fun (build: BuildPipeline) -> this.post(build, stages)) spec
+    /// <summary>Registers a handler to run when the pipeline fails.</summary>
+    /// <include file="../xmldoc/pipeline.xml" path="/pipeline/mirror/*"/>
+    [<CustomOperation("onFailure")>] member inline this.
+        onFailure
+        (spec: InputSpec<BuildPipeline>, handler: FailureHandler): InputSpec<BuildPipeline>
+        = InputSpec.map (fun (build: BuildPipeline) -> this.onFailure(build, handler)) spec
     [<CustomOperation>] member inline _.
         verbosity
         ([<InlineIfLambda>] build: BuildPipeline, verbosity: Verbosity): BuildPipeline

@@ -68,6 +68,23 @@ type StageSettingsBuilder() =
     [<CustomOperation("consumes")>]
     member inline _.consumes(state: ^State, dependencies: DependencySpec<'D>, execute: 'D -> Operation<unit>): ^State =
         StageMap.mapStage (Stage.consumes dependencies execute) state
+
+    /// <summary>Registers a handler to run when this stage fails.</summary>
+    /// <remarks>
+    /// The handler runs once per failed execution of the stage, after that execution exhausts its <c>retry</c>
+    /// attempts and before the handlers of the scopes enclosing it. A stage a retry recovers runs none, and
+    /// neither does one a cancellation ended: the stage's own <c>timeout</c> and <c>timeoutForStep</c> are
+    /// failures of the stage, while an ancestor's token, the pipeline's and the invocation's are cancellations.
+    /// <para>The handler receives the causes the execution recorded and the producer values the invocation
+    /// holds. An exception out of it is one more cause of the same scope, and the primary stays where it
+    /// was.</para>
+    /// </remarks>
+    /// <param name="state" />
+    /// <param name="handler" />
+    [<CustomOperation("onFailure")>]
+    member inline _.onFailure(state: ^State, handler: FailureHandler): ^State =
+        StageMap.mapStage (StageContext.addFailureHandler handler) state
+
     /// <summary>Adds environment variables to the stage.</summary>
     /// <remarks>Variables set here override inherited values from parent contexts. A stage-level variable shadows any pipeline-level variable with the same name.</remarks>
     [<CustomOperation>]

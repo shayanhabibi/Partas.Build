@@ -1,5 +1,33 @@
 namespace Partas.Build
 
+/// <summary>Where a scope sits in the run.</summary>
+/// <remarks>
+/// <c>Path</c> holds the position of each scope from the stage of the pipeline inward, ending in the position of
+/// the scope addressed; <c>Names</c> holds the names of the same scopes. Two sibling scopes sharing a name
+/// differ in the last position.
+/// </remarks>
+[<Struct>]
+type ScopeAddress = {
+    Path: int list
+    Names: string list
+}
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module ScopeAddress =
+    /// The address of the pipeline itself, which encloses every scope of the run.
+    let root = { Path = []; Names = [] }
+
+    /// <summary>The address of the scope at <paramref name="ordinal"/> of the scope <paramref name="address"/>
+    /// addresses.</summary>
+    /// <param name="ordinal" />
+    /// <param name="name" />
+    /// <param name="address" />
+    let child (ordinal: int) (name: string) (address: ScopeAddress) =
+        { Path = address.Path @ [ ordinal ]; Names = address.Names @ [ name ] }
+
+    /// The names from the outermost scope inward, separated by '/'.
+    let text (address: ScopeAddress) = String.concat "/" address.Names
+
 /// <summary>A failure one step produced, with the step it came from.</summary>
 [<Struct>]
 type StepFailure = {
@@ -9,6 +37,12 @@ type StepFailure = {
     Label: string voption
     Cause: FailureCause
 }
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module StepFailure =
+    /// The <c>Index</c> of a cause the scope left itself, which no step of it produced.
+    [<Literal>]
+    let NoStep = -1
 
 /// <summary>What one execution of a scope did, the evidence its steps left, and whether its failure reaches the
 /// scope containing it.</summary>
@@ -20,6 +54,8 @@ type StepFailure = {
 /// </remarks>
 type ScopeReport = {
     Name: string
+    /// Where the scope sits in the run.
+    Address: ScopeAddress
     Outcome: StageOutcome
     /// Whether a failure of this scope fails the scope containing it.
     Propagates: bool
@@ -90,3 +126,71 @@ module ScopeReports =
 
     /// The failures that reached the pipeline, in pre-order.
     let propagated (reports: ScopeReports) = stages reports |> List.collect ScopeReport.propagated
+
+/// <summary>What one failed execution of a scope hands the handlers registered on it.</summary>
+/// <remarks>
+/// The scope's own result, as its report records it, alongside the producer values the invocation holds. A
+/// handler reads why the scope failed from <c>Primary</c> and <c>Secondary</c> rather than from the text the
+/// run printed.
+/// </remarks>
+type FailureContext = {
+    /// The scope's name.
+    Scope: string
+    /// Where the scope sits in the run.
+    Address: ScopeAddress
+    /// What the scope did.
+    Outcome: StageOutcome
+    /// The causes this execution of the scope recorded, the primary first.
+    Failures: StepFailure list
+    /// The exceptions offered to the scope containing this one.
+    Exceptions: exn list
+    /// The reports of the scopes this one ran, in the order they finished.
+    Nested: ScopeReport list
+    /// The values the invocation has published and still holds.
+    Published: ProducerValues
+}
+with
+    /// The failure the scope reports as its result.
+    member this.Primary = this.Failures |> List.tryHead |> ValueOption.ofOption
+    /// The causes of the same execution beyond the primary, in the order they were recorded.
+    member this.Secondary = match this.Failures with [] -> [] | _ :: rest -> rest
+
+/// Runs when the scope it is registered on fails.
+type FailureHandler = FailureContext -> unit
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module FailureContext =
+    /// The <c>StepFailure.Label</c> of a cause a handler itself left.
+    [<Literal>]
+    let HandlerLabel = "onFailure"
+
+    /// <summary>The context the handlers of the scope <paramref name="report"/> covers receive.</summary>
+    /// <param name="published" />
+    /// <param name="report" />
+    let ofReport (published: ProducerValues) (report: ScopeReport) = {
+        Scope = report.Name
+        Address = report.Address
+        Outcome = report.Outcome
+        Failures = report.Failures
+        Exceptions = report.Exceptions
+        Nested = report.Nested
+        Published = published
+    }
+
+    /// <summary>Runs <paramref name="handlers"/> in registration order, answering the causes they themselves
+    /// left.</summary>
+    /// <remarks>
+    /// An exception out of a handler is one more cause of the same scope, recorded after the scope's own and
+    /// leaving the primary where it was. The handlers registered after it still run, and the one that raised
+    /// is not entered again.
+    /// </remarks>
+    /// <param name="handlers" />
+    /// <param name="context" />
+    let runHandlers (handlers: FailureHandler list) (context: FailureContext) =
+        let raised = ResizeArray<StepFailure>()
+
+        for handler in handlers do
+            try handler context
+            with error -> raised.Add { Index = StepFailure.NoStep; Label = ValueSome HandlerLabel; Cause = FailureCause.Raised error }
+
+        List.ofSeq raised

@@ -55,7 +55,7 @@ module Conditions =
     /// whether it succeeded. The stage runs for real: side effects and console output included.
     let whenStageSucceeds (stage: StageContext): BuildStageIsActive = fun ctx ->
         let stage = { stage with ParentContext = ValueSome(StageParent.Stage ctx) }
-        StageContext.run stage StageIndex.Condition CancellationToken.None |> fst
+        StageContext.run stage StageIndex.Condition CancellationToken.None |> ScopeReport.continues
 
     /// <summary>The text <c>--explain</c> prints against a stage each of the conditions above turned off.</summary>
     /// <remarks>

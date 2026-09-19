@@ -167,9 +167,7 @@ let tests =
             Expect.equal (stageNames built) [ "first"; "second" ] "both stages should be present"
         }
 
-        // Pending until T6 (PLAN-Execution, pre-existing defects): `runStagesWithFailFast` discards the exceptions
-        // `StageContext.run` returns, so the pipeline reports "result is not indicating as successful" with no cause.
-        ptest "a pipeline surfaces the exception a stage raised" {
+        test "a pipeline surfaces the exception a stage raised" {
             let boom (_: StageContext) : Async<Result<unit, string>> = raise (System.InvalidOperationException "boom")
             let built = pipeline "raising" { stage "throws" { run boom } }
 

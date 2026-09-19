@@ -4,6 +4,7 @@ open System
 open System.CommandLine
 open System.IO
 open System.Threading
+open Spectre.Console
 open Partas.Build
 open Partas.Build.Internal
 
@@ -50,13 +51,45 @@ let parse (inputs: ActionInput list) (commandLine: string) =
 
     root.Parse commandLine
 
+/// <summary>Runs <paramref name="fn"/> with the console redirected, and answers its result alongside what it
+/// printed.</summary>
+/// <remarks>
+/// Spectre's ambient console is redirected alongside <c>Console.Out</c> and restored with it. It binds to the
+/// writer it was created against, so a pipeline run under a redirect that touched only <c>Console.Out</c>
+/// leaves every later test writing into this test's disposed writer.
+/// </remarks>
+let capturingOut (fn: unit -> 'T) =
+    let original = Console.Out
+    let originalAnsi = AnsiConsole.Console
+    use writer = new StringWriter()
+    Console.SetOut writer
+
+    AnsiConsole.Console <-
+        AnsiConsoleSettings (
+            Ansi = AnsiSupport.No,
+            ColorSystem = ColorSystemSupport.NoColors,
+            Out = AnsiConsoleOutput writer)
+        |> AnsiConsole.Create
+
+    try
+        let result = fn ()
+        result, writer.ToString()
+    finally
+        Console.SetOut original
+        AnsiConsole.Console <- originalAnsi
+
+/// <paramref name="fn"/> run under <c>capturingOut</c>, discarding what it printed.
+let quietly (fn: unit -> 'T) = capturingOut fn |> fst
+
+/// Runs a stage as the first stage of no pipeline and answers the report it left.
+let reportStage (stage: StageContext) = StageContext.run stage (StageIndex.Stage 0) CancellationToken.None
+
 /// Runs a stage as the first stage of no pipeline and reports its outcome. <c>Error</c> carries the
 /// exceptions the stage's steps raised, so a step that returned <c>Error</c> rather than raising gives
 /// an empty list.
 let runStage (stage: StageContext) : Result<unit, exn list> =
-    match StageContext.run stage (StageIndex.Stage 0) CancellationToken.None with
-    | true, _ -> Ok ()
-    | false, exns -> Error (List.ofSeq exns)
+    let report = reportStage stage
+    if ScopeReport.continues report then Ok () else Error report.Exceptions
 
 /// The option names a spec declares, in declaration order.
 let inputNames (inputs: ActionInput list) = [

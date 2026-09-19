@@ -385,6 +385,30 @@ let tests =
                 "each producer runs after the prerequisite it reads"
         }
 
+        test "a handler reads what was published and runs no producer to fill a gap" {
+            let log = ResizeArray()
+            let published = logging log "compile" 42
+            let unpublished = logging log "sign" 7
+            let observed = ResizeArray<int voption * int voption>()
+
+            let built = command "build" {
+                pipeline "work" {
+                    quiet
+                    reading log "test" published
+
+                    stage "package" {
+                        onFailure (fun context -> observed.Add(context.TryGetOutput published, context.TryGetOutput unpublished))
+                        run (fun (_: StageContext) -> Error "nothing to package")
+                    }
+                }
+            }
+
+            Expect.equal (Helpers.quietly (fun () -> built.Parse("").Invoke())) 1 "the failing stage fails the invocation"
+            Expect.sequenceEqual log [ "compile"; "test:42" ] "a producer no stage consumes stays unrun, the lookup included"
+            Expect.sequenceEqual observed [ ValueSome 42, ValueNone ]
+                "the handler reads the value the run published and answers absence for the one it did not"
+        }
+
         test "a placement addressing no stage fails the invocation instead of running without it" {
             let source = producer "compile"
             let built = pipeline "work" { consumer "use" source }

@@ -303,13 +303,12 @@ let operations =
             let before = sleepsAlive ()
             use cancellation = new CancellationTokenSource 500
 
-            match StageContext.run (stage "slow" { runOperation (execute sleeps) }) (StageIndex.Stage 0) cancellation.Token with
-            | true, _ -> failtest "a cancelled stage should not report success"
-            | false, failures ->
-                let timedOut = FailureCause.describe FailureCause.TimedOut
-                Expect.isFalse
-                    (failures |> Seq.exists (fun failure -> failure.Message.Contains timedOut))
-                    "the token that fired belongs to the caller, so the stage reports cancellation rather than a timeout"
+            let report = StageContext.run (stage "slow" { runOperation (execute sleeps) }) (StageIndex.Stage 0) cancellation.Token
+            if ScopeReport.continues report then failtest "a cancelled stage should not report success"
+
+            Expect.isFalse
+                (report.Failures |> List.exists (fun failure -> failure.Cause = FailureCause.TimedOut))
+                "the token that fired belongs to the caller, so the stage reports cancellation rather than a timeout"
 
             Thread.Sleep 1500
             Expect.equal (sleepsAlive ()) before "a cancelled stage still kills the whole process tree"

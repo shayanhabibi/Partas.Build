@@ -173,12 +173,12 @@
 - Files: `Types.fs`, `Failures.fs`, `Summary.fs`, `StageTests.fs`, `SummaryTests.fs`, `FailureTests.fs`.
 - Consumes: operation failures, producer outcomes, and legacy suppression policies.
 - Produces: actual scope outcome, propagation decision, and structured failure evidence as separate data.
-- [ ] Add failing test: suppressed producer failure remains failed and supplies no value while independent work continues.
-- [ ] Add failing tests retaining exceptions, unacceptable exit codes, and parse failures without inferring anything from stderr.
-- [ ] Fix `runStagesWithFailFast` to collect the exceptions `StageContext.run` returns; the T0 pending test for a `PipelineFailedException` carrying its cause turns green here.
-- [ ] Retain a suppressed step's exception as evidence on the raw outcome even when `ContinueStageOnFailure` keeps it out of the propagated list.
-- [ ] Integrate structured reports with existing stage execution and timing/summary output.
-- [ ] Preserve existing public timing behavior where possible; avoid introducing a breaking public union change solely for internal control flow.
+- [x] Add failing test: suppressed producer failure remains failed and supplies no value while independent work continues.
+- [x] Add failing tests retaining exceptions, unacceptable exit codes, and parse failures without inferring anything from stderr.
+- [x] Fix `runStagesWithFailFast` to collect the exceptions `StageContext.run` returns; the T0 pending test for a `PipelineFailedException` carrying its cause turns green here.
+- [x] Retain a suppressed step's exception as evidence on the raw outcome even when `ContinueStageOnFailure` keeps it out of the propagated list.
+- [x] Integrate structured reports with existing stage execution and timing/summary output.
+- [x] Preserve existing public timing behavior where possible; avoid introducing a breaking public union change solely for internal control flow.
 - Completion: downstream control flow never consults rendered logs or timing summaries to determine failure.
 
 ## T7 — Implement scoped failure handlers and complete the vertical slice
@@ -190,14 +190,18 @@
   - `onFailure` registration for a scope.
   - `FailureContext` with primary/secondary causes and stage/step identity.
   - `FailureContext.TryGetOutput: Producer<'T> -> 'T voption` with no execution side effects.
-- [ ] Add failing tests: handler runs after retry exhaustion, never on successful retry, and never for ordinary cancellation.
-- [ ] Add failing tests: a stage's own `timeout` runs its `onFailure` with `FailureCause.TimedOut`; a pipeline timeout or invocation cancellation runs no handler in the stages it cancels.
-- [ ] Add failing tests: `onFailure` on `pipeline { }` runs after the failed stage's own handler and observes the pipeline's final failure.
-- [ ] Add failing tests: inner-before-outer ordering, per-scope-execution invocation, and handler failure preserving the primary cause.
-- [ ] Add failing test: lookup of an absent producer does not run it; successful still-valid metadata is available.
-- [ ] Implement handlers subject to invocation cancellation; do not add general cleanup or a new cleanup budget.
-- [ ] Run an end-to-end fixture: CLI input -> captured JSON -> typed producer -> consumer -> retry -> final failure -> recorded report.
-- [ ] Run the same fixture through `--help` and `--explain`; verify no producer, process, or reporting callback executes.
+- [x] Add failing tests: handler runs after retry exhaustion, never on successful retry, and never for ordinary cancellation.
+- [x] Add failing tests: a stage's own `timeout` runs its `onFailure` with `FailureCause.TimedOut`; a pipeline timeout or invocation cancellation runs no handler in the stages it cancels.
+- [x] Add failing tests: `onFailure` on `pipeline { }` runs after the failed stage's own handler and observes the pipeline's final failure.
+- [x] Add failing tests: inner-before-outer ordering, per-scope-execution invocation, and handler failure preserving the primary cause.
+- [x] Add failing test: lookup of an absent producer does not run it; successful still-valid metadata is available.
+- [~] Implement handlers subject to invocation cancellation; do not add general cleanup or a new cleanup budget.
+      **Deferred, and delivered in part.** A scope a cancellation ended runs no handler, decided from the token
+      that fired. A handler itself is a `FailureContext -> unit` run to completion: interrupting one that blocks
+      needs an `Async<unit>` handler, which is the part deferred. No cleanup operation and no cleanup budget were
+      added, as the task requires.
+- [x] Run an end-to-end fixture: CLI input -> captured JSON -> typed producer -> consumer -> retry -> final failure -> recorded report.
+- [x] Run the same fixture through `--help` and `--explain`; verify no producer, process, or reporting callback executes.
 - Completion: the vertical slice demonstrates the migration use case with local deterministic fixtures and no external side effects.
 
 ## T8 — Expand builder deduplication after the slice passes
@@ -343,3 +347,35 @@ rtk dotnet run --project Build.fsproj -- test --configuration Release
     `RuntimeContext.OwnTimeout` was removed once the runner owned the decision.
   - Not reached: a `timeoutForStep` expiry (`Async.StartChild` reports it to the waiter as a `TimeoutException`),
     and naming each of several concurrent operation steps a stage timeout ended.
+- T6 (2026-09-18, worktree `Partas.Build-execution-failures`, branch `execution/failures` from `81027c8`):
+  - Raw outcomes: `src/Partas.Build/Failures.fs` (new, after `Environment.fs`) holds `StepFailure` and
+    `ScopeReport` (`Name`/`Outcome`/`Propagates`/`Failures`/`Exceptions`/`Nested`) plus `ScopeReports`, the
+    pipeline-level collector on `PipelineContext.Reports`. `StageContext.run` answers a `ScopeReport` where it
+    answered `bool * ResizeArray<exn>`, and registers it in the same `finally` that records the timing.
+  - `StepEvidence` replaced the three stage-held collections: a step writes its evidence as it produces it,
+    through one lock, because a failing step cancels its own scope before its `async` returns and a value
+    carried in that return is discarded.
+  - Suite after T6: 253 passed, 0 ignored, 0 failed. The T0 pending test
+    `PipelineTests` "a pipeline surfaces the exception a stage raised" is un-pended and green.
+- T7 (2026-09-19, same worktree and branch):
+  - Handlers: `onFailure` on the stage builder (SRTP, all three states) and on the pipeline builder (with its
+    `InputSpec` mirror). `Failures.fs` — moved after `Producer.fs` so a context can carry `ProducerValues` —
+    holds `ScopeAddress`, `FailureContext` (`Primary`/`Secondary`), `FailureContext.runHandlers` and
+    `handlerReport`; `FailureContext.TryGetOutput` extends the context in `Dependencies.fs`, where
+    `Producer<'T>` exists. Handlers run from the same `finally` as the report, so "after retries", "inner before
+    outer" and "a stage that raises out of `run` still reports" are one consequence of where the call sits.
+  - Classification: which token fired decides a timeout from a cancellation. `StepBudget` gives each step its
+    own `timeoutForStep`, taken when the step starts and the only clock over it: the step's whole body runs
+    under that token, so a command registers its kill on it. `cts`/a step budget are failures of the stage;
+    `ct` and `stepErrorCts` are cancellations and run no handler, as does a condition stage. This retires T3's
+    *Not reached: a `timeoutForStep` expiry* line above: `Async.StartChild` no longer carries the budget, and a
+    step that outlives one is classified and killed through the source the step ran under.
+  - A cancellation a step raises itself, while the token it ran under stands, is a cause of its own
+    (`FailureCause.Raised`) rather than a cancellation of the runner's.
+  - Vertical slice: `FailureTests.fs` `slice` drives `--tag` -> a typed producer capturing a JSON document from
+    `tests/Fixtures/ProcessFixture` (`echo` mode) -> a consumer retrying over the typed value -> the handlers of
+    both scopes -> `ScopeReports`. The producer runs once while the consumer attempts three times. The same
+    command under `--help` and `--explain` increments none of the counters.
+  - Suites after T7 and its two review rounds: `tests/Partas.Build.Tests` 278 passed, 0 ignored, 0 failed;
+    `Partas.Build.Cmd.NetStandard.Tests` 3; the two external-annotation suites 65 and 74. Library Debug and
+    Release 0 errors 0 warnings; `dotnet run --project Build.fsproj -- test --quick` green.

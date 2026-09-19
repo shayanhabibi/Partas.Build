@@ -77,11 +77,11 @@ type ExecutionState = private {
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module ExecutionState =
     let create() = { sync = obj(); values = ProducerValues.empty }
-    /// The values available to the work running now.
-    let values { values = values } = values
-    let contains id { values = values } = ProducerValues.contains id values
     let inline private withSync (fn: ExecutionState -> 'T) (executionState: ExecutionState) =
         lock executionState.sync (fun () -> fn executionState)
+    /// The values available to the work running now.
+    let values state = withSync _.values state
+    let contains id state = withSync (fun state -> ProducerValues.contains id state.values) state
     /// <summary>Publishes value as the result of producer.</summary>
     let publish (producerRef: ProducerRef) (value: obj) =
         withSync (fun executionState -> executionState.values <- ProducerValues.addBoxed producerRef.Id producerRef.ResultType value executionState.values)

@@ -35,6 +35,11 @@ internal static class Program
                 stderr.Write("err-one\n\nerr-two");
                 return int.Parse(args[1]);
 
+            // echo <text>: the text as given, then a newline, on stdout.
+            case "echo":
+                stdout.Write(args[1] + "\n");
+                return 0;
+
             // args <value>...: one `<length>:<value>` line per argument, so a re-split argument is visible.
             case "args":
                 for (var i = 1; i < args.Length; i++)

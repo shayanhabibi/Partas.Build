@@ -21,6 +21,7 @@
         <Compile Include="Environment.fs" />
         <Compile Include="Timing.fs" />
         <Compile Include="Producer.fs" />
+        <Compile Include="Failures.fs" />
         <Compile Include="Conductors.fs" />
         <Compile Include="Conductors.Runners.fs" />
         <Compile Include="Process.fs" />

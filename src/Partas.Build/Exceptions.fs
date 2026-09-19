@@ -60,8 +60,8 @@ type StageOutcome =
     | Succeeded
     /// Inactive: a condition on the stage was false.
     | Skipped
-    /// <summary><c>error</c> is the message of the first exception a step raised, and empty where a step
-    /// reported its failure through its exit code alone.</summary>
+    /// <summary><c>error</c> is the message of the first exception a step raised, falling back to the first
+    /// line of the first cause the scope recorded.</summary>
     | Failed of error: string
 
 module FailureCause =
@@ -84,3 +84,18 @@ module FailureCause =
         | FailureCause.Raised error -> $"%s{error.GetType().Name}: %s{error.Message}"
         | FailureCause.TimedOut -> "The step timed out."
         | FailureCause.Reported message -> message
+
+    /// The first line of <c>describe</c>, for a report with room for one line.
+    let summarise (cause: FailureCause) =
+        let described = describe cause
+        match described.IndexOf '\n' with
+        | -1 -> described
+        | breakAt -> described.Substring(0, breakAt).TrimEnd()
+
+    /// <summary>The exception <paramref name="cause"/> travels as.</summary>
+    /// <remarks>An exception that escaped an operation is itself; every other cause travels inside an
+    /// <see cref="T:Partas.Build.ErrorHandling.OperationFailedException"/>, which keeps it readable at the catch site.</remarks>
+    let toException (cause: FailureCause) : exn =
+        match cause with
+        | FailureCause.Raised error -> error
+        | _ -> OperationFailedException cause

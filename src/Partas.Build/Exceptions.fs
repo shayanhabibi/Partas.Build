@@ -14,6 +14,8 @@ type StageSoftCancelledException(msg: string) = inherit Exception(msg)
 
 
 /// <summary>Carries a <see cref="T:Partas.Build.Internal.FailureCause"/> out of the operation that produced it.</summary>
+/// <remarks>Its own <c>Message</c> matches each case of <c>cause</c> by hand rather than through
+/// <see cref="M:Partas.Build.ErrorHandling.FailureCause.describe"/>: the two are written separately and can drift.</remarks>
 type OperationFailedException(cause: FailureCause) =
     inherit Exception(
         match cause with
@@ -85,7 +87,9 @@ module FailureCause =
         | FailureCause.TimedOut -> "The step timed out."
         | FailureCause.Reported message -> message
 
-    /// The first line of <c>describe</c>, for a report with room for one line.
+    /// <summary>The first line of <c>describe</c>, for a report with room for one line.</summary>
+    /// <remarks>A multi-line capture loses every line after the first: this is a truncation, not a
+    /// summary of what the later lines said.</remarks>
     let summarise (cause: FailureCause) =
         let described = describe cause
         match described.IndexOf '\n' with

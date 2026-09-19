@@ -209,16 +209,132 @@ let tests =
             Expect.equal ((spec.Read (parse spec.Inputs "")).Retry) 0 "an input-aware stage clamps the same way"
         }
 
-        test "one retry implementation serves every builder state" {
+        test "one implementation of a shared operation serves every builder state" {
             let builder = typeof<Partas.Build.StageBuilder.StageBuilder>
-            let retries = builder.GetMethods() |> Array.filter (fun method -> method.Name = "retry")
 
-            Expect.equal retries.Length 1 "the mirrored pair should collapse into one operation"
-            Expect.isTrue retries[0].IsGenericMethodDefinition "the surviving operation should be generic in the builder state"
-            Expect.notEqual retries[0].DeclaringType builder "the surviving operation should be inherited from the shared settings builder"
-            Expect.isNull
-                (System.Attribute.GetCustomAttribute(retries[0], typeof<System.ComponentModel.EditorBrowsableAttribute>))
-                "the operation itself should stay visible to completion"
+            let sharedBy name expected =
+                let found = builder.GetMethods() |> Array.filter (fun method -> method.Name = name)
+                Expect.equal found.Length expected $"%s{name} should collapse its mirrored pairs into %d{expected} overload(s)"
+
+                for method in found do
+                    Expect.isTrue method.IsGenericMethodDefinition $"%s{name} should be generic in the builder state"
+                    Expect.notEqual method.DeclaringType builder $"%s{name} should be inherited from the shared settings builder"
+                    Expect.isNull
+                        (System.Attribute.GetCustomAttribute(method, typeof<System.ComponentModel.EditorBrowsableAttribute>))
+                        $"%s{name} should stay visible to completion"
+
+            sharedBy "retry" 1
+            sharedBy "runSensitive" 1
+            sharedBy "runOperation" 1
+            sharedBy "runHttpHealthCheck" 1
+
+            // `run` keeps one mirrored pair, over `StageContext -> BuildStep`: it is the only `run` taking no
+            // optional argument, and a lambda whose return type the call site leaves open resolves through it.
+            let shared, retained =
+                builder.GetMethods()
+                |> Array.filter (fun method -> method.Name = "run")
+                |> Array.partition (fun method -> method.IsGenericMethodDefinition)
+
+            Expect.equal shared.Length 18 "every argument shape but one should have a single implementation"
+            Expect.equal retained.Length 2 "the deferred-step overload should keep its mirrored pair"
+
+            for method in retained do
+                Expect.equal method.DeclaringType builder "the retained pair belongs to the stage builder itself"
+        }
+
+        test "every custom operation stays visible to completion, and the machinery behind it does not" {
+            let editorBrowsableState (t: System.Reflection.MemberInfo) =
+                match System.Attribute.GetCustomAttribute(t, typeof<System.ComponentModel.EditorBrowsableAttribute>) with
+                | :? System.ComponentModel.EditorBrowsableAttribute as attribute -> ValueSome attribute.State
+                | _ -> ValueNone
+
+            let customOperations (builder: System.Type) = [
+                for method in builder.GetMethods() do
+                    if not (isNull (System.Attribute.GetCustomAttribute(method, typeof<CustomOperationAttribute>))) then
+                        yield method
+            ]
+
+            for builder in [ typeof<Partas.Build.StageBuilder.StageBuilder>; typeof<Partas.Build.PipelineBuilder.PipelineBuilder> ] do
+                for operation in customOperations builder do
+                    Expect.equal
+                        (editorBrowsableState operation)
+                        ValueNone
+                        $"%s{builder.Name}.%s{operation.Name} is a custom operation, so it should carry no EditorBrowsableAttribute"
+
+            for machinery in [
+                typeof<Partas.Build.Internal.StageMap>
+                typeof<Partas.Build.Internal.SRTPStageBuilderRunner>
+                typeof<Partas.Build.Internal.PipelineMap>
+            ] do
+                Expect.equal
+                    (editorBrowsableState machinery)
+                    (ValueSome System.ComponentModel.EditorBrowsableState.Never)
+                    $"%s{machinery.Name} is support machinery, not a DSL operation, so it should stay EditorBrowsable(Never)"
+
+            for machineryModule in [ "Partas.Build.Internal.StageMapModule"; "Partas.Build.Internal.PipelineMapModule" ] do
+                let t = typeof<Partas.Build.Internal.StageMap>.Assembly.GetType machineryModule
+                Expect.isNotNull t $"%s{machineryModule} should exist alongside the type of the same name"
+                Expect.equal
+                    (editorBrowsableState t)
+                    (ValueSome System.ComponentModel.EditorBrowsableState.Never)
+                    $"%s{machineryModule} is support machinery, not a DSL operation, so it should stay EditorBrowsable(Never)"
+
+            for settingsBuilder in [ typeof<Partas.Build.Internal.StageSettingsBuilder>; typeof<Partas.Build.Internal.PipelineSettingsBuilder> ] do
+                Expect.equal
+                    (editorBrowsableState settingsBuilder)
+                    (ValueSome System.ComponentModel.EditorBrowsableState.Advanced)
+                    $"%s{settingsBuilder.Name} is reached only through an inheriting builder, so it should stay EditorBrowsable(Advanced)"
+        }
+
+        test "a moved run operation runs its step in every builder state" {
+            let config = configuration ()
+            let reads = ref 0
+            let lines = ResizeArray<string>()
+            let write _ (line: string) = lock lines (fun () -> lines.Add line)
+            let echoed = ProcessFixture.command [ "echo"; "moved" ]
+
+            let plain: StageContext = stage "plain" { redirectOutput write; run echoed }
+            let spec: InputSpec<StageContext> = stage "spec" { countingBlock reads "child" config; redirectOutput write; run echoed }
+            let built = pipeline "moved run" { plain; spec.Read (parse spec.Inputs "") }
+
+            capturingOut (fun () -> PipelineContext.run built) |> ignore
+
+            Expect.equal
+                (lines |> Seq.filter (fun line -> line.Contains "moved") |> Seq.length)
+                2
+                "the command should run once from the plain stage and once from the materialized one"
+        }
+
+        test "a moved run operation runs a context-derived step in every builder state" {
+            let config = configuration ()
+            let reads = ref 0
+            let calls = ref 0
+            let touch (_: StageContext) = lock calls (fun () -> calls.Value <- calls.Value + 1)
+
+            let plain: StageContext = stage "plain" { run touch }
+            let spec: InputSpec<StageContext> = stage "spec" { countingBlock reads "child" config; run touch }
+            let built = pipeline "moved step" { plain; spec.Read (parse spec.Inputs "") }
+
+            Expect.equal calls.Value 0 "declaring the step should run nothing"
+            capturingOut (fun () -> PipelineContext.run built) |> ignore
+
+            Expect.equal calls.Value 2 "the step should run once from the plain stage and once from the materialized one"
+        }
+
+        test "a moved runOperation runs its operation in every builder state" {
+            let config = configuration ()
+            let reads = ref 0
+            let calls = ref 0
+            let work = Operation.ofAsync (async { lock calls (fun () -> calls.Value <- calls.Value + 1) })
+
+            let plain: StageContext = stage "plain" { runOperation work }
+            let spec: InputSpec<StageContext> = stage "spec" { countingBlock reads "child" config; runOperation work "labelled" }
+            let built = pipeline "moved operation" { plain; spec.Read (parse spec.Inputs "") }
+
+            Expect.equal calls.Value 0 "declaring the operation should run nothing"
+            capturingOut (fun () -> PipelineContext.run built) |> ignore
+
+            Expect.equal calls.Value 2 "the operation should run once from the plain stage and once from the materialized one"
         }
 
         // ---------------------------------------------------------------- producers and their consumers

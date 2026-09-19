@@ -196,7 +196,10 @@ module Tests =
             ] do stage $"test {project}" {
                 run (Cmd.ofString $"""dotnet run --project {project} --no-build -c {config} -- {if ci then "--summary" else null} --colours 256 --sequenced""")
             }
-
+            // Runs in both configurations regardless of `--configuration`: Release is what catches FS1118.
+            for probeConfig in [ "Debug"; "Release" ] do stage $"compiler probe ({probeConfig})" {
+                run (Cmd.ofString $"""dotnet run --project {Repo.Project.``Partas.Build.CompilerProbe``.Path} -c {probeConfig} -- {if ci then "--summary" else null} --colours 256 --sequenced""")
+            }
         }
     }
 

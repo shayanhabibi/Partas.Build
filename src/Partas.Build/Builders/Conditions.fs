@@ -51,8 +51,13 @@ module Conditions =
 
     let whenBranch (branch: string) = whenBranches [ branch ]
 
-    /// Runs <paramref name="stage"/> as a condition stage, reparented onto the stage being tested, and reports
-    /// whether it succeeded. The stage runs for real: side effects and console output included.
+    /// <summary>Runs <paramref name="stage"/> as a condition stage, reparented onto the stage being tested, and
+    /// reports whether it succeeded.</summary>
+    /// <remarks>
+    /// The stage runs for real: side effects and console output included. The condition reads
+    /// <see cref="M:Partas.Build.ScopeReportModule.continues"/>, the policy-folded outcome — a condition stage carrying
+    /// <c>continueStageOnFailure</c> reports itself as succeeded even where it failed.
+    /// </remarks>
     let whenStageSucceeds (stage: StageContext): BuildStageIsActive = fun ctx ->
         let stage = { stage with ParentContext = ValueSome(StageParent.Stage ctx) }
         StageContext.run stage StageIndex.Condition CancellationToken.None |> ScopeReport.continues

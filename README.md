@@ -141,6 +141,44 @@ Stages nest to any depth — a stage inside a stage is one step of its parent �
 ordinary value, so a `Command` built in one script is yielded into another after a `#load`. See
 [Composing reusable blocks](https://shayanhabibi.github.io/Partas.Build/composition.html).
 
+## Producers, consumers and failure handlers
+
+A `Producer<'T>` is a typed, named unit of deferred work with its own CLI inputs and its own prerequisites.
+Declaring one registers its identity; nothing runs until a `consumes` stage requires it:
+
+```fsharp
+let tag = Input.option<string> "--tag" |> Input.def "v0.0.0"
+
+let manifest =
+    Producer.define "manifest" (InputSpec.ofInput tag) DependencySpec.empty (fun tag () ->
+        Operation.ofAsync (fetchManifestAsync tag))
+
+let publish =
+    stage "publish" {
+        retry 2
+        onFailure (fun context -> printfn "%A" context.Primary)
+        consumes (DependencySpec.require manifest) (fun manifest ->
+            execute (cmd $"deploy --version {manifest.Version}"))
+    }
+```
+
+A producer runs once per invocation and shares that one result with every consumer that requires it; retrying
+the consumer through `retry` re-runs the deploy alone, not the fetch. `onFailure` registers a handler on a
+`stage` or a `pipeline` that runs once the scope's own retries are exhausted, and reads what a producer
+published through `context.TryGetOutput`.
+
+`execute` above streams the command's output and reports pass/fail; a step that needs the process's stdout as
+a value reaches for `executeCapture` (fails on a rejected exit code, keeping the capture as evidence) or
+`attemptCapture` (always answers the capture, rejected exit codes included, and leaves branching to the caller)
+— see *Running a command from inside a step* in
+[`docs/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md#running-a-command-from-inside-a-step).
+
+This is also the place work moves out of `InputSpec.Read`, whose job is to bind CLI values, not run them — see
+*Migrating work out of `InputSpec.Read`* in
+[`docs/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md#migrating-work-out-of-inputspecread) for a worked
+before/after, and the same file's *Producers and dependencies* and *Failure handlers* sections for the full
+operation list, scope-retry ownership, and the limitations left deliberately unaddressed for now.
+
 ## Motivation
 
 I hate CICD/CLI plumbing.

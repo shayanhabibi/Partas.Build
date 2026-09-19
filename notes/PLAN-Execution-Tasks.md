@@ -210,11 +210,11 @@
 - Files: `Builders/StageSettings.fs`, `Builders/Stage.fs`, relevant XML fragments, compiler probe, `CompositionTests.fs`.
 - Consumes: T1's verified mapping and the working runtime surface.
 - Produces: one implementation per state-preserving stage setting, with genuinely distinct argument overloads retained.
-- [ ] Inventory plain/input-aware mirror pairs; classify each as state-preserving, argument conversion, or representation-changing.
-- [ ] Move state-preserving stage settings into the shared base in small groups.
-- [ ] After each group, run relevant composition tests and the separate Debug/Release consumer.
-- [ ] Verify member docs and user-facing completion attributes; hide support machinery rather than DSL operations.
-- [ ] Record any operation retained as an overload pair and the compiler/semantic reason.
+- [x] Inventory plain/input-aware mirror pairs; classify each as state-preserving, argument conversion, or representation-changing. (task-T8a-report.md's table; task-T8b-report.md's pipeline-side count.)
+- [x] Move state-preserving stage settings into the shared base in small groups. (T8a groups 1-3 in `Builders/StageSettings.fs`; T8b groups 1-3 in the new `Builders/PipelineSettings.fs`.)
+- [x] After each group, run relevant composition tests and the separate Debug/Release consumer. (Each T8a/T8b group report records `CompositionTests`/`PipelineTests` and both `CompilerProbe` configurations green.)
+- [x] Verify member docs and user-facing completion attributes; hide support machinery rather than DSL operations. (T8c's completion-attribute sweep: no `[<CustomOperation>]` member carries `EditorBrowsable`; `StageMap`/`SRTPStageBuilderRunner`/`PipelineMap` are `Never`, `StageSettingsBuilder`/`PipelineSettingsBuilder` are `Advanced`.)
+- [x] Record any operation retained as an overload pair and the compiler/semantic reason. (`timeout`/`timeoutForStage`/`timeoutForStep`/`workingDir` keep distinct argument types under one generic member each, task-T8b-report.md; `run (StageContext -> BuildStep)` stays a non-generic mirrored pair on `StageBuilder` — moving it into the generic base, or reordering it against the flexible-signature overload, both raise FS0041 against four existing call sites, task-T8a-report.md.)
 - Completion: duplicate setting implementations are reduced without erasing type distinctions or changing existing call-site results.
 
 ## T9 — Document limitations and run full acceptance
@@ -223,12 +223,12 @@
 - Files: README, capabilities docs, XML docs, build integration, both execution-plan files.
 - Consumes: implemented behavior and recorded compiler/test evidence.
 - Produces: documented supported surface and reproducible acceptance evidence.
-- [ ] Document checked/attempted capture, static dependencies, handle identity, scope retry ownership, skips, and handler behavior.
-- [ ] Document supported parallel arrangements and diagnostics for unsupported cases.
-- [ ] Add a migration example moving command work out of `InputSpec.Read`; preserve the applicative CLI layer.
-- [ ] Run focused suites, both library configurations, all library target builds, compiler consumers, and full repository acceptance.
-- [ ] Inspect the final diff for accidental changes to existing command defaults, input discovery, or output routing.
-- [ ] Record results and limitations; mark tasks complete only when their stated outcomes are observed.
+- [x] Document checked/attempted capture, static dependencies, handle identity, scope retry ownership, skips, and handler behavior. (T9a, merged at 0fbea79; task-T9a-report.md.)
+- [x] Document supported parallel arrangements and diagnostics for unsupported cases. (T9a, merged at 0fbea79; task-T9a-report.md.)
+- [x] Add a migration example moving command work out of `InputSpec.Read`; preserve the applicative CLI layer. (T9a, merged at 0fbea79; task-T9a-report.md's "Migrating work out of `InputSpec.Read`" section.)
+- [x] Run focused suites, both library configurations, all library target builds, compiler consumers, and full repository acceptance. (See the "Verification commands" section and the T8/T9 evidence-log entry below; Linux coverage not run locally, recorded rather than claimed.)
+- [x] Inspect the final diff for accidental changes to existing command defaults, input discovery, or output routing. (See the T8/T9 evidence-log entry below; no drift found.)
+- [x] Record results and limitations; mark tasks complete only when their stated outcomes are observed. (This checklist and the T8/T9 evidence-log entry below.)
 - Completion: all accepted contracts have tests or compiler evidence; deferred behavior is explicitly documented, not silently approximated.
 
 ## Verification commands
@@ -379,3 +379,40 @@ rtk dotnet run --project Build.fsproj -- test --configuration Release
   - Suites after T7 and its two review rounds: `tests/Partas.Build.Tests` 278 passed, 0 ignored, 0 failed;
     `Partas.Build.Cmd.NetStandard.Tests` 3; the two external-annotation suites 65 and 74. Library Debug and
     Release 0 errors 0 warnings; `dotnet run --project Build.fsproj -- test --quick` green.
+- T8/T9 (2026-09-19, worktree Partas.Build-execution-builders, branch execution/builders, `2552ee120879e22fb14fb5c9a8590acbc24e7196`):
+  - Build CLI: `Build/Program.fs`'s `test` stage now runs `tests/Partas.Build.CompilerProbe` in both Debug and
+    Release regardless of `--configuration`, through the same `run (Cmd.ofString …)` shape as the four Expecto
+    suites, without `--no-build` — `dotnet run` builds each configuration itself rather than riding `buildAll`'s
+    single-configuration build. `--explain` on `test` shows `compiler probe (Debug)` and `compiler probe
+    (Release)` as two further steps of the `test` stage.
+  - Verification block, run in this worktree:
+    - `dotnet build src/Partas.Build/Partas.Build.fsproj -c Debug` — 0 errors, 0 warnings.
+    - `dotnet build src/Partas.Build/Partas.Build.fsproj -c Release` — 0 errors, 0 warnings.
+    - `dotnet build src/Partas.Build.Cmd/Partas.Build.Cmd.fsproj -c Release` — 0 errors, 0 warnings.
+    - `dotnet run --project tests/Partas.Build.Tests -- --sequenced` — 291 passed, 0 ignored, 0 failed.
+    - `dotnet run --project tests/Partas.Build.Tests -- --sequenced --filter-test-case "every custom operation
+      stays visible to completion, and the machinery behind it does not"` (T8c's completion-attribute sweep) —
+      1 passed, 0 failed.
+    - `dotnet run --project tests/Partas.Build.CompilerProbe -c Debug` — 11 passed, 0 failed.
+    - `dotnet run --project tests/Partas.Build.CompilerProbe -c Release` — 11 passed, 0 failed.
+    - `dotnet run --project tests/Partas.Build.Tests -- --sequenced --filter "CompilerTests"` — 4 passed, 0
+      failed (drives `CompilerProbe.Negative`, `UnsupportedPipelineState` included).
+    - `dotnet run --project Build.fsproj -- test --quick --configuration Debug` — pipeline `ok`; 291 tests in
+      `Partas.Build.Tests`, probe 11/11 in both configurations.
+    - `dotnet run --project Build.fsproj -- test --configuration Release` (full, non-quick, the coordinator run)
+      — pipeline `ok`; same counts, restore and clean included.
+    - Not run: anything on Linux — no such runner available from this worktree; recorded as not run rather than
+      claimed.
+  - Whole-branch diff `git diff 6093b93..HEAD -- src/`: 12 files touched. `Builders/Command.fs` and
+    `Builders/Conditions.fs` gained doc comments only (T9a's documentation pass), no body changes — command
+    default semantics untouched. The stage-side output-routing operations (`outputTo`/`silentOutput`/
+    `captureOutput`/`redirectOutput` in `Builders/StageSettings.fs`) are byte-identical to `6093b93` line for
+    line. The pipeline-side mirrored pairs at `6093b93` (`Builders/Pipeline.fs`, both the `BuildPipeline` and
+    `InputSpec<BuildPipeline>` members) and their single generic replacements now in
+    `Builders/PipelineSettings.fs` write the same `Output` field to the same values. The stage and pipeline CE
+    lifecycle blocks (`Run`/`Yield`/`Zero`/`YieldFrom`/`Delay`/`Combine`/`For`, which is where `InputSpec.Inputs`
+    harvesting lives) are byte-for-byte identical between `6093b93` and `HEAD` in both `Builders/Stage.fs` and
+    `Builders/Pipeline.fs` — confirmed by isolating each block from both revisions and diffing the isolated text,
+    since a line-based diff of the whole file misaligns these blocks around the settings members moved out from
+    beside them. `Conductors.Runners.fs`, `Exceptions.fs`, `ExecutionState.fs` and `Failures.fs` gained doc
+    comments only. No drift found.

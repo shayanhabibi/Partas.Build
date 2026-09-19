@@ -2,6 +2,9 @@ namespace Partas.Build.Internal
 
 open System
 open System.ComponentModel
+open System.Threading
+open System.Threading.Tasks
+open FsToolkit.ErrorHandling
 open Partas.Build
 
 /// <summary>Applies a state-preserving update to whichever representation a stage builder state currently holds.</summary>
@@ -38,6 +41,28 @@ module StageMap =
     /// <param name="state" />
     let inline mapStage ([<InlineIfLambda>] update: StageContext -> StageContext) (state: ^State): ^State =
         StageMap.Apply(state, update)
+
+/// <summary>The signature every step a stage runs is reduced to.</summary>
+type StepFnSignature = StageContext -> StepIndex -> Async<Result<unit, string>>
+
+/// <summary>
+/// SRTP management for accepted <c>run</c> signatures which are transformed into
+/// StepFnSignatures.
+/// </summary>
+[<EditorBrowsable(EditorBrowsableState.Never)>]
+type SRTPStageBuilderRunner =
+    static member inline unifyResult(step: Async<unit>): StepFnSignature = fun _ _ -> step |> Async.map Ok
+    static member inline unifyResult(step: Async<int>): StepFnSignature = fun ctx _ -> step |> Async.map (StageContext.mapExitCodeToResult ctx)
+    static member inline unifyResult(step: StageContext -> unit): StepFnSignature = fun ctx _ -> step ctx |> Ok |> Async.singleton
+    static member inline unifyResult(step: StageContext -> int): StepFnSignature = fun ctx _ -> step ctx |> StageContext.mapExitCodeToResult ctx |> Async.singleton
+    static member inline unifyResult(step: StageContext -> Async<unit>): StepFnSignature = fun ctx _ -> step ctx |> Async.map Ok
+    static member inline unifyResult(step: StageContext -> Async<int>): StepFnSignature = fun ctx _ -> step ctx |> Async.map (StageContext.mapExitCodeToResult ctx)
+    static member inline unifyResult(step: StageContext -> Async<Result<unit, string>>): StepFnSignature = fun ctx _ -> step ctx
+    static member inline unifyResult(step: StageContext -> Task<Result<unit, string>>): StepFnSignature = fun ctx _ -> step ctx |> Async.AwaitTask
+    static member inline unifyResult(step: StageContext -> Result<unit, string>): StepFnSignature = fun ctx _ -> step ctx |> Async.singleton
+    static member inline unifyResult(step: StageContext -> Task): StepFnSignature = fun ctx _ -> step ctx |> Task.ofUnit |> Task.map Ok |> Async.AwaitTask
+    static member inline unifyResult(step: StageContext -> Task<unit>): StepFnSignature = fun ctx _ -> step ctx |> Task.map Ok |> Async.AwaitTask
+    static member inline unifyResult(step: StageContext -> Task<int>): StepFnSignature = fun ctx _ -> step ctx |> Task.map (StageContext.mapExitCodeToResult ctx) |> Async.AwaitTask
 
 /// <summary>The stage settings whose implementation is shared by every builder state a stage CE can be in.</summary>
 /// <remarks>
@@ -276,3 +301,205 @@ type StageSettingsBuilder() =
         (state: ^State, msg: string): ^State
         = this.echo(state, fun _ -> msg)
 
+
+    /// <summary>Adds a step that runs <paramref name="exe"/> with <paramref name="args"/>.</summary>
+    /// <remarks><paramref name="exe"/> is taken as given; <paramref name="args"/> is split on whitespace, honouring quotes.</remarks>
+    /// <param name="state">The stage to add the step to.</param>
+    /// <param name="exe">The executable to run.</param>
+    /// <param name="args">The arguments to pass to the executable.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the step.</param>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, exe: string, args: string, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let command = Cmd.create exe args
+            let step = CmdRunner.step (fun _ -> Async.singleton command) cancellationToken
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), step) ] }) state
+
+    /// <summary>Adds a step that runs a whole command line.</summary>
+    /// <remarks>
+    /// The line is split on whitespace, honouring <c>"</c> and <c>'</c>: convenient, but lossy for anything with
+    /// awkward quoting. Interpolate instead — <c>run $"dotnet build {project}"</c> — and each hole becomes exactly
+    /// one argument, whatever it contains.
+    /// </remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, command: string, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let command = Cmd.ofString command
+            let step = CmdRunner.step (fun _ -> Async.singleton command) cancellationToken
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), step) ] }) state
+
+    /// <summary>Adds a step that runs a prepared command.</summary>
+    /// <remarks>Pair with <c>cmd</c> to keep interpolation holes intact: <c>run (cmd $"dotnet build {project}")</c>.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, command: Cmd, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let step = CmdRunner.step (fun _ -> Async.singleton command) cancellationToken
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), step) ] }) state
+
+    /// <summary>Adds a step that runs an interpolated command line without printing what the holes contained.</summary>
+    /// <remarks>
+    /// Each hole is one argument and each hole is masked, so escaping and masking come from the same mechanism:
+    /// <c>runSensitive $"docker login -u {user} -p {password}"</c> passes the password through untouched and logs
+    /// it as <c>***</c>.
+    /// <para>
+    /// The single generic member is what keeps the <c>string</c> -> <c>FormattableString</c> conversion available:
+    /// F# applies it only while one overload is in play, so a mirrored pair would reject <c>runSensitive $"..."</c>.
+    /// </para>
+    /// </remarks>
+    [<CustomOperation>]
+    member inline _.runSensitive(state: ^State, command: FormattableString, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let command = Cmd.ofFormattable true command
+            let step = CmdRunner.step (fun _ -> Async.singleton command) cancellationToken
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueSome(Cmd.toLogString command), step) ] }) state
+
+    /// <summary>Adds a step that runs a command line derived from the stage context.</summary>
+    /// <remarks>The command line string is split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, step: StageContext -> string, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = Cmd.ofString (step ctx) |> Async.singleton
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.step buildCmd cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, step: StageContext -> Async<string>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = step ctx |> Async.map Cmd.ofString
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.step buildCmd cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a command line derived from the stage context by a task.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, step: StageContext -> Task<string>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = step ctx |> Task.map Cmd.ofString |> Async.AwaitTask
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.step buildCmd cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a prepared command derived from the stage context.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, buildCmd: StageContext -> Cmd, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.step (buildCmd >> Async.singleton) cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a command line derived from the stage context, or no step at all.</summary>
+    /// <remarks>The command line string is split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, step: StageContext -> string option, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = step ctx |> Option.map Cmd.ofString |> Async.singleton
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepOption buildCmd cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a command line asynchronously derived from the stage context, or no step at all.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, step: StageContext -> Async<string option>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = step ctx |> Async.map (Option.map Cmd.ofString)
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepOption buildCmd cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a command line derived from the stage context by a task, or no step at all.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, step: StageContext -> Task<string option>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = step ctx |> Task.map (Option.map Cmd.ofString) |> Async.AwaitTask
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepOption buildCmd cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a prepared command asynchronously derived from the stage context.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, step: StageContext -> Async<Cmd>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.step step cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a prepared command asynchronously derived from the stage context, or no step at all.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, step: StageContext -> Async<Cmd option>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepOption step cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a prepared command asynchronously derived from the stage context, and fails with what the derivation reports.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, step: StageContext -> Async<Result<Cmd, string>>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepResult step cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a prepared command asynchronously derived from the stage context, or no step at all, and fails with what the derivation reports.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, step: StageContext -> Async<Result<Cmd option, string>>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepResultOption step cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a prepared command derived from the stage context, or no step at all.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, buildCmd: StageContext -> Cmd option, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepOption (buildCmd >> Async.singleton) cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a prepared command derived from the stage context, and fails with what the derivation reports.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, buildCmd: StageContext -> Result<Cmd, string>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepResult (buildCmd >> Async.singleton) cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs a prepared command derived from the stage context, or no step at all, and fails with what the derivation reports.</summary>
+    /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, buildCmd: StageContext -> Result<Cmd option, string>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepResultOption (buildCmd >> Async.singleton) cancellationToken) ] }) state
+
+    /// <summary>Adds a step with flexible signature support.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/run/*"/>
+    [<CustomOperation>]
+    member inline _.run(state: ^State, step): ^State =
+        StageMap.mapStage (fun ctx ->
+            let stepFn = ((^T or SRTPStageBuilderRunner):(static member unifyResult: ^T -> StepFnSignature) step)
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, stepFn) ] }) state
+
+    /// <summary>Adds a step running deferred work.</summary>
+    /// <remarks>
+    /// The operation runs under the stage's working directory, environment, acceptable exit codes and output
+    /// routing, and reports a structured failure the runner renders at the print site.
+    /// <c>label</c> is what <c>--explain</c> shows for the step; without one it shows the step's index.
+    /// </remarks>
+    [<CustomOperation>]
+    member inline _.runOperation(state: ^State, operation: Operation<unit>, ?label: string): ^State =
+        StageMap.mapStage (fun ctx ->
+            { ctx with Steps = ctx.Steps @ [ Step.Operation(ValueOption.ofOption label, Operation.toStepOutcome operation) ] }) state
+
+    /// <summary>Adds a step that polls an HTTP endpoint for health.</summary>
+    /// <remarks>The step repeatedly polls the given URL until it succeeds or the stage is cancelled. Useful for waiting for services to become available.</remarks>
+    [<CustomOperation>]
+    member inline _.runHttpHealthCheck(state: ^State, url: string, ?configRequest, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let configRequest = defaultArg configRequest ignore
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let poll ctx _ = StageContext.runHttpHealthCheckCancelableWithConfigRequest ctx cancellationToken configRequest url
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, poll) ] }) state

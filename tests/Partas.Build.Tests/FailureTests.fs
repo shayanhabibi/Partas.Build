@@ -7,33 +7,10 @@
 module Partas.Build.Tests.FailureTests
 
 open System
-open System.IO
 open Expecto
-open Spectre.Console
 open Partas.Build
 open Partas.Build.Internal
 open Partas.Build.Tests.Helpers
-
-/// <summary>Runs <paramref name="fn"/> with the console redirected, and answers its result.</summary>
-/// <remarks>Spectre's ambient console is redirected alongside <c>Console.Out</c> and restored with it, so the
-/// lines a failing stage prints stay out of the test log.</remarks>
-let private quietly (fn: unit -> 'T) =
-    let original = Console.Out
-    let originalAnsi = AnsiConsole.Console
-    use writer = new StringWriter()
-    Console.SetOut writer
-
-    AnsiConsole.Console <-
-        AnsiConsoleSettings (
-            Ansi = AnsiSupport.No,
-            ColorSystem = ColorSystemSupport.NoColors,
-            Out = AnsiConsoleOutput writer)
-        |> AnsiConsole.Create
-
-    try fn ()
-    finally
-        Console.SetOut original
-        AnsiConsole.Console <- originalAnsi
 
 /// A stage whose steps write nowhere, so a command it runs leaves the test log alone.
 let private silently (stage: StageContext) = { stage with Output = ValueSome StageOutput.Silent }
@@ -171,6 +148,46 @@ let tests =
                 (ScopeReport.failures report |> List.map _.Cause)
                 [ FailureCause.Reported "inner said no" ]
                 "and the whole tree's causes read in pre-order"
+        }
+
+        test "a stage that fails its own guard is reported alongside its timing" {
+            let work =
+                pipeline "guarded" {
+                    quiet
+                    stage "required" { when' false; failIfIgnored }
+                }
+
+            quietly (fun () ->
+                try PipelineContext.run work
+                with :? PipelineFailedException -> ())
+
+            Expect.equal
+                [ for timing in StageTimings.ordered work.Timings -> timing.Name ] [ "required" ]
+                "the stage records a timing row"
+            Expect.equal
+                [ for report in ScopeReports.all work.Reports -> report.Name ] [ "required" ]
+                "and reports the same scope, so a reader of one finds it in the other"
+        }
+
+        test "the timing row of a stage an operation failed names the cause" {
+            let work =
+                pipeline "release" {
+                    quiet
+                    stage "sign" { runOperation (execute (ProcessFixture.command [ "text"; "3" ])) } |> silently
+                }
+
+            quietly (fun () ->
+                try PipelineContext.run work
+                with :? PipelineFailedException -> ())
+
+            match StageTimings.ordered work.Timings with
+            | [ timing ] ->
+                match timing.Outcome with
+                | StageOutcome.Failed error ->
+                    Expect.stringContains error "exited with 3" "a step that failed without raising still names what failed"
+                    Expect.isFalse (error.Contains "\n") "the row carries one line"
+                | other -> failtestf "the stage should be recorded as failed; got %A" other
+            | other -> failtestf "one timing row should be recorded; got %A" [ for timing in other -> timing.Name ]
         }
 
         test "the pipeline reads its cause off the evidence rather than off the line it printed" {

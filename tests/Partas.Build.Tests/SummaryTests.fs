@@ -6,33 +6,7 @@ open Expecto
 open Spectre.Console
 open Partas.Build
 open Partas.Build.Internal
-
-/// <summary>Runs <paramref name="fn"/> with the console redirected, and answers its result alongside what it
-/// printed.</summary>
-/// <remarks>
-/// Spectre's ambient console is redirected alongside <c>Console.Out</c> and restored with it. It binds to the
-/// writer it was created against, so a pipeline run under a redirect that touched only <c>Console.Out</c>
-/// leaves every later test writing into this test's disposed writer.
-/// </remarks>
-let private capturingOut (fn: unit -> 'T) =
-    let original = Console.Out
-    let originalAnsi = AnsiConsole.Console
-    use writer = new StringWriter()
-    Console.SetOut writer
-
-    AnsiConsole.Console <-
-        AnsiConsoleSettings (
-            Ansi = AnsiSupport.No,
-            ColorSystem = ColorSystemSupport.NoColors,
-            Out = AnsiConsoleOutput writer)
-        |> AnsiConsole.Create
-
-    try
-        let result = fn ()
-        result, writer.ToString()
-    finally
-        Console.SetOut original
-        AnsiConsole.Console <- originalAnsi
+open Partas.Build.Tests.Helpers
 
 /// One printed row of the table. <c>Indent</c> is the depth indent the name carries, in characters.
 type private Row = { Name: string; Indent: int; Time: string; Outcome: string }

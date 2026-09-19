@@ -61,6 +61,8 @@ Available inside `stage`, and inside `whenStage`, which accepts everything `stag
 | `timeoutForStep` | Cancels any one step of the stage after the given duration |
 | `retry` | Runs the stage's steps again after a failing attempt, up to the given count. `timeout` remains the budget for the whole stage, retries included |
 | `parallel'` | Runs the stage's steps concurrently. `true`/`0`/`-1` unbounded, `1`/`false` sequential, `n` throttled to exactly `n` in flight; also takes a `StageContext -> _` condition |
+| `consumes` | Adds a step that reads a `DependencySpec<'D>` and runs an `Operation<unit>` over its value, and adds the required producers to this stage's prerequisites. See [Producers and dependencies](#producers-and-dependencies) |
+| `onFailure` | Registers a handler that runs once, after this stage's own `retry` attempts are exhausted. See [Failure handlers](#failure-handlers) |
 | `acceptExitCodes` | The exit codes that count as success. Replaces the default `[0]` |
 | `failIfIgnored` | Fails the pipeline when this stage is inactive, instead of skipping it |
 | `failIfNoActiveSubStage` | Fails the pipeline when none of this stage's sub-stages is active |
@@ -79,6 +81,22 @@ Available inside `stage`, and inside `whenStage`, which accepts everything `stag
 
 A stage nested inside another stage is one step of its parent. Stages nest to any depth, and a block is just
 a value that a `stage`, a `pipeline` or a `command` can yield.
+
+### Running a command from inside a step
+
+`run` and `runSensitive` cover the common case of a command whose own exit code is the whole result. A step
+built with `run (fun ctx -> ...)` reaches for one of these `Operation<'T>` functions when it needs the
+command's output as a value:
+
+| Function | What it does |
+|---|---|
+| `execute cmd` | Runs `cmd`, streaming its output through the stage's own output routing. Fails on an exit code the stage does not accept; carries no captured text |
+| `executeCapture cmd` | Runs `cmd`, capturing stdout and stderr instead of streaming them. Fails on an unaccepted exit code the same way `execute` does, with the captured `CommandResult` attached to the failure as evidence |
+| `attemptCapture cmd` | Runs `cmd`, capturing stdout and stderr, and always answers the `CommandResult` — an unaccepted exit code included. A process-start failure and a cancellation remain outcomes of their own, never a `CommandResult`; only a process that ran to completion produces one, and branching on its exit code is the caller's |
+
+Captured stdout and stderr are the child's raw bytes, ahead of any prefix or other display formatting, and are
+application data that can hold secrets: printing a successful capture is the caller's decision, not something
+`executeCapture` or `attemptCapture` does on its own.
 
 ## Pipeline operations
 
@@ -105,6 +123,126 @@ of the command that runs it.
 | `post` | The stages that run after the main stages whether or not the pipeline succeeded — the teardown slot. Replaces any post stages already declared |
 | `verbosity` | How much the pipeline prints. Takes `Verbosity.Quiet`, `Normal` or `Verbose` |
 | `verbose` / `quiet` | `verbosity Verbose` and `verbosity Quiet` |
+| `onFailure` | Registers a handler that runs once per failed run, after the handlers of every stage of that run. See [Failure handlers](#failure-handlers) |
+
+Not carried by `command`/`rootCommand` as a pipeline default: a command's `onFailure` would have to reach a
+failure of `InputSpec.Read` or of CLI parsing, ahead of every pipeline it runs, which nothing observes today.
+
+## Producers and dependencies
+
+A `Producer<'T>` is a typed, named unit of deferred work with its own CLI inputs and its own prerequisites.
+Declaring one registers its identity and harvests those inputs; nothing runs until a consumer schedules it.
+
+| Function | What it does |
+|---|---|
+| `Producer.define name inputs dependencies execute` | Declares a producer: its own `InputSpec<'I>`, a `DependencySpec<'D>` of prerequisites, and the work computing `'T` from both |
+| `Producer.stage` | Places a producer at this exact point of a pipeline or parent stage, rather than leaving its placement implicit |
+| `DependencySpec.empty` | A specification with no prerequisites |
+| `DependencySpec.require producer` | A specification requiring one producer and reading its result |
+| `DependencySpec.map fn spec` | The prerequisites of `spec`, its value read through `fn` |
+| `DependencySpec.map2 fn first second` | The prerequisites and inputs of both specifications, unioned, their values read through `fn` |
+| `DependencySpec.zip first second` | A specification requiring both producers and reading their results as a pair |
+| `Stage.consuming name dependencies execute` | A stage whose one step is `execute` run over `dependencies`, with no CLI inputs of its own |
+| `Stage.consumingWith name inputs dependencies execute` | The same, plus CLI inputs the stage itself declares |
+
+A producer's handle carries an identity allocated when it is declared; two declarations sharing a name and
+arguments are distinct producers with distinct results. Depending on the same handle from more than one
+consumer runs it once per invocation and shares that one result. An unlisted producer required by a stage runs
+immediately before that stage, after its own prerequisites; listing it explicitly (`Producer.stage`, or yielding
+it into a pipeline) fixes its position instead. A consumer running under a `parallel'` or
+`shuffleExecuteSequence` scope reads a value published before that scope began; placing a producer inside such
+a scope is rejected at validation, naming the producer and the scope.
+
+A required producer that is skipped or fails leaves its consumers skipped, carrying a dependency reason. An
+`Option`/`ValueOption` result models an intentional absence, distinct from a producer that failed, that a
+consumer can handle directly. Retrying a consumer through `retry` reuses the successful results of producers
+outside the retried scope; a producer owned by the retried scope itself gets a fresh result on each attempt,
+and a failed attempt leaves no value for a later attempt to read.
+
+## Failure handlers
+
+`onFailure` registers a `FailureContext -> unit` handler on a `stage` or a `pipeline`. It runs once per failed
+execution of that scope, after the scope exhausts its `retry` attempts, and inner handlers run before outer
+ones — a stage's handler before the pipeline's. A stage a retry recovers, or a cancelled one, keeps its handlers
+back: a stage's own `timeout` and `timeoutForStep` are failures of that stage, while an ancestor's token, the
+pipeline's, or the invocation's is a cancellation and runs no handler.
+
+The handler reads `FailureContext.Primary`/`.Secondary` for the causes recorded and
+`FailureContext.TryGetOutput producer` for a value the invocation has already published — a lookup restricted to
+already-published values, answering `ValueNone` for a producer that has not run. An exception out of a handler
+is one more cause of the same scope; the original failure stays the primary, and successful reporting preserves
+it. A failing handler triggers no second run of itself.
+
+Known limitations:
+
+- A handler is synchronous and unbounded: there is no cleanup operation and no cleanup budget separate from the
+  handler's own body.
+- `onFailure` has no equivalent on `command`/`rootCommand`; a failure of `InputSpec.Read` or of CLI parsing
+  reaches no handler.
+- A stage with no `timeoutForStep` runs its steps under the attempt's own cancellation source rather than a
+  budget of its own; a step still recorded as in flight when its scope unwinds is left with its sources
+  undisposed rather than raced against a straggler that may still read them.
+- `FailureCause.summarise`, used in `ScopeReports`, keeps only the first line of a multi-line capture — later
+  lines are lost from the report, not merely hidden from the one-line rendering.
+- `OperationFailedException`'s message is written by hand for each `FailureCause` case rather than through
+  `FailureCause.describe`, so the two can drift.
+- `whenStageSucceeds` (the body of `whenStage`) reads the policy-folded outcome of the condition stage: one
+  carrying `continueStageOnFailure` reports itself as succeeded even where it failed.
+- The gate that places an unlisted producer immediately before a `whenStage` consumer evaluates that consumer's
+  condition stage a second time, in addition to the evaluation `whenStage` performs on its own.
+- `PipelineContext.run`, called directly rather than through a command's own invocation, skips
+  `DependencyPlan.validate`: an arrangement validation would reject — a producer inside a `parallel'` scope,
+  say — runs instead of failing up front.
+
+## Migrating work out of `InputSpec.Read`
+
+`InputSpec<'T>.Read` is a projection: `ParseResult -> 'T`, called once per invocation to bind the CLI values a
+stage declared. Effects belong in a step or in a producer, not in `Read` itself — a `Read` that shells out or
+writes a file runs on every path that resolves inputs, `--help` and `--explain` included, since resolution
+happens ahead of the check for either flag.
+
+Before, doing the work inside `Read`:
+
+```fsharp
+let publish =
+    input {
+        let! tag = Input.option<string> "--tag" |> Input.def "v0.0.0"
+        // Runs on every resolution of this input, --help and --explain included.
+        let manifest = fetchManifest tag
+        return stage "publish" {
+            run (cmd $"deploy --version {manifest.Version}")
+        }
+    }
+```
+
+After, the same CLI option feeding a producer, and the stage consuming its typed result:
+
+```fsharp
+let tag = Input.option<string> "--tag" |> Input.def "v0.0.0"
+
+let manifest: Producer<Manifest> =
+    Producer.define "manifest" (InputSpec.ofInput tag) DependencySpec.empty (fun tag () ->
+        Operation.ofAsync (fetchManifestAsync tag))
+
+let publish =
+    pipeline "release" {
+        stage "publish" {
+            retry 2
+            onFailure (fun context ->
+                context.TryGetOutput manifest
+                |> ValueOption.iter (fun manifest -> printfn $"publish failed for {manifest.Version}"))
+            consumes (DependencySpec.require manifest) (fun manifest ->
+                execute (cmd $"deploy --version {manifest.Version}"))
+        }
+    }
+```
+
+`Read` now binds only the option; `--help` and `--explain` resolve it without running `fetchManifest` or
+`deploy`, since a producer runs only where its consumer is scheduled and never on either of those paths. The
+consumer's `retry` repeats the deploy alone — `manifest` is required, not retried, so a failing deploy re-reads
+the same published value rather than re-fetching it — and its `onFailure` reads that same value back out of the
+failure it is given. The CLI layer stays applicative: `tag` is still an ordinary `ActionInput<string>`, readable
+without a `ParseResult`, exactly as before.
 
 ## Command operations
 

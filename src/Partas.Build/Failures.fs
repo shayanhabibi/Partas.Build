@@ -157,7 +157,12 @@ with
     /// The causes of the same execution beyond the primary, in the order they were recorded.
     member this.Secondary = match this.Failures with [] -> [] | _ :: rest -> rest
 
-/// Runs when the scope it is registered on fails.
+/// <summary>Runs when the scope it is registered on fails.</summary>
+/// <remarks>
+/// Synchronous: nothing bounds how long it runs, and there is no separate cleanup operation or cleanup budget
+/// for it to run under. <c>onFailure</c> registers one on a stage and on a pipeline; the command builder
+/// carries no equivalent, so a failure of input resolution or CLI parsing reaches no handler.
+/// </remarks>
 type FailureHandler = FailureContext -> unit
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]

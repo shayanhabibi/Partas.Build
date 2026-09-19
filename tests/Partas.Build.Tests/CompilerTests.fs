@@ -55,4 +55,5 @@ let tests =
         mustNotCompile "NestedInputSpec" "FS0193"
         mustNotCompile "MonadicNeeds" "FS0708"
         mustNotCompile "UnsupportedSettingState" "FS0001"
+        mustNotCompile "UnsupportedPipelineState" "FS0001"
     ]

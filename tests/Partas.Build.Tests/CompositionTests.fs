@@ -242,6 +242,50 @@ let tests =
                 Expect.equal method.DeclaringType builder "the retained pair belongs to the stage builder itself"
         }
 
+        test "every custom operation stays visible to completion, and the machinery behind it does not" {
+            let editorBrowsableState (t: System.Reflection.MemberInfo) =
+                match System.Attribute.GetCustomAttribute(t, typeof<System.ComponentModel.EditorBrowsableAttribute>) with
+                | :? System.ComponentModel.EditorBrowsableAttribute as attribute -> ValueSome attribute.State
+                | _ -> ValueNone
+
+            let customOperations (builder: System.Type) = [
+                for method in builder.GetMethods() do
+                    if not (isNull (System.Attribute.GetCustomAttribute(method, typeof<CustomOperationAttribute>))) then
+                        yield method
+            ]
+
+            for builder in [ typeof<Partas.Build.StageBuilder.StageBuilder>; typeof<Partas.Build.PipelineBuilder.PipelineBuilder> ] do
+                for operation in customOperations builder do
+                    Expect.equal
+                        (editorBrowsableState operation)
+                        ValueNone
+                        $"%s{builder.Name}.%s{operation.Name} is a custom operation, so it should carry no EditorBrowsableAttribute"
+
+            for machinery in [
+                typeof<Partas.Build.Internal.StageMap>
+                typeof<Partas.Build.Internal.SRTPStageBuilderRunner>
+                typeof<Partas.Build.Internal.PipelineMap>
+            ] do
+                Expect.equal
+                    (editorBrowsableState machinery)
+                    (ValueSome System.ComponentModel.EditorBrowsableState.Never)
+                    $"%s{machinery.Name} is support machinery, not a DSL operation, so it should stay EditorBrowsable(Never)"
+
+            for machineryModule in [ "Partas.Build.Internal.StageMapModule"; "Partas.Build.Internal.PipelineMapModule" ] do
+                let t = typeof<Partas.Build.Internal.StageMap>.Assembly.GetType machineryModule
+                Expect.isNotNull t $"%s{machineryModule} should exist alongside the type of the same name"
+                Expect.equal
+                    (editorBrowsableState t)
+                    (ValueSome System.ComponentModel.EditorBrowsableState.Never)
+                    $"%s{machineryModule} is support machinery, not a DSL operation, so it should stay EditorBrowsable(Never)"
+
+            for settingsBuilder in [ typeof<Partas.Build.Internal.StageSettingsBuilder>; typeof<Partas.Build.Internal.PipelineSettingsBuilder> ] do
+                Expect.equal
+                    (editorBrowsableState settingsBuilder)
+                    (ValueSome System.ComponentModel.EditorBrowsableState.Advanced)
+                    $"%s{settingsBuilder.Name} is reached only through an inheriting builder, so it should stay EditorBrowsable(Advanced)"
+        }
+
         test "a moved run operation runs its step in every builder state" {
             let config = configuration ()
             let reads = ref 0

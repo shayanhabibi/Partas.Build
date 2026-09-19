@@ -1,8 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <pipeline>
-  <twoFlavours>
-    <remarks>This operation has two overloads: one taking <c>BuildPipeline</c>, and one taking <c>InputSpec&lt;BuildPipeline></c> for use after a stage that declares CLI inputs. Both apply the same setting to the pipeline.</remarks>
-  </twoFlavours>
   <pipelineDefault>
     <remarks>Settings declared on a pipeline act as defaults for all stages unless overridden at the stage level. A stage-level setting takes precedence over the pipeline's.</remarks>
   </pipelineDefault>

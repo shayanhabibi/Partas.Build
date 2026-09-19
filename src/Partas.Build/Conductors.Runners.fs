@@ -27,11 +27,11 @@ module StageContext =
 
     /// <summary>Where one attempt of a stage collects what its steps produce.</summary>
     /// <remarks>
-    /// Steps write here as they produce evidence. A failing step cancels its own scope before it returns, and
-    /// the cancelled <c>async</c> discards its result: what a step hands back at the end never reaches the
-    /// stage. Every write is serialised, for the steps of a parallel stage.
+    /// A step's evidence reaches the stage through these writes, issued as the step produces it. Every write
+    /// and every read goes through this module and takes the same lock, which covers the steps of a parallel
+    /// stage and a straggler of an earlier attempt.
     /// </remarks>
-    type internal StepEvidence = {
+    type internal StepEvidence = private {
         sync: obj
         failures: ResizeArray<StepFailure>
         nested: ResizeArray<ScopeReport>
@@ -39,10 +39,20 @@ module StageContext =
     }
 
     module internal StepEvidence =
-        let over (failures, nested, exns) = { sync = obj (); failures = failures; nested = nested; exns = exns }
+        let create() = { sync = obj (); failures = ResizeArray(); nested = ResizeArray(); exns = ResizeArray() }
         let addFailure (failure: StepFailure) (evidence: StepEvidence) = lock evidence.sync (fun () -> evidence.failures.Add failure)
         let addNested (report: ScopeReport) (evidence: StepEvidence) = lock evidence.sync (fun () -> evidence.nested.Add report)
         let addExceptions (errors: exn seq) (evidence: StepEvidence) = lock evidence.sync (fun () -> evidence.exns.AddRange errors)
+        /// Discards what an earlier attempt of the stage wrote.
+        let clear (evidence: StepEvidence) =
+            lock evidence.sync (fun () ->
+                evidence.failures.Clear()
+                evidence.nested.Clear()
+                evidence.exns.Clear())
+        /// The causes, the sub-stage reports and the exceptions written so far, as one consistent copy.
+        let snapshot (evidence: StepEvidence) =
+            lock evidence.sync (fun () ->
+                List.ofSeq evidence.failures, List.ofSeq evidence.nested, List.ofSeq evidence.exns)
 
     type internal StepHandlerParameters = {
         operationInFlight: InFlightStep voption ref
@@ -63,6 +73,13 @@ module StageContext =
             match index, pipeline, getParentTimingOrder stage with
             | StageIndex.Condition, _, _ -> None
             | _, Some pipeline, ValueSome parent -> Some(pipeline.Timings, parent, StageTimings.start pipeline.Timings)
+            | _ -> None
+        // A stage of the pipeline reports to it directly. A sub-stage travels inside its parent's report, and
+        // a condition stage belongs to the condition that runs it.
+        let getReports (pipeline: PipelineContext option) (index: StageIndex) (stage: StageContext) =
+            match index, pipeline, stage.ParentContext with
+            | StageIndex.Condition, _, _ -> None
+            | _, Some pipeline, ValueSome(StageParent.Pipeline _) -> Some pipeline.Reports
             | _ -> None
         let checkFailIfIgnoredCondition isActive stage =
             if not isActive && stage.FailIfIgnored then
@@ -92,12 +109,12 @@ module StageContext =
         /// <summary>What the stage did, as its report and its timing both record it.</summary>
         /// <remarks>The failure text is the message of the first exception the stage propagated, and the first
         /// line of the first cause it recorded where a step failed without raising.</remarks>
-        let getOutcome isActive isSuccess (stepExns: ResizeArray<exn>) (stepFailures: ResizeArray<StepFailure>) =
+        let getOutcome isActive isSuccess (stepExns: exn list) (stepFailures: StepFailure list) =
             if not isSuccess then
                 stepExns
-                |> Seq.tryHead
+                |> List.tryHead
                 |> Option.map _.Message
-                |> Option.orElseWith (fun () -> stepFailures |> Seq.tryHead |> Option.map (_.Cause >> FailureCause.summarise))
+                |> Option.orElseWith (fun () -> stepFailures |> List.tryHead |> Option.map (_.Cause >> FailureCause.summarise))
                 |> Option.defaultValue ""
                 |> StageOutcome.Failed
             elif not isActive then StageOutcome.Skipped
@@ -111,16 +128,15 @@ module StageContext =
         let inline SUCCESS() = isSuccess <- true
         let inline AND_SUCCESS value = isSuccess <- isSuccess && value
         let inline FAIL() = isSuccess <- false
-        let stepExns = ResizeArray<exn>()
-        // The causes of the attempt being reported, held whatever `ContinueStageOnFailure` decides, and the
-        // reports of the sub-stages that attempt ran.
-        let stepFailures = ResizeArray<StepFailure>()
-        let nestedReports = ResizeArray<ScopeReport>()
-        let evidence = StepEvidence.over (stepFailures, nestedReports, stepExns)
-        let mutable outcome = StageOutcome.Succeeded
+        // What the attempt being reported produced: its causes, held whatever `ContinueStageOnFailure`
+        // decides, the reports of the sub-stages it ran, and the exceptions it offers the enclosing scope.
+        let evidence = StepEvidence.create()
+        // Assigned in the `finally` below, on every path out of the stage.
+        let mutable reported = Unchecked.defaultof<ScopeReport>
         let isActive = stage.IsActive stage
         let pipeline = getParentPipeline stage
         let timings = Internal.getTimings pipeline index stage
+        let reports = Internal.getReports pipeline index stage
         // Sub-stages read their parent's ordinal off the value given to them as `ParentContext`.
         let stage =
             match timings with
@@ -175,9 +191,7 @@ module StageContext =
             while attempting do
                 attempting <- false
                 SUCCESS()
-                stepExns.Clear()
-                stepFailures.Clear()
-                nestedReports.Clear()
+                StepEvidence.clear evidence
 
                 match capturedBefore with
                 | ValueSome(capture, count) -> OutputCapture.trimTo count capture
@@ -325,7 +339,8 @@ module StageContext =
                     FAIL()
                     printError stage line
                     evidence |> StepEvidence.addFailure { Index = inFlight.index; Label = inFlight.label; Cause = FailureCause.TimedOut }
-                    if not stage.ContinueStageOnFailure then stepExns.Add(Exception line)
+                    if not stage.ContinueStageOnFailure then
+                        evidence |> StepEvidence.addExceptions [ Exception line ]
                 | _ -> ()
 
                 if not isSuccess && retriesLeft > 0 && not cts.IsCancellationRequested && not ct.IsCancellationRequested then
@@ -340,19 +355,24 @@ module StageContext =
         finally // finished stage run; cleanup/report/post
             pipeline |> Option.iter _.RunAfterEachStage(stage)
 
-            outcome <- Internal.getOutcome isActive isSuccess stepExns stepFailures
+            let failures, nested, exns = StepEvidence.snapshot evidence
+
+            reported <- {
+                Name = stage.Name
+                Outcome = Internal.getOutcome isActive isSuccess exns failures
+                Propagates = not (stage.ContinueStageOnFailure || isSuccess)
+                Failures = failures
+                Exceptions = exns
+                Nested = nested
+            }
 
             timings
-            |> Option.iter (Internal.handleTimings stage outcome stageSw)
+            |> Option.iter (Internal.handleTimings stage reported.Outcome stageSw)
 
-        {
-            Name = stage.Name
-            Outcome = outcome
-            Propagates = not (stage.ContinueStageOnFailure || isSuccess)
-            Failures = List.ofSeq stepFailures
-            Exceptions = List.ofSeq stepExns
-            Nested = List.ofSeq nestedReports
-        }
+            reports
+            |> Option.iter (ScopeReports.add reported)
+
+        reported
     and internal stepHandler args step: Async<bool> = async {
         let sw = Stopwatch.StartNew()
 
@@ -441,7 +461,6 @@ module PipelineContext =
         while i < stages.Length && (not failFast || not hasError) do
             let stage = stages[i]
             let report = StageContext.run stage (StageIndex.Stage i) cancelToken
-            ScopeReports.add report ctx.Reports
             stageExns.AddRange report.Exceptions
             hasError <- hasError || report.Propagates
             i <- i + 1

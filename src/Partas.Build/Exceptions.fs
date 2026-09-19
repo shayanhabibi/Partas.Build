@@ -94,7 +94,7 @@ module FailureCause =
 
     /// <summary>The exception <paramref name="cause"/> travels as.</summary>
     /// <remarks>An exception that escaped an operation is itself; every other cause travels inside an
-    /// <see cref="T:Partas.Build.OperationFailedException"/>, which keeps it readable at the catch site.</remarks>
+    /// <see cref="T:Partas.Build.ErrorHandling.OperationFailedException"/>, which keeps it readable at the catch site.</remarks>
     let toException (cause: FailureCause) : exn =
         match cause with
         | FailureCause.Raised error -> error

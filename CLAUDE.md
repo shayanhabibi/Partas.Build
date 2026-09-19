@@ -74,12 +74,18 @@ FS0667 waiting to bind `EnvArg.withName` to the wrong record.
 
 `PipelineContext.Reports` collects those reports the way `Timings` collects timings — a `ScopeReports` on the
 pipeline value, emptied at the start of a run and appended to as each stage of the pipeline finishes. It is the
-structured counterpart of the summary table: reading a failure out of rendered output or out of `StageTiming` is
-never necessary.
+structured counterpart of the summary table: a failure is readable here rather than out of rendered output or
+out of `StageTiming`. Both records are written in the same `finally` of `StageContext.run`, keyed off
+`Internal.getTimings`/`getReports`, so a stage that raises out of `run` — a `failIfIgnored` guard, an exception
+escaping a sub-stage — appears in both. `getReports` answers the pipeline for a stage parented to one; a
+sub-stage travels inside its parent's `Nested`, and a condition stage is recorded nowhere.
 
 A step writes its evidence into `StepEvidence` as it produces it rather than handing it back. A step that fails
 cancels its own scope through `stepErrorCts` before its `async` returns, and a cancelled `async` delivers no
-result — evidence carried in the return value of a failing step is dropped on the floor.
+result — evidence carried in the return value of a failing step is dropped on the floor. `StepEvidence` owns
+its three collections and is the only door to them: every write, the per-attempt `clear` and the `snapshot` the
+report is built from take one lock, which is what a `parallel'` stage and a straggler of an earlier attempt
+need.
 
 `Summary.fs` renders the per-stage timing table printed at the end of a run, as text and nothing else, the
 way `Explain.fs` renders the tree. The timings themselves are collected in `Timing.fs` and `Conductors.fs`: `PipelineContext.Timings`

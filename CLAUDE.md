@@ -45,7 +45,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Architecture notes
 
-Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Environment.fs` → `Timing.fs` → `Producer.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
+Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Environment.fs` → `Timing.fs` → `Failures.fs` → `Producer.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
 
 `Explain.fs` renders the resolved stage tree `--explain` prints, as text and nothing else: it writes to no
 console and to no stage sink, so a stage that silences or captures its execution output is still described in
@@ -59,6 +59,27 @@ Rendering evaluates every stage's `IsActive`, so a `whenBranch` starts `git` and
 stage. `StageContext.Conditions` is what lets a skip name the condition that caused it: `addPredicateBecause`
 writes it alongside `IsActive`, the structured conditions in `Builders/Conditions.fs` supply a reason and `when'`
 supplies none, because a `bool` argument leaves nothing to report.
+
+`Failures.fs` holds what a scope reports about itself, apart from what it prints. A `ScopeReport` carries three
+pieces of data side by side: `Outcome` (the scope's own `StageOutcome`), `Propagates` (whether that failure fails
+the scope containing it) and `Failures` (a `StepFailure` per cause, each naming the step's index and label and
+retaining the `FailureCause` itself, the raised exception included). `Exceptions` is what the containing scope
+received and `Nested` the reports of the sub-stages. A `continueStageOnFailure` therefore reports `Failed` with
+`Propagates = false` and keeps the cause, which is what lets a consumer of a suppressed producer tell a failed
+producer from a skipped one. `ScopeReport.propagated` reads the tree down to the scopes whose failures reached
+the pipeline, and `PipelineContext.run` takes the `PipelineFailedException`'s inner exception from the first of
+them through `FailureCause.toException`. Placement is deliberate: the file sits after `Timing.fs` because
+`ScopeReport.Name` would otherwise be the last `Name`-bearing record in scope for `Environment.fs`, which is an
+FS0667 waiting to bind `EnvArg.withName` to the wrong record.
+
+`PipelineContext.Reports` collects those reports the way `Timings` collects timings — a `ScopeReports` on the
+pipeline value, emptied at the start of a run and appended to as each stage of the pipeline finishes. It is the
+structured counterpart of the summary table: reading a failure out of rendered output or out of `StageTiming` is
+never necessary.
+
+A step writes its evidence into `StepEvidence` as it produces it rather than handing it back. A step that fails
+cancels its own scope through `stepErrorCts` before its `async` returns, and a cancelled `async` delivers no
+result — evidence carried in the return value of a failing step is dropped on the floor.
 
 `Summary.fs` renders the per-stage timing table printed at the end of a run, as text and nothing else, the
 way `Explain.fs` renders the tree. The timings themselves are collected in `Timing.fs` and `Conductors.fs`: `PipelineContext.Timings`

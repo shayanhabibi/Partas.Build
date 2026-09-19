@@ -134,6 +134,13 @@ and PipelineContext = {
     /// stage belongs to the condition that runs it, and the summary covers the stages of the run itself.
     /// </remarks>
     Timings: StageTimings
+    /// <summary>How each stage of the run ended, and the evidence it left, filled in as the stages finish.</summary>
+    /// <remarks>
+    /// The pipeline's own stages are the whole of this list; a stage carries the scopes nested under it in
+    /// its own report. What a stage did is available here in structured form, apart from the rendered log and
+    /// apart from the timing table.
+    /// </remarks>
+    Reports: ScopeReports
     /// <summary>What the pipeline's producers have published, for the invocation running now.</summary>
     /// <remarks>Emptied when a run starts, and reset to what a stage found when that stage retries.</remarks>
     Producers: ExecutionState
@@ -414,6 +421,7 @@ module PipelineContext =
             RunBeforeEachStage = noStageHook
             RunAfterEachStage = noStageHook
             Timings = StageTimings.create()
+            Reports = ScopeReports.create()
             Producers = ExecutionState.create()
         }
 

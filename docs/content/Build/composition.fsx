@@ -7,8 +7,9 @@ order: 3
 *)
 (*** hide ***)
 // The sources are #load-ed rather than #r-ing a built DLL, for two reasons: the guide then type-checks against
-// the code as written instead of against the last build, and nothing holds a file lock — `fsdocs watch --eval`
-// keeps a loaded assembly open for its whole lifetime, which on Windows makes rebuilding the library fail.
+// the code as written instead of against the last build, and nothing holds a file lock — a #r-ed assembly stays
+// loaded for the lifetime of the site watcher (`dotnet run --project Build.fsproj -- docs --watch`), which on
+// Windows makes rebuilding the library fail.
 // Keep this list in the same order as the <Compile> items in Partas.Build.fsproj.
 #r "nuget: FSharp.Control.AsyncSeq, 4.15.0"
 #r "nuget: FsToolkit.ErrorHandling, 5.2.0"
@@ -16,13 +17,27 @@ order: 3
 #r "nuget: Spectre.Console, 0.57.2"
 
 
+#load "../../../src/Partas.Build.Cmd/Execution.fs"
 #load "../../../src/Partas.Build.Cmd/Program.fs"
 #load "../../../src/Partas.Build/System.CommandLine/Aliases.fs"
 #load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
-#load "../../../src/Partas.Build/Types.fs"
+#load "../../../src/Partas.Build/Exceptions.fs"
+#load "../../../src/Partas.Build/Output.fs"
+#load "../../../src/Partas.Build/Environment.fs"
+#load "../../../src/Partas.Build/Timing.fs"
+#load "../../../src/Partas.Build/Producer.fs"
+#load "../../../src/Partas.Build/Failures.fs"
+#load "../../../src/Partas.Build/Conductors.fs"
+#load "../../../src/Partas.Build/Conductors.Runners.fs"
 #load "../../../src/Partas.Build/Process.fs"
+#load "../../../src/Partas.Build/Operations.fs"
+#load "../../../src/Partas.Build/Dependencies.fs"
+#load "../../../src/Partas.Build/DependencyPlan.fs"
+#load "../../../src/Partas.Build/ExecutionState.fs"
+#load "../../../src/Partas.Build/Builders/StageSettings.fs"
 #load "../../../src/Partas.Build/Builders/Stage.fs"
 #load "../../../src/Partas.Build/Builders/Conditions.fs"
+#load "../../../src/Partas.Build/Builders/PipelineSettings.fs"
 #load "../../../src/Partas.Build/Builders/Pipeline.fs"
 #load "../../../src/Partas.Build/Builders/Inputs.fs"
 #load "../../../src/Partas.Build/Explain.fs"
@@ -194,7 +209,7 @@ Settings placed *after* a nested block still apply to the enclosing stage, so or
 let settingsAfter =
     stage "compile" {
         Blocks.build "MyLib.fsproj"
-        timeout 300<second>
+        timeout 300
         whenNot { envVar "SKIP_BUILD" }
     }
 
@@ -206,7 +221,7 @@ a house style — a wrapper that adds retries, timing, teardown or a condition t
 *)
 
 /// Wraps stages in a named group with a shared timeout, and a teardown that always runs.
-let group name (seconds: int<second>) (stages: StageContext seq) =
+let group name (seconds: int) (stages: StageContext seq) =
     stage name {
         timeout seconds
 
@@ -216,7 +231,7 @@ let group name (seconds: int<second>) (stages: StageContext seq) =
 
 let grouped =
     pipeline "grouped" {
-        group "prepare" 60<second> [ Blocks.clean "MyLib.fsproj" ]
+        group "prepare" 60 [ Blocks.clean "MyLib.fsproj" ]
     }
 
 (**
@@ -224,7 +239,7 @@ When the stages being wrapped carry inputs, the wrapper takes an `InputSpec` lis
 The `input` CE is what joins them:
 *)
 
-let inputGroup name (seconds: int<second>) (blocks: InputSpec<StageContext> list) = input {
+let inputGroup name (seconds: int) (blocks: InputSpec<StageContext> list) = input {
     let! stages = InputSpec.sequence blocks
 
     return stage name {
@@ -235,7 +250,7 @@ let inputGroup name (seconds: int<second>) (blocks: InputSpec<StageContext> list
 
 let inputGrouped =
     pipeline "release" {
-        inputGroup "compile" 600<second> [ Blocks.restore "MyLib.fsproj"; Blocks.build "MyLib.fsproj" ]
+        inputGroup "compile" 600 [ Blocks.restore "MyLib.fsproj"; Blocks.build "MyLib.fsproj" ]
     }
 
 (**
@@ -419,7 +434,7 @@ let mainCommand argv =
                 description "Pack and push"
 
                 pipeline "release" {
-                    inputGroup "compile" 600<second> [ Blocks.build "MyLib.fsproj" ]
+                    inputGroup "compile" 600 [ Blocks.build "MyLib.fsproj" ]
 
                     stage "pack" {
                         whenBranch "master"

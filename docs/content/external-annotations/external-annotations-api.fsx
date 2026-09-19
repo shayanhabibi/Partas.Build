@@ -7,7 +7,7 @@ index: 2
 *)
 (*** hide ***)
 // Sources are #load-ed rather than #r-ing built DLLs so the guide type-checks against the code as written,
-// and so nothing holds a file lock while `fsdocs watch --eval` is running. Keep this list in the same order
+// and so nothing holds a file lock while the site watcher is running. Keep this list in the same order
 // as the <Compile> items of each project.
 #r "nuget: FSharp.Control.AsyncSeq, 4.15.0"
 #r "nuget: FsToolkit.ErrorHandling, 5.2.0"
@@ -15,13 +15,27 @@ index: 2
 #r "nuget: Spectre.Console, 0.57.2"
 #r "nuget: System.Reflection.MetadataLoadContext, 10.0.11"
 
+#load "../../../src/Partas.Build.Cmd/Execution.fs"
 #load "../../../src/Partas.Build.Cmd/Program.fs"
 #load "../../../src/Partas.Build/System.CommandLine/Aliases.fs"
 #load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
-#load "../../../src/Partas.Build/Types.fs"
+#load "../../../src/Partas.Build/Exceptions.fs"
+#load "../../../src/Partas.Build/Output.fs"
+#load "../../../src/Partas.Build/Environment.fs"
+#load "../../../src/Partas.Build/Timing.fs"
+#load "../../../src/Partas.Build/Producer.fs"
+#load "../../../src/Partas.Build/Failures.fs"
+#load "../../../src/Partas.Build/Conductors.fs"
+#load "../../../src/Partas.Build/Conductors.Runners.fs"
 #load "../../../src/Partas.Build/Process.fs"
+#load "../../../src/Partas.Build/Operations.fs"
+#load "../../../src/Partas.Build/Dependencies.fs"
+#load "../../../src/Partas.Build/DependencyPlan.fs"
+#load "../../../src/Partas.Build/ExecutionState.fs"
+#load "../../../src/Partas.Build/Builders/StageSettings.fs"
 #load "../../../src/Partas.Build/Builders/Stage.fs"
 #load "../../../src/Partas.Build/Builders/Conditions.fs"
+#load "../../../src/Partas.Build/Builders/PipelineSettings.fs"
 #load "../../../src/Partas.Build/Builders/Pipeline.fs"
 #load "../../../src/Partas.Build/Builders/Inputs.fs"
 #load "../../../src/Partas.Build/Explain.fs"
@@ -32,8 +46,6 @@ index: 2
 #load "../../../src/Partas.Build.Baked/NuGet.fs"
 #load "../../../src/Partas.Build.Baked/Dotnet.fs"
 #load "../../../src/Partas.Build.Baked/SemVer.fs"
-
-
 #load "../../../Partas.ExternalAnnotations/Library.fs"
 #load "../../../Partas.Build.ExternalAnnotations/Library.fs"
 

@@ -253,7 +253,7 @@ let inputGrouped =
 
 (**
 `InputSpec.sequence` turns a list of specs into one spec of a list, unioning the inputs. `InputSpec.traverse fn
-items` does the same over a mapping.
+items` does the same over a mapping. These are the two functions to reach for when writing this kind of wrapper.
 
 ## Adding an input of the wrapper's own
 
@@ -299,7 +299,7 @@ let bumpFromArgument project = input {
 }
 ```
 
-There is no `InputSpec.flatten`. Flattening would read the inner spec's `Inputs`, which exist only once its
+There is no `InputSpec.flatten`, and no sound `flatten` can exist. Flattening would read the inner spec's `Inputs`, which exist only once its
 `Read` runs, and `Read` needs the `ParseResult` those inputs configure — the circularity `InputSpec` exists to
 break, and why `input` has no `Bind`: a sequential `let!` fails with `FS0708` instead of compiling into an
 option set that cannot be registered.
@@ -529,7 +529,8 @@ command "wire" {
 
 ### What this replaces
 
-Without it, four scripts collapse into one with a `--only <string>` flag: the four layer names spelled once
+Without it, four scripts collapse into one with a `--only <string>` flag whose legal values live only in its
+description string: the four layer names spelled once
 in the flag and once in a dispatching `match`, nothing checking the two agree, and four `fsi` startups each
 resolving NuGet for a run touching all four. Composition gives four `command` bindings instead — `--help`
 lists them because they exist, and one process resolves packages once.

@@ -41,7 +41,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 - Phases 0-7 of `notes/PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (433 Expecto tests across four suites — 291 in `tests/Partas.Build.Tests`, one file per layer, plus 65 in `tests/Partas.Build.ExternalAnnotations.Tests`, 74 in `tests/Partas.ExternalAnnotations.Tests` and 3 in `tests/Partas.Build.Cmd.NetStandard.Tests`; the `test` stage also runs `tests/Partas.Build.CompilerProbe` in both Debug and Release, 11 tests each). The `Build/` CLI is written against the library: a breaking change breaks it first.
 - The DSL exists end to end: `inputs` (`Builders/Inputs.fs`), `stage` (`Builders/Stage.fs`), `pipeline` (`Builders/Pipeline.fs`), `command`/`rootCommand` (`Builders/Command.fs`). A stage that declares an input turns its pipeline into an `InputSpec<PipelineContext>`, and the command registers whatever those specs declare. Conditions are in `Builders/Conditions.fs` — `whenAll`/`whenAny`/`whenNot`/`whenEnv`/`whenStage` plus the `when'`/`whenEnvVar`/`whenBranch`/`when{Windows,Linux,OSX}` operations on `StageBuilder`.
 - A command carries `PipelineDefaults: BuildPipeline` and takes the pipeline-level operations itself (`workingDir`, `envVars`, the three timeouts, `acceptExitCodes`, the output operations, `noPrefixForStep`/`noStdRedirectForStep`, `runBeforeEachStage`/`runAfterEachStage`, `post`, `verbosity`/`verbose`/`quiet`), each one built through `CommandBuilderBase.MapPipelineDefault`. They are **defaults, not overrides**: `PipelineContext.applyDefaults` copies a setting across only where the pipeline left it at the value `PipelineContext.create` gave it, so a pipeline that sets the same thing wins. See *Command defaults* below.
-- `run`/`runSensitive` start real processes through `Process.fs`. A `Cmd` keeps the executable and its arguments apart all the way to `ProcessStartInfo.ArgumentList`, so the platform does the escaping. Interpolate through the `cmd` helper — `run (cmd $"dotnet build {project}")`. `run $"..."` binds to the `string` overload and flattens the holes; `runSensitive $"..."` takes the `FormattableString` directly and masks every hole as `***`. There is no `Fake.Core.Process` dependency; `notes/PLAN.md`'s *The command runner* records why.
+- `run`/`runSensitive` start real processes through `CmdRunner` (`Process.fs`). A `Cmd`, defined in `src/Partas.Build.Cmd/Program.fs`, keeps the executable and its arguments apart all the way to `ProcessStartInfo.ArgumentList`, so the platform does the escaping. Interpolate through the `cmd` helper — `run (cmd $"dotnet build {project}")`. `run $"..."` binds to the `string` overload and flattens the holes; `runSensitive $"..."` takes the `FormattableString` directly and masks every hole as `***`. There is no `Fake.Core.Process` dependency; `notes/PLAN.md`'s *The command runner* records why.
 - Fun.Build's `Mode` (`Execution | CommandHelp | Verification`) has **not** been ported. `PipelineContext.Verify` is a placeholder and `buildPipelineVerification` is commented out. `CommandHelp` is redundant: System.CommandLine generates help. Whether `Verification` survives is an open question in `notes/PLAN.md`.
 - `PipelineContext.run` is complete enough to execute stages, post stages, timeouts, parallelism and cancellation.
 
@@ -123,6 +123,8 @@ line already carries. `Summary.render` sizes its three columns to the ambient co
 fit — the middle of a stage name, the end of an outcome — so the table is one row per stage at any width, and
 the `Depth` indent survives an 80-column CI log.
 
+`src/Partas.Build.Cmd` (`Program.fs`, `Execution.fs`) is the process layer, defining `Cmd` and compiling before `Partas.Build`.
+
 `src/Partas.Build.Baked` is the batteries-included layer over the library: ready-made `Input.*`/`Argument.*` definitions
 for the options every build CLI ends up wanting (`--configuration`, `--nuget-key`, `--project`, `--ci`, a version
 bump), the semver arithmetic in `Version`, and `IO.writeVersion`/`IO.bumpVersion` for editing a project file's
@@ -194,7 +196,7 @@ a patch bump move it breaks anything not rebuilt in the same pass with `Could no
 
 ## Conventions
 
-- `.editorconfig` sets Stroustrup style, `max_line_length=150`, `fsharp_space_before_uppercase_invocation=true`. No fantomas tool is installed here (`.config/dotnet-tools.json` declares no tools at all) and there is no `format`/`lint` command — match surrounding style manually.
+- `.editorconfig` sets Stroustrup style, `max_line_length=150`, `fsharp_space_before_uppercase_invocation=true`. No fantomas tool is installed (`.config/dotnet-tools.json` declares no tools at all) and there is no `format`/`lint` command — match surrounding style manually.
 - Prefer `voption`/`ValueOption` and `[<Struct>]` DUs in the library: a departure from the ported Fun.Build code.
 - Public API goes in `[<AutoOpen>]` modules under `Partas.Build`; the model and engine stay in `Partas.Build.Internal`.
 - Console output is Spectre.Console throughout, with GitHub Actions `::error title=...::` fallbacks when `GITHUB_ENV` is present (see `printError` in both context modules).

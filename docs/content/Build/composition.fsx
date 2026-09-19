@@ -370,7 +370,7 @@ command can also mix implicit and explicit pipelines; declaration order is prese
 A command also takes the pipeline settings themselves — `workingDir`, `envVars`, the timeouts, the output
 operations, the hooks, `post`, `verbosity` — and hands them to every pipeline it runs, including the implicit
 one. They are defaults: a pipeline that sets the same thing keeps its own value. See
-[command-level defaults](index.html#Command-level-defaults).
+[command-level defaults](index.fsx#command-level-defaults).
 
 ## Conditional assembly
 

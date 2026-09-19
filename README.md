@@ -183,7 +183,7 @@ operation list, scope-retry ownership, and remaining limitations.
 
 I hate CI/CD and CLI plumbing, but it saves me the headache of returning to old projects later.
 
-![meme](/public/programming-meme-2.jpg)
+![meme](public/programming-meme-2.jpg)
 
 `System.CommandLine` is great and comes with batteries included; `FSharp.SystemCommandLine` wraps it well.
 `Fun.Build` reads like GitHub Actions YAML for building workflows, but its command-line parsing is outdated

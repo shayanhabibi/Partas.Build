@@ -362,7 +362,8 @@ let build (projects: InputSpec<string list>) = input {
 | `InputSpec.traverse` | `sequence` over the results of a mapping |
 | `InputSpec.union` | Concatenates input lists, keeping the first occurrence of each |
 
-The `input { let! … and! … return … }` CE is the usual way to build one. It is applicative: bind every source
+The `input { let! … and! … return … }` CE is the usual way to build one; `inputs` is the same builder under
+a second name (`src/Partas.Build/Builders/Inputs.fs` binds both). It is applicative: bind every source
 in a single `let!`/`and!` group. A sequential second `let!` is a compile error (`FS0708`): the input set must
 be readable before anything is parsed. An `input { }` nested inside another's `return` produces an
 `InputSpec<InputSpec<_>>`, which nothing accepts — pass the *source* in as an `InputSpec` instead.

@@ -52,7 +52,7 @@ open Partas.Build.Internal
 (**
 
 
-<img src="\img\sun-ztu.jpeg" width="50%" />
+<img src="/Partas.Build/img/sun-ztu.jpeg" width="50%" />
 
 Command line and build pipelines in F#. Composable, hints of elderberry, thick in tannins, a glorious vintage.
 
@@ -192,7 +192,7 @@ its success is the answer.
 
 ## Inputs
 
-A stage that needs a CLI flag binds it in an `inputs` CE. It is then lifted into any command that asks for it,
+A stage that needs a CLI flag binds it in an `input` CE. It is then lifted into any command that asks for it,
 with no further wiring:
 *)
 
@@ -469,8 +469,9 @@ operation would discard the first.
 
 ### Timeouts and cancellation
 
-Three scopes are settable on a stage or a pipeline: `timeout` (the stage or pipeline as a whole),
-`timeoutForStage` and `timeoutForStep`, each accepting `int<second>`, `float` seconds, or a `TimeSpan`.
+A stage takes `timeout` and `timeoutForStep`; a pipeline takes those plus `timeoutForStage`. A stage
+takes plain `int` seconds, `float` seconds or a `TimeSpan`; a pipeline takes `int<second>`, `float`
+seconds or a `TimeSpan`.
 
 A timeout cancels the stage and kills the whole process tree it started, grandchildren included.
 
@@ -571,7 +572,7 @@ positional equivalent.
 | `Baked.Common.isCI` | `--ci`, defaulting to true when the environment looks like CI |
 
 `BuildOption.map`, `.mapOpt` and `.mapArg` apply an `Input.*` combinator to both forms or to one. Both forms
-are `ActionInput` values, so they bind in an `inputs` CE exactly as a hand-rolled option does:
+are `ActionInput` values, so they bind in an `input` CE exactly as a hand-rolled option does:
 *)
 
 
@@ -670,7 +671,7 @@ first away. To widen a condition, put the alternatives in one `whenAny { }`.
 converts a `string` when a single overload is in play. It has no `InputSpec` form: bind the value outside the
 stage and use `runSensitive $"…"` inside it as normal.
 
-<img src="\img\the-glass.jpeg" width="400"/>
+<img src="/Partas.Build/img/the-glass.jpeg" width="400"/>
 
 ## API reference
 

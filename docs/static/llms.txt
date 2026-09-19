@@ -2,7 +2,7 @@
 
 > An F# build-pipeline DSL whose stages declare the CLI options they read. Commands derive their
 > System.CommandLine option set from the pipelines they activate, so options, validation and help text
-> come from the pipeline definition instead of manual registration. Runs from a `.fsx` script, no build
+> come from the pipeline definition instead of manual registration. Runs from a `.fsx` script or a build
 > project.
 
 ## Start here

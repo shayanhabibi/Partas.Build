@@ -1,21 +1,21 @@
 # Partas.Build
 
-An F# build-pipeline DSL where a stage declares the CLI options it reads, and a command derives its
-`System.CommandLine` option set from the stages it runs. Options, validation and help text are generated from
-the pipeline definition instead of registered by hand. It runs from a `.fsx` script or a build project.
+An F# build-pipeline DSL: a stage declares the CLI options it reads, and a command derives its
+`System.CommandLine` option set from the stages it runs. Options, validation, and help text generate from the
+pipeline definition instead of by hand. Runs from a `.fsx` script or a build project.
 
 - **Documentation:** <https://shayanhabibi.github.io/Partas.Build>
 - **Every operation, one line each:** [`docs/content/Build/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md)
   ([rendered](https://shayanhabibi.github.io/Partas.Build/build/capabilities/))
 - **Agents:** start at <https://shayanhabibi.github.io/Partas.Build/llms.txt>
 
-> The entire [`FSharp.SystemCommandLine`](https://github.com/jordanmarr/FSharp.SystemCommandLine) was essentially just copy pasted directly into this repo. All credit to the original author.
-> Much of the pipeline implementation is also copied from [`Fun.Build`](https://github.com/slaveOfTime/Fun.Build). All credit to the original author.
+> The entire [`FSharp.SystemCommandLine`](https://github.com/jordanmarr/FSharp.SystemCommandLine) library is copied directly into this repo. All credit to the original author.
+> Much of the pipeline implementation is copied from [`Fun.Build`](https://github.com/slaveOfTime/Fun.Build). All credit to the original author.
 
 ## Options are declared where they are read
 
 A flag that a stage reads but the CLI does not accept is not expressible. Neither is a flag registered on a
-command whose stages ignore it. Both are routine failures in hand-wired `System.CommandLine` setups; here the
+command whose stages ignore it. Both are routine failures in hand-wired `System.CommandLine` setups. The
 option set of a command *is* the union of what its stages bind — the two agree by construction — and two
 stages binding the same option register it once.
 
@@ -118,7 +118,7 @@ The right-hand column in full is [`docs/content/Build/CAPABILITIES.md`](docs/con
 ## Composition
 
 `command { stage; stage }` is the common form. Consecutive stages yielded into a command become one pipeline
-that takes the command's name and description, which is what a build script usually wants.
+that takes the command's name and description — what a build script usually wants.
 
 `pipeline "name" { }` is for the two cases that shape does not cover: running several pipelines under one
 command, and giving a pipeline a name and description of its own. `Command.pipeline { }` is the middle ground
@@ -162,43 +162,39 @@ let publish =
     }
 ```
 
-A producer runs once per invocation and shares that one result with every consumer that requires it; retrying
+A producer runs once per invocation and shares that one result with every consumer that requires it. Retrying
 the consumer through `retry` re-runs the deploy alone, not the fetch. `onFailure` registers a handler on a
 `stage` or a `pipeline` that runs once the scope's own retries are exhausted, and reads what a producer
 published through `context.TryGetOutput`.
 
-`execute` above streams the command's output and reports pass/fail; a step that needs the process's stdout as
+`execute` above streams the command's output and reports pass/fail. A step that needs the process's stdout as
 a value reaches for `executeCapture` (fails on a rejected exit code, keeping the capture as evidence) or
 `attemptCapture` (always answers the capture, rejected exit codes included, and leaves branching to the caller)
 — see *Running a command from inside a step* in
 [`docs/content/Build/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md#running-a-command-from-inside-a-step).
 
-This is also the place work moves out of `InputSpec.Read`, whose job is to bind CLI values, not run them — see
-*Migrating work out of `InputSpec.Read`* in
+Work that does not belong in `InputSpec.Read` — whose job is to bind CLI values, not run them — moves to a
+producer or a step. See *Migrating work out of `InputSpec.Read`* in
 [`docs/content/Build/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md#migrating-work-out-of-inputspecread) for a worked
 before/after, and the same file's *Producers and dependencies* and *Failure handlers* sections for the full
-operation list, scope-retry ownership, and the limitations left deliberately unaddressed for now.
+operation list, scope-retry ownership, and remaining limitations.
 
 ## Motivation
 
-I hate CICD/CLI plumbing.
-
-At the same time, it saves me from headache when I return to projects later.
+I hate CI/CD and CLI plumbing, but it saves me the headache of returning to old projects later.
 
 ![meme](/public/programming-meme-2.jpg)
 
-`System.CommandLine` is great, comes with lots of batteries, and there exists
-a great enough wrapper for it with `FSharp.SystemCommandLine`.
+`System.CommandLine` is great and comes with batteries included; `FSharp.SystemCommandLine` wraps it well.
+`Fun.Build` reads like GitHub Actions YAML for building workflows, but its command-line parsing is outdated
+and untyped.
 
-`Fun.Build` looks good for a github yaml type vibe of making workflows. But a majority
-of it is hampered by the outdated command line parsing, and lack of typing.
+So this repo combines `Fun.Build`'s shape with `FSharp.SystemCommandLine`'s strong typing, and dogfoods the
+result on its own CI/CD.
 
-So I combined `Fun.Build` with the strong typing of `FSharp.SystemCommandLine` builders,
-and dog fed it to this repos own CI/CD plumbing.
+Do I get friends now?
 
-So this begs the question: do I get friends now?
-
-> **No.** *This still sounds useless*
+> **No.** *This still sounds useless.*
 
 Rude.
 
@@ -238,9 +234,9 @@ dotnet run --project Build.fsproj -- bump 2.0.0-nightly.7 -p build
 
 Each packable project carries a `<Version>` and an `<AssemblyVersion>`, and a
 bump rewrites both — the second as `<major>.0.0.0`, so it only moves when the
-major does. That is deliberate: an assembly's version is its identity to
-everything already compiled against it, and moving it on a patch bump breaks
-anything not rebuilt in the same pass.
+major does. An assembly's version is its identity to everything already
+compiled against it: moving it on a patch bump breaks anything not rebuilt in
+the same pass.
 
 `pack` passes no version property, so CI publishes what the project file says.
 `bump` is skipped when `--ci` is set — which it is by default under GitHub
@@ -266,7 +262,7 @@ tests/                    the Expecto suites
 `Build/Program.fs` addresses the repository through
 `Partas.TypeProvider.BuildHelper`, so paths are checked when the build project
 compiles. After adding a project, register it in `Project.allProjects`, which is
-simultaneously what `bump` can version and what `pack` packs:
+both what `bump` can version and what `pack` packs:
 
 ```fsharp
 module Project =
@@ -283,7 +279,7 @@ time rather than halfway through a release.
 ### Adding a step
 
 A step is a stage of a pipeline. A stage that needs a flag binds it in an
-`input { }` block, which is also what makes the flag appear in `--help`:
+`input { }` block, which also makes the flag appear in `--help`:
 
 ```fsharp
 let myStep = input {

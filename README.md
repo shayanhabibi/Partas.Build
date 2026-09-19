@@ -5,8 +5,8 @@ An F# build-pipeline DSL where a stage declares the CLI options it reads, and a 
 the pipeline definition instead of registered by hand. It runs from a `.fsx` script or a build project.
 
 - **Documentation:** <https://shayanhabibi.github.io/Partas.Build>
-- **Every operation, one line each:** [`docs/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md)
-  ([rendered](https://shayanhabibi.github.io/Partas.Build/build/CAPABILITIES.html))
+- **Every operation, one line each:** [`docs/content/Build/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md)
+  ([rendered](https://shayanhabibi.github.io/Partas.Build/build/capabilities/))
 - **Agents:** start at <https://shayanhabibi.github.io/Partas.Build/llms.txt>
 
 > The entire [`FSharp.SystemCommandLine`](https://github.com/jordanmarr/FSharp.SystemCommandLine) was essentially just copy pasted directly into this repo. All credit to the original author.
@@ -104,7 +104,7 @@ Options:
 | An environment variable for one stage and its children | `envVars` on the stage — it is applied to the child process, so your own environment is untouched and needs no restore     |
 | A secret in a command line | `runSensitive $"..."`, or `Cmd.secretOption` — every hole is masked `***` wherever the library prints it                   |
 | A stage's output only when it fails | `captureOutput`                                                                                                            |
-| Another script's commands as subcommands | `#load` it and yield the `Command` value — see [Composition](https://shayanhabibi.github.io/Partas.Build/composition.html) |
+| Another script's commands as subcommands | `#load` it and yield the `Command` value — see [Composition](https://shayanhabibi.github.io/Partas.Build/build/composition/) |
 | An option with a fixed set of legal values, each bound to a typed value | `Input.mapFromAmong`                                                                                                       |
 | A flag added to a command line only sometimes | `Cmd.argIf`, or `Cmd.argWhenSome`                                                                                          |
 | A working directory for a stage's children | `workingDir` on the parent — it is inherited                                                                               |
@@ -112,8 +112,8 @@ Options:
 | A block of stages parameterised by an option someone else declares | Take an `InputSpec<'T>` parameter and `let!` it                                                                            |
 | The root command to call itself something other than the script's filename | `name` on `rootCommand`                                                                                                    |
 
-The right-hand column in full is [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md)
-([rendered](https://shayanhabibi.github.io/Partas.Build/CAPABILITIES.html)).
+The right-hand column in full is [`docs/content/Build/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md)
+([rendered](https://shayanhabibi.github.io/Partas.Build/build/capabilities/)).
 
 ## Composition
 
@@ -139,7 +139,7 @@ let test =
 
 Stages nest to any depth — a stage inside a stage is one step of its parent — and a command tree is an
 ordinary value, so a `Command` built in one script is yielded into another after a `#load`. See
-[Composing reusable blocks](https://shayanhabibi.github.io/Partas.Build/composition.html).
+[Composing reusable blocks](https://shayanhabibi.github.io/Partas.Build/build/composition/).
 
 ## Producers, consumers and failure handlers
 
@@ -171,11 +171,11 @@ published through `context.TryGetOutput`.
 a value reaches for `executeCapture` (fails on a rejected exit code, keeping the capture as evidence) or
 `attemptCapture` (always answers the capture, rejected exit codes included, and leaves branching to the caller)
 — see *Running a command from inside a step* in
-[`docs/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md#running-a-command-from-inside-a-step).
+[`docs/content/Build/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md#running-a-command-from-inside-a-step).
 
 This is also the place work moves out of `InputSpec.Read`, whose job is to bind CLI values, not run them — see
 *Migrating work out of `InputSpec.Read`* in
-[`docs/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md#migrating-work-out-of-inputspecread) for a worked
+[`docs/content/Build/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md#migrating-work-out-of-inputspecread) for a worked
 before/after, and the same file's *Producers and dependencies* and *Failure handlers* sections for the full
 operation list, scope-retry ownership, and the limitations left deliberately unaddressed for now.
 
@@ -219,7 +219,7 @@ dotnet run --project Build.fsproj -- --help
 | `test` | Builds and runs the Expecto suites |
 | `publish` | Packs and pushes to NuGet (`--nuget-key`; falls back to the `local` feed) |
 | `bump` | Rewrites `<Version>` in a project file (`-p <project>`) |
-| `docs` | Builds the fsdocs site (`--watch` to serve it) |
+| `docs` | Builds the Nacara site in `docs/` (`--watch` to serve it) |
 
 Flags belong to the commands whose stages read them: `--quick` skips restores
 and the clean, `--skip-tests` skips the suites, `--configuration` picks the
@@ -255,7 +255,9 @@ Build.fsproj              the build CLI
 Build/
   Program.fs              the repository paths, options, stages and commands
 src/Partas.Build/         the library
-docs/                     the fsdocs site
+src/Partas.Build.Cmd/     the command value and the process runner
+src/Partas.Build.Baked/   ready-made options, stages and semver helpers
+docs/                     the Nacara site (Site.fs, docs.fsproj, content/, blog/, static/)
 tests/                    the Expecto suites
 ```
 

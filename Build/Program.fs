@@ -217,11 +217,13 @@ module Documentation =
         }
     }
 
-    /// <summary>Puts the curated <c>docs/llms.txt</c> header on top of the two files fsdocs generates.</summary>
+    /// <summary>Puts the curated <c>docs/static/llms.txt</c> header on top of <c>output/llms.txt</c> and
+    /// <c>output/llms-full.txt</c>, replacing a leading <c>#</c> heading in each.</summary>
     /// <remarks>
-    /// fsdocs 22 writes its own <c>llms.txt</c> and <c>llms-full.txt</c> at the site root after copying
-    /// <c>docs/</c>, so a hand-written one is overwritten by an alphabetical link inventory with no summary.
-    /// The header replaces the generated <c>#</c> heading and the inventory stays beneath it.
+    /// Written for fsdocs 22, which generated both files at the site root as a link inventory under such a
+    /// heading. Nacara generates neither: <c>Site.staticFiles</c> copies <c>docs/static/llms.txt</c> verbatim to
+    /// <c>output/llms.txt</c>, so the stage prepends the header to a copy of itself and leaves the body twice
+    /// over, and <c>output/llms-full.txt</c> is absent, so that half of the merge does nothing.
     /// </remarks>
     let llms = input {
         let! watch = Options.watch

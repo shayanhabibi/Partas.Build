@@ -32,6 +32,21 @@ module StageContext =
     /// </remarks>
     type internal InFlightSteps = System.Collections.Concurrent.ConcurrentDictionary<int, InFlightStep>
 
+    /// <summary>The tokens one step of an attempt runs under.</summary>
+    /// <remarks>
+    /// <c>expiry</c> is the <c>timeoutForStep</c> budget the stage gave the step, running from the moment that
+    /// step starts, so each step of a sequential stage gets the whole budget. Where the stage set no budget it
+    /// is <c>ValueNone</c> and <c>cancellation</c> is the attempt's own source.
+    /// </remarks>
+    [<Struct>]
+    type internal StepBudget = {
+        expiry: CancellationTokenSource voption
+        cancellation: CancellationTokenSource
+    }
+
+    /// The budget each step of one attempt was given, by step index, held until the attempt ends.
+    type internal StepBudgets = System.Collections.Concurrent.ConcurrentDictionary<int, StepBudget>
+
     /// <summary>Where one attempt of a stage collects what its steps produce.</summary>
     /// <remarks>
     /// A step's evidence reaches the stage through these writes, issued as the step produces it. Every write
@@ -230,8 +245,26 @@ module StageContext =
                 use linkedStepErrorCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, stepErrorCts.Token)
                 use linkedCts = CancellationTokenSource.CreateLinkedTokenSource(linkedStepErrorCts.Token, ct)
 
-                use stepCts = new CancellationTokenSource(timeoutForStep)
-                use linkedStepCts = CancellationTokenSource.CreateLinkedTokenSource(stepCts.Token, linkedCts.Token)
+                let stepBudgets = StepBudgets()
+
+                /// The budget a step starting now runs under, recorded for the attempt to read once it unwinds.
+                let takeBudget index =
+                    let budget =
+                        if timeoutForStep < 0 then { expiry = ValueNone; cancellation = linkedCts }
+                        else
+                            let expiry = new CancellationTokenSource(timeoutForStep)
+                            {
+                                expiry = ValueSome expiry
+                                cancellation = CancellationTokenSource.CreateLinkedTokenSource(expiry.Token, linkedCts.Token)
+                            }
+
+                    stepBudgets[index] <- budget
+                    budget.cancellation
+
+                let expired index =
+                    match stepBudgets.TryGetValue index with
+                    | true, budget -> budget.expiry |> ValueOption.exists _.IsCancellationRequested
+                    | _ -> false
 
                 // Held by every step's flush of this stage, serialising them against each other.
                 let flushLock = obj ()
@@ -268,7 +301,7 @@ module StageContext =
                                         parallelism = parallelism
                                         i = i
                                         escapedPrefix = escapedPrefix
-                                        linkedStepCts = linkedStepCts
+                                        linkedStepCts = takeBudget i
                                         evidence = evidence
                                         stepErrorCts = stepErrorCts
                                     } step
@@ -352,20 +385,26 @@ module StageContext =
                         AnsiConsole.WriteException ex
 
                 // Which token fired decides this, and only the runner holds them: `cts` is the budget this
-                // stage was given and `stepCts` the budget it gave each of its steps, so an expiry of either
-                // is a failure of this stage and reports `FailureCause.TimedOut`. `ct` belongs to an ancestor
-                // and `stepErrorCts` to stage policy; a step either of those ended stays a cancellation,
-                // reported as one above. Every step still in flight when the attempt unwound is one the
-                // expiry ended, which a `parallel'` stage has several of.
+                // stage was given and each `StepBudget.expiry` the budget it gave one of its steps, so an
+                // expiry of either is a failure of this stage and reports `FailureCause.TimedOut`. `ct`
+                // belongs to an ancestor and `stepErrorCts` to stage policy; a step either of those ended
+                // stays a cancellation, reported as one above. The stage's own budget catches every step
+                // still in flight — several, under `parallel'` — and a step budget catches its own step.
                 if
                     escaped
-                    && (cts.IsCancellationRequested || stepCts.IsCancellationRequested)
+                    && (cts.IsCancellationRequested || stepBudgets.Keys |> Seq.exists expired)
                     && not ct.IsCancellationRequested
                     && not stepErrorCts.IsCancellationRequested
                 then
                     let message = FailureCause.describe FailureCause.TimedOut
+                    let caught =
+                        inFlight.Values
+                        |> Seq.filter (fun step -> cts.IsCancellationRequested || expired step.index)
+                        |> Seq.sortBy _.index
+                        |> List.ofSeq
+
                     let timedOut =
-                        match inFlight.Values |> Seq.sortBy _.index |> List.ofSeq with
+                        match caught with
                         // A budget that expired between two steps leaves the stage itself as the whole of the
                         // evidence, and the stage carries no step index.
                         | [] -> [ { index = StepFailure.NoStep; label = ValueNone; prefix = buildCurrentStepPrefix stage } ]
@@ -381,6 +420,13 @@ module StageContext =
                             evidence |> StepEvidence.addExceptions [ Exception line ]
                 elif escaped && ct.IsCancellationRequested then
                     cancelled <- true
+
+                for budget in stepBudgets.Values do
+                    // A step with no budget of its own ran under the attempt's source, which the attempt owns.
+                    budget.expiry
+                    |> ValueOption.iter (fun expiry ->
+                        budget.cancellation.Dispose()
+                        expiry.Dispose())
 
                 if not isSuccess && retriesLeft > 0 && not cts.IsCancellationRequested && not ct.IsCancellationRequested then
                     $"%s{getNamePath stage |> Markup.escape} failed. Retrying, {retriesLeft} attempt(s) left."
@@ -406,10 +452,15 @@ module StageContext =
                 Nested = nested
             }
 
+            // The stage's own wall time ends here: a handler reports on the stage rather than belonging to it,
+            // and the timing row and the finish line above it quote the same figure.
+            stageSw.Stop()
+
             // Once per failed execution of this stage, after its retries and after the handlers of every
-            // scope nested in it, which finished here before this one did. A handler that raises leaves one
-            // more cause, and the stage keeps the outcome it already reported.
-            if ScopeReport.failed reported && not (cancelled || ct.IsCancellationRequested) then
+            // scope nested in it. A handler that raises leaves one more cause, and the stage keeps the
+            // outcome it already reported. A condition stage answers its condition by failing, and belongs
+            // to that condition rather than to the run.
+            if index <> StageIndex.Condition && ScopeReport.failed reported && not (cancelled || ct.IsCancellationRequested) then
                 let published = pipeline |> Option.map (_.Producers >> ExecutionState.values) |> Option.defaultValue ProducerValues.empty
 
                 match FailureContext.runHandlers stage.OnFailure (FailureContext.ofReport published reported) with
@@ -562,8 +613,13 @@ module PipelineContext =
                     Published = ExecutionState.values this.Producers
                 }
 
-                for failure in FailureContext.runHandlers this.OnFailure context do
-                    PipelineContext.printError this (FailureCause.describe failure.Cause)
+                match FailureContext.runHandlers this.OnFailure context with
+                | [] -> ()
+                | raised ->
+                    for failure in raised do
+                        PipelineContext.printError this (FailureCause.describe failure.Cause)
+
+                    this.Reports |> ScopeReports.add (FailureContext.handlerReport context raised)
 
         try
             if this.Stages.Length > 1 then

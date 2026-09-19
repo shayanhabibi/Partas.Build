@@ -36,7 +36,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Current state (verify before assuming)
 
-- Phases 0-7 of `PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (410 Expecto tests across four suites — 268 in `tests/Partas.Build.Tests`, one file per layer, plus 65 in `tests/Partas.Build.ExternalAnnotations.Tests`, 74 in `tests/Partas.ExternalAnnotations.Tests` and 3 in `tests/Partas.Build.Cmd.NetStandard.Tests`). The `Build/` CLI is itself written against the library, so it is the first thing a breaking change breaks.
+- Phases 0-7 of `PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (417 Expecto tests across four suites — 275 in `tests/Partas.Build.Tests`, one file per layer, plus 65 in `tests/Partas.Build.ExternalAnnotations.Tests`, 74 in `tests/Partas.ExternalAnnotations.Tests` and 3 in `tests/Partas.Build.Cmd.NetStandard.Tests`). The `Build/` CLI is itself written against the library, so it is the first thing a breaking change breaks.
 - The DSL exists end to end: `inputs` (`Builders/Inputs.fs`), `stage` (`Builders/Stage.fs`), `pipeline` (`Builders/Pipeline.fs`), `command`/`rootCommand` (`Builders/Command.fs`). A stage that declares an input turns its pipeline into an `InputSpec<PipelineContext>`, and the command registers whatever those specs declare. Conditions are in `Builders/Conditions.fs` — `whenAll`/`whenAny`/`whenNot`/`whenEnv`/`whenStage` plus the `when'`/`whenEnvVar`/`whenBranch`/`when{Windows,Linux,OSX}` operations on `StageBuilder`.
 - A command carries `PipelineDefaults: BuildPipeline` and takes the pipeline-level operations itself (`workingDir`, `envVars`, the three timeouts, `acceptExitCodes`, the output operations, `noPrefixForStep`/`noStdRedirectForStep`, `runBeforeEachStage`/`runAfterEachStage`, `post`, `verbosity`/`verbose`/`quiet`), each one built through `CommandBuilderBase.MapPipelineDefault`. They are **defaults, not overrides**: `PipelineContext.applyDefaults` copies a setting across only where the pipeline left it at the value `PipelineContext.create` gave it, so a pipeline that sets the same thing wins. See *Command defaults* below.
 - `run`/`runSensitive` start real processes through `Process.fs`: a `Cmd` keeps the executable and its arguments apart all the way to `ProcessStartInfo.ArgumentList`, so the platform does the escaping. Interpolate through the `cmd` helper — `run (cmd $"dotnet build {project}")` — because `run $"..."` binds to the `string` overload and flattens the holes; `runSensitive $"..."` takes the `FormattableString` directly and masks every hole as `***`. There is no `Fake.Core.Process` dependency; `PLAN.md`'s *The command runner* records why.
@@ -85,10 +85,14 @@ handler is appended to the report's `Failures` under `StepFailure.NoStep` and re
 cause the pipeline raises stays the scope's own.
 
 Which token fired tells a timeout from a cancellation, and only `StageContext.run` holds them all: `cts` (the
-stage's own `timeout`) and `stepCts` (its own `timeoutForStep`) are failures of that stage, recorded as
-`FailureCause.TimedOut` against every step of `InFlightSteps` that had started and not finished — several, under
-`parallel'` — while `ct` (an ancestor's, the pipeline's, the invocation's) and `stepErrorCts` (stage policy) are
-cancellations, which run no handler.
+stage's own `timeout`) and a `StepBudget.expiry` (the `timeoutForStep` it gave one step) are failures of that
+stage, recorded as `FailureCause.TimedOut` against the steps of `InFlightSteps` that had started and not
+finished — every one of them for the stage's own budget, several under `parallel'`, and its own step for a step
+budget — while `ct` (an ancestor's, the pipeline's, the invocation's) and `stepErrorCts` (stage policy) are
+cancellations, which run no handler. A step takes its budget when it starts, so a stage of several sequential
+steps gives each of them the whole of it. A condition stage answers its condition by failing and reports to no
+handler, the way it records neither a timing nor a report. The stage's stopwatch stops before its handlers run,
+so a slow handler stays out of the summary row.
 
 `PipelineContext.Reports` collects those reports the way `Timings` collects timings — a `ScopeReports` on the
 pipeline value, emptied at the start of a run and appended to as each stage of the pipeline finishes. It is the

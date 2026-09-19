@@ -53,8 +53,8 @@ module FailureOutputs =
         /// <summary>The value <paramref name="producer"/> published, where the invocation still holds one of
         /// the type the handle declares.</summary>
         /// <remarks>
-        /// A lookup over the values already published: a producer that has not run answers <c>ValueNone</c> and
-        /// stays unrun, and so does one whose value a retried scope discarded.
+        /// A lookup over the values already published: an absent value answers <c>ValueNone</c>, leaving the
+        /// producer unrun, as does a value a retried scope discarded.
         /// </remarks>
         /// <param name="producer" />
         member this.TryGetOutput(producer: Producer<'T>): 'T voption =

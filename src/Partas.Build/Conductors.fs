@@ -814,7 +814,7 @@ module StageContext =
     /// registered on it.</summary>
     /// <param name="handler" />
     /// <param name="stage" />
-    let inline addFailureHandler ([<InlineIfLambda>] handler: FailureHandler) (stage: StageContext) =
+    let inline addFailureHandler (handler: FailureHandler) (stage: StageContext) =
         { stage with OnFailure = stage.OnFailure @ [ handler ] }
     /// Conjoins a condition onto a stage. <c>--explain</c> reports a skip caused by it without a reason.
     let inline addPredicate ([<InlineIfLambda>] condition: BuildStageIsActive) stage = addPredicateBecause ValueNone condition stage

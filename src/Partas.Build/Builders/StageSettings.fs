@@ -78,6 +78,9 @@ type StageSettingsBuilder() =
     /// <para>The handler receives the causes the execution recorded and the producer values the invocation
     /// holds. An exception out of it is one more cause of the same scope, and the primary stays where it
     /// was.</para>
+    /// <para>A stage run as a condition — the body of a <c>whenStage</c> — answers its condition by failing and
+    /// belongs to that condition rather than to the run, so it keeps its handlers back throughout, <c>--explain</c>
+    /// included.</para>
     /// </remarks>
     /// <param name="state" />
     /// <param name="handler" />

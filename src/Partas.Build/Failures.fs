@@ -97,7 +97,8 @@ module ScopeReport =
 /// <summary>The scopes one pipeline invocation ran, as they reported themselves.</summary>
 /// <remarks>
 /// Invocation-local: a run empties the collector before its first stage. A stage of the pipeline appends as it
-/// finishes and carries the scopes nested under it in its own report.
+/// finishes and carries the scopes nested under it in its own report, and the pipeline appends itself last
+/// where its own handlers left a cause.
 /// </remarks>
 [<ReferenceEquality>]
 type ScopeReports = private {
@@ -115,7 +116,8 @@ module ScopeReports =
     /// Discards every recorded scope. An invocation starts here.
     let clear (reports: ScopeReports) = lock reports.recorded (fun () -> reports.recorded.Clear())
 
-    /// The pipeline's own stages, in the order they finished.
+    /// <summary>The scopes recorded at pipeline level, in the order they finished.</summary>
+    /// <remarks>The pipeline's own stages, and the pipeline itself where its handlers left a cause.</remarks>
     let stages (reports: ScopeReports) = lock reports.recorded (fun () -> List.ofSeq reports.recorded)
 
     /// Every scope of the run, each nested scope under the one containing it.
@@ -181,8 +183,8 @@ module FailureContext =
     /// left.</summary>
     /// <remarks>
     /// An exception out of a handler is one more cause of the same scope, recorded after the scope's own and
-    /// leaving the primary where it was. The handlers registered after it still run, and the one that raised
-    /// is not entered again.
+    /// leaving the primary where it was. The handlers registered after it still run, and each handler is
+    /// entered at most once.
     /// </remarks>
     /// <param name="handlers" />
     /// <param name="context" />
@@ -194,3 +196,22 @@ module FailureContext =
             with error -> raised.Add { Index = StepFailure.NoStep; Label = ValueSome HandlerLabel; Cause = FailureCause.Raised error }
 
         List.ofSeq raised
+
+    /// <summary>The report a scope leaves for <paramref name="raised"/>, the causes its own handlers
+    /// produced.</summary>
+    /// <remarks>
+    /// <c>Propagates</c> is false: a handler's failure is evidence beside the scope's own cause, and what
+    /// reaches the scope containing it stays the cause it failed with. A stage records these on the report its
+    /// steps already fill; this is how a pipeline, whose report no step fills, records the same thing.
+    /// </remarks>
+    /// <param name="context" />
+    /// <param name="raised" />
+    let handlerReport (context: FailureContext) (raised: StepFailure list) : ScopeReport = {
+        Name = context.Scope
+        Address = context.Address
+        Outcome = context.Outcome
+        Propagates = false
+        Failures = raised
+        Exceptions = []
+        Nested = []
+    }

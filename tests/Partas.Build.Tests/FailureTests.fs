@@ -485,6 +485,162 @@ let handlers =
             | other -> failtestf "one handler invocation should be recorded; got %i" other.Length
         }
 
+        test "a pipeline handler that raises leaves its cause where a reader finds the rest of the evidence" {
+            let work =
+                pipeline "release" {
+                    quiet
+                    onFailure (fun _ -> raise (InvalidOperationException "the reporter is down"))
+                    stage "sign" { run (fun (_: StageContext) -> Error "unsigned") }
+                }
+
+            let raised =
+                quietly (fun () ->
+                    try
+                        PipelineContext.run work
+                        None
+                    with :? PipelineFailedException as ex -> Some ex)
+
+            match raised with
+            | None -> failtest "a failing stage should fail the run"
+            | Some ex ->
+                match ex.InnerException with
+                | :? OperationFailedException as failed ->
+                    Expect.equal failed.Cause (FailureCause.Reported "unsigned") "the run still fails for the reason it ran into"
+                | other -> failtestf "the pipeline should carry the structured cause; got %A" other
+
+            match ScopeReports.failures work.Reports |> List.filter (fun failure -> failure.Index = StepFailure.NoStep) with
+            | [ failure ] ->
+                Expect.equal failure.Label (ValueSome FailureContext.HandlerLabel) "the handler's cause names itself"
+
+                match failure.Cause with
+                | FailureCause.Raised error -> Expect.equal error.Message "the reporter is down" "and retains the exception it raised"
+                | other -> failtestf "a handler failure should retain its exception; got %A" other
+            | other -> failtestf "one handler cause should be recorded on the reports; got %A" other
+
+            Expect.equal (ScopeReports.propagated work.Reports |> List.map _.Cause) [ FailureCause.Reported "unsigned" ]
+                "while what reached the pipeline is the failure of the stage alone"
+        }
+
+        test "a slow handler stays out of the timing row of the stage it reports" {
+            let work =
+                pipeline "release" {
+                    quiet
+                    stage "sign" {
+                        onFailure (fun _ -> Thread.Sleep 1500)
+                        run (fun (_: StageContext) -> Error "unsigned")
+                    }
+                }
+
+            quietly (fun () ->
+                try PipelineContext.run work
+                with :? PipelineFailedException -> ())
+
+            match StageTimings.ordered work.Timings with
+            | [ timing ] ->
+                Expect.isLessThan timing.Elapsed (TimeSpan.FromSeconds 1.0) "the row times the stage, and the report it filed sits outside it"
+            | other -> failtestf "one timing row should be recorded; got %i" other.Length
+        }
+
+        test "a condition stage reports to no handler, on its own failure or under --explain" {
+            let mutable handled = 0
+
+            let work =
+                pipeline "work" {
+                    quiet
+                    stage "gated" {
+                        whenStage "probe" {
+                            onFailure (fun _ -> handled <- handled + 1)
+                            run (fun (_: StageContext) -> Error "the probe says no")
+                        }
+                        run (fun (_: StageContext) -> ())
+                    }
+                }
+
+            let built = command "build" { work }
+
+            Expect.equal (quietly (fun () -> built.Parse("").Invoke())) 0 "a stage its condition turned off fails nothing"
+            Expect.equal handled 0 "a condition stage belongs to the condition that runs it, and reports to that alone"
+
+            Expect.equal (quietly (fun () -> built.Parse("--explain").Invoke())) 0 "explain succeeds"
+            Expect.equal handled 0 "and explain evaluates the condition without reporting it either"
+        }
+
+        test "a stage timeout names the step it caught, and not the sibling that had finished" {
+            let handled = ResizeArray<FailureContext>()
+
+            let built =
+                stage "workers" {
+                    parallel' 2
+                    timeout 1.0
+                    onFailure handled.Add
+                    run (fun (_: StageContext) -> async { do! Async.Sleep 50 })
+                    run sleeping
+                }
+
+            quietly (fun () -> reportStage built) |> ignore
+
+            match handled |> List.ofSeq with
+            | [ context ] ->
+                Expect.equal [ for failure in context.Failures -> failure.Index, failure.Cause ] [ 1, FailureCause.TimedOut ]
+                    "the step still running when the budget expired is the one the cause names"
+            | other -> failtestf "one handler invocation should be recorded; got %i" other.Length
+        }
+
+        test "a parent's timeout is the parent's failure, and the sub-stage it cancels reports to no handler" {
+            let mutable outer = 0
+            let mutable inner = 0
+
+            let built =
+                stage "outer" {
+                    timeout 1.0
+                    onFailure (fun _ -> outer <- outer + 1)
+                    stage "inner" {
+                        onFailure (fun _ -> inner <- inner + 1)
+                        run sleeping
+                    }
+                }
+
+            quietly (fun () -> reportStage built) |> ignore
+
+            Expect.equal outer 1 "the budget that expired belongs to the stage that set it"
+            Expect.equal inner 0 "and the token reaching the sub-stage came from an ancestor"
+        }
+
+        test "the step budget is each step's own, rather than the attempt's" {
+            let built =
+                stage "sequence" {
+                    timeoutForStep 1.0
+                    stage "first" { run (fun (_: StageContext) -> async { do! Async.Sleep 400 }) }
+                    stage "second" { run (fun (_: StageContext) -> async { do! Async.Sleep 400 }) }
+                    stage "third" { run (fun (_: StageContext) -> async { do! Async.Sleep 400 }) }
+                }
+
+            let report = quietly (fun () -> reportStage built)
+
+            Expect.isFalse (ScopeReport.failed report)
+                "three steps, each inside the budget, leave the stage successful however long they take together"
+        }
+
+        test "a step over the budget reports the timeout against its own index" {
+            let handled = ResizeArray<FailureContext>()
+
+            let built =
+                stage "sequence" {
+                    timeoutForStep 1.0
+                    onFailure handled.Add
+                    run (fun (_: StageContext) -> async { do! Async.Sleep 300 })
+                    run sleeping
+                }
+
+            quietly (fun () -> reportStage built) |> ignore
+
+            match handled |> List.ofSeq with
+            | [ context ] ->
+                Expect.equal [ for failure in context.Failures -> failure.Index, failure.Cause ] [ 1, FailureCause.TimedOut ]
+                    "the step that overran the budget it was given is the one the cause names"
+            | other -> failtestf "one handler invocation should be recorded; got %i" other.Length
+        }
+
         test "a pipeline timeout cancels its stages and runs no handler" {
             let mutable stageHandled = 0
             let mutable pipelineHandled = 0

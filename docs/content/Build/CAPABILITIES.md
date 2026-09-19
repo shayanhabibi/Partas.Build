@@ -82,6 +82,22 @@ Available inside `stage`, and inside `whenStage`, which accepts everything `stag
 A stage nested inside another stage is one step of its parent. Stages nest to any depth, and a block is just
 a value that a `stage`, a `pipeline` or a `command` can yield.
 
+### Running a command from inside a step
+
+`run` and `runSensitive` cover the common case of a command whose own exit code is the whole result. A step
+built with `run (fun ctx -> ...)` reaches for one of these `Operation<'T>` functions when it needs the
+command's output as a value:
+
+| Function | What it does |
+|---|---|
+| `execute cmd` | Runs `cmd`, streaming its output through the stage's own output routing. Fails on an exit code the stage does not accept; carries no captured text |
+| `executeCapture cmd` | Runs `cmd`, capturing stdout and stderr instead of streaming them. Fails on an unaccepted exit code the same way `execute` does, with the captured `CommandResult` attached to the failure as evidence |
+| `attemptCapture cmd` | Runs `cmd`, capturing stdout and stderr, and always answers the `CommandResult` — an unaccepted exit code included. A process-start failure and a cancellation remain outcomes of their own, never a `CommandResult`; only a process that ran to completion produces one, and branching on its exit code is the caller's |
+
+Captured stdout and stderr are the child's raw bytes, ahead of any prefix or other display formatting, and are
+application data that can hold secrets: printing a successful capture is the caller's decision, not something
+`executeCapture` or `attemptCapture` does on its own.
+
 ## Pipeline operations
 
 Available inside `pipeline "name" { }` and inside `Command.pipeline { }`, which takes the name and description

@@ -167,6 +167,12 @@ the consumer through `retry` re-runs the deploy alone, not the fetch. `onFailure
 `stage` or a `pipeline` that runs once the scope's own retries are exhausted, and reads what a producer
 published through `context.TryGetOutput`.
 
+`execute` above streams the command's output and reports pass/fail; a step that needs the process's stdout as
+a value reaches for `executeCapture` (fails on a rejected exit code, keeping the capture as evidence) or
+`attemptCapture` (always answers the capture, rejected exit codes included, and leaves branching to the caller)
+— see *Running a command from inside a step* in
+[`docs/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md#running-a-command-from-inside-a-step).
+
 This is also the place work moves out of `InputSpec.Read`, whose job is to bind CLI values, not run them — see
 *Migrating work out of `InputSpec.Read`* in
 [`docs/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md#migrating-work-out-of-inputspecread) for a worked

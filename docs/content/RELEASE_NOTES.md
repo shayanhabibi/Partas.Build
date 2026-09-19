@@ -5,18 +5,18 @@ title: Release Notes
 ### 0.6.1-alpha.1
 
 * Producers: `Producer.define name inputs dependencies execute` declares a typed, named unit of deferred work
-  with its own CLI inputs and its own prerequisites. A stage requires one through
-  `consumes (DependencySpec.require producer) (fun value -> ...)`, which is also what schedules it: the producer
-  runs once per invocation and every consumer shares the one result, so retrying a consumer re-runs the consumer
-  alone. `DependencySpec.map`/`map2`/`zip` combine several.
+  with its own CLI inputs and prerequisites. A stage requires one through
+  `consumes (DependencySpec.require producer) (fun value -> ...)`, which also schedules it: the producer runs
+  once per invocation and every consumer shares the result, so retrying a consumer re-runs only that consumer.
+  `DependencySpec.map`/`map2`/`zip` combine several.
 * `onFailure` registers a failure handler on a stage, a pipeline or a command. It runs once per failed execution
-  of its scope, after that scope's retries are exhausted, and reads the failure off `FailureContext.Primary` and
-  `Secondary` and a producer's published value off `FailureContext.TryGetOutput` rather than off rendered text.
-* `PipelineContext.Reports` carries a `ScopeReport` per stage — the outcome, whether the failure propagates to
-  the containing scope, and a `StepFailure` per cause naming the step. A `continueStageOnFailure` therefore
-  reports `Failed` with `Propagates = false` and keeps the cause, which is what lets a consumer tell a failed
-  producer from a skipped one.
-* Three ways to run a `Cmd` from inside a step, for when the step needs the result rather than the exit code:
+  of its scope, after that scope's retries are exhausted, and reads the failure off `FailureContext.Primary`/
+  `Secondary` and a producer's published value off `FailureContext.TryGetOutput`, rather than off rendered text.
+* `PipelineContext.Reports` carries a `ScopeReport` per stage: the outcome, whether the failure propagates to
+  the containing scope, and a `StepFailure` per cause naming the step. A `continueStageOnFailure` reports
+  `Failed` with `Propagates = false` and keeps the cause, which lets a consumer tell a failed producer from a
+  skipped one.
+* Three ways to run a `Cmd` from inside a step, when the step needs the result rather than the exit code:
   `execute` streams the output and fails on an exit code the stage does not accept, `executeCapture` captures
   instead and attaches the capture to the failure as evidence, and `attemptCapture` always answers a
   `CommandResult`, unaccepted exit codes included. `runOperation` adds any `Operation<unit>` as a step.

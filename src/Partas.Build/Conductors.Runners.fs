@@ -27,8 +27,8 @@ module StageContext =
 
     /// <summary>The steps of one attempt that have started and not finished, by step index.</summary>
     /// <remarks>
-    /// A cancelled <c>async</c> runs neither a handler nor a continuation, so a step a token ended stays here
-    /// until the attempt has unwound, which is what lets the attempt say which steps its own timeout ended.
+    /// A step a token ended stays recorded here through the attempt's unwind, and an expiry of the stage's own
+    /// budget is reported against every step still recorded when the attempt reaches its classification.
     /// </remarks>
     type internal InFlightSteps = System.Collections.Concurrent.ConcurrentDictionary<int, InFlightStep>
 
@@ -540,6 +540,31 @@ module PipelineContext =
         let pipelineExns = ResizeArray<exn>()
         use cts = new CancellationTokenSource(timeoutForPipeline)
         let mutable hasErrors = false
+
+        // Once per failed run, after every stage of it has reported to its own handlers. The failure the
+        // pipeline ends with is the first that reached it, whichever scope produced it; `raised` carries the
+        // exception of a run a stage ended by raising, which leaves no cause behind.
+        let mutable reportedFailure = false
+
+        let reportFailure (raised: exn list) =
+            if not reportedFailure then
+                reportedFailure <- true
+                let propagated = ScopeReports.propagated this.Reports
+                let exns = List.ofSeq pipelineExns @ raised
+
+                let context: FailureContext = {
+                    Scope = this.Name
+                    Address = ScopeAddress.root
+                    Outcome = StageContext.Internal.getOutcome true false exns propagated
+                    Failures = propagated
+                    Exceptions = exns
+                    Nested = ScopeReports.stages this.Reports
+                    Published = ExecutionState.values this.Producers
+                }
+
+                for failure in FailureContext.runHandlers this.OnFailure context do
+                    PipelineContext.printError this (FailureCause.describe failure.Cause)
+
         try
             if this.Stages.Length > 1 then
                 Markup.turquoise4 "Run stages"
@@ -566,6 +591,11 @@ module PipelineContext =
 
         with ex ->
             PipelineContext.printError this ex.Message
+
+            match ex with
+            | :? PipelineCancelledException -> ()
+            | _ -> reportFailure [ ex ]
+
             raise ex
 
 
@@ -587,24 +617,7 @@ module PipelineContext =
         if cts.IsCancellationRequested then
             raise (PipelineCancelledException "Cancelled by console")
 
-        // Once per failed run, after every stage of it has reported to its own handlers. The failure the
-        // pipeline ends with is the first that reached it, whichever scope produced it.
-        if hasErrors || pipelineExns.Count > 0 then
-            let propagated = ScopeReports.propagated this.Reports
-            let exns = List.ofSeq pipelineExns
-
-            let context: FailureContext = {
-                Scope = this.Name
-                Address = ScopeAddress.root
-                Outcome = StageContext.Internal.getOutcome true false exns propagated
-                Failures = propagated
-                Exceptions = exns
-                Nested = ScopeReports.stages this.Reports
-                Published = ExecutionState.values this.Producers
-            }
-
-            for failure in FailureContext.runHandlers this.OnFailure context do
-                PipelineContext.printError this (FailureCause.describe failure.Cause)
+        if hasErrors || pipelineExns.Count > 0 then reportFailure []
 
         if pipelineExns.Count > 0 then
             for exn in pipelineExns do

@@ -72,9 +72,9 @@ type StageSettingsBuilder() =
     /// <summary>Registers a handler to run when this stage fails.</summary>
     /// <remarks>
     /// The handler runs once per failed execution of the stage, after that execution exhausts its <c>retry</c>
-    /// attempts and before the handlers of the scopes enclosing it. A stage a retry recovers runs none, and
-    /// neither does one a cancellation ended: the stage's own <c>timeout</c> and <c>timeoutForStep</c> are
-    /// failures of the stage, while an ancestor's token, the pipeline's and the invocation's are cancellations.
+    /// attempts and before the handlers of the scopes enclosing it. A stage a retry recovers keeps its handlers
+    /// back, and so does a cancelled one: the stage's own <c>timeout</c> and <c>timeoutForStep</c> are failures
+    /// of the stage, while an ancestor's token, the pipeline's and the invocation's are cancellations.
     /// <para>The handler receives the causes the execution recorded and the producer values the invocation
     /// holds. An exception out of it is one more cause of the same scope, and the primary stays where it
     /// was.</para>

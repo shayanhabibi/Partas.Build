@@ -384,6 +384,51 @@ let handlers =
             | other -> failtestf "one pipeline handler invocation should be recorded; got %i" other.Length
         }
 
+        test "a stage whose failure the pipeline absorbs still reports it, and the pipeline reports nothing" {
+            let handled = ResizeArray<FailureContext>()
+            let mutable pipelineHandled = 0
+
+            let work =
+                pipeline "release" {
+                    quiet
+                    onFailure (fun _ -> pipelineHandled <- pipelineHandled + 1)
+                    stage "sign" {
+                        continueStageOnFailure
+                        onFailure handled.Add
+                        run (fun (_: StageContext) -> Error "unsigned")
+                    }
+                }
+
+            quietly (fun () -> PipelineContext.run work)
+
+            Expect.equal handled.Count 1 "a suppressed failure is still a failure of the scope that produced it"
+            Expect.equal pipelineHandled 0 "and the run it never reached ended successfully"
+        }
+
+        test "a stage that fails its own guard reports to the pipeline that raised because of it" {
+            let observed = ResizeArray<FailureContext>()
+
+            let work =
+                pipeline "guarded" {
+                    quiet
+                    onFailure observed.Add
+                    stage "required" { when' false; failIfIgnored }
+                }
+
+            quietly (fun () ->
+                try PipelineContext.run work
+                with :? PipelineFailedException -> ())
+
+            match observed |> List.ofSeq with
+            | [ context ] ->
+                match context.Outcome with
+                | StageOutcome.Failed error -> Expect.stringContains error "cannot be ignored" "the guard names what failed the run"
+                | other -> failtestf "the pipeline should be reported as failed; got %A" other
+
+                Expect.isTrue context.Primary.IsNone "a guard leaves no step cause behind"
+            | other -> failtestf "the pipeline should report once; got %i" other.Length
+        }
+
         test "a cancellation reaching a stage from the invocation runs no handler" {
             let mutable handled = 0
             use cancellation = new CancellationTokenSource 500

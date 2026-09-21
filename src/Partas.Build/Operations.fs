@@ -100,6 +100,8 @@ module Operation =
     /// Collapses a sequence of operations into one operation of a list
     let sequence (operations: Operation<'T> seq) = sequenceImpl Async.Sequential operations
     let parallelSequence (operations: Operation<'T> seq) = sequenceImpl Async.Parallel operations
+    let parallelSequenceWith (maxParallelism: int) (operations: Operation<'T> seq) =
+        sequenceImpl (fun sequence -> Async.Parallel(sequence, maxParallelism)) operations
     let inline private traverseImpl mapFn fn  (operations: Operation<'T> seq) = {
         Execute = fun ctx -> async {
             let! results =
@@ -111,6 +113,8 @@ module Operation =
     }
     let traverse fn (operations: Operation<'T> seq) = traverseImpl fn Async.Sequential operations
     let parallelTraverse fn (operations: Operation<'T> seq) = traverseImpl fn Async.Parallel operations
+    let parallelTraverseWith fn maxParallelism (operations: Operation<'T> seq) =
+        traverseImpl fn (fun sequence -> Async.Parallel(sequence, maxParallelism)) operations
 
 /// <summary>Commands as operations: deferred, stage-configured, and explicit about their failure policy.</summary>
 [<AutoOpen>]

@@ -113,6 +113,28 @@ module DependencySpec =
     let zip (first: Producer<'T>) (second: Producer<'U>): DependencySpec<'T * 'U> =
         map2 (fun left right -> left, right) (require first) (require second)
 
+    let zipDependencies (first: DependencySpec<'A>) (second: DependencySpec<'B>): DependencySpec<'A * 'B> =
+        map2 (fun left right -> left, right) first second
+
+    let traverse fn (dependencies: DependencySpec<'T> seq) =
+        let dependencies = dependencies |> Seq.toList
+        {
+            Requires = dependencies |> List.map _.Requires |> ProducerRef.union
+            Inputs = dependencies |> List.map _.Inputs |> InputSpec.union
+            Read = fun values ->
+                dependencies
+                |> List.map _.Read(values)
+                |> List.fold (fun (okAcc, errAcc) -> function
+                    | Ok value -> okAcc @ [fn value], errAcc
+                    | Error err -> okAcc, errAcc @ [err]
+                    ) ([], [])
+                |> function
+                    | okValues, [] -> Ok okValues
+                    | _, errs -> String.concat "\n" errs |> Error
+        }
+
+    let sequence (dependencies: DependencySpec<'T> seq) = traverse id dependencies
+
 module Producer =
     /// Lists a producer at this exact point in a pipeline or parent stage.
     let stage (producer: Producer<'T>): StageContext =

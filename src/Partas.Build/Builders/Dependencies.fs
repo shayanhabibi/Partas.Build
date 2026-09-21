@@ -20,6 +20,11 @@ type DependenciesBuilder() =
         DependencySpec.require producer
 
     [<EditorBrowsable(EditorBrowsableState.Never)>]
+    member inline _.Source(operation: Operation<'T>): DependencySpec<'T> =
+        Producer.emptyDefine "dependency-free-producer" operation
+        |> DependencySpec.require
+
+    [<EditorBrowsable(EditorBrowsableState.Never)>]
     member inline _.Source(spec: DependencySpec<'T>): DependencySpec<'T> = spec
 
     [<EditorBrowsable(EditorBrowsableState.Never)>]

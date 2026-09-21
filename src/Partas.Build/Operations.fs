@@ -87,6 +87,31 @@ module Operation =
             | raised -> return StepOutcome.Failed (FailureCause.Raised raised)
     }
 
+    open FSharp.Control
+    let inline private sequenceImpl fn (operations: Operation<'T> seq) = {
+        Execute = fun ctx -> async {
+            let! results =
+                operations
+                |> Seq.map _.Execute(ctx)
+                |> fn
+            return Array.toList results
+        }
+    }
+    /// Collapses a sequence of operations into one operation of a list
+    let sequence (operations: Operation<'T> seq) = sequenceImpl Async.Sequential operations
+    let parallelSequence (operations: Operation<'T> seq) = sequenceImpl Async.Parallel operations
+    let inline private traverseImpl mapFn fn  (operations: Operation<'T> seq) = {
+        Execute = fun ctx -> async {
+            let! results =
+                operations
+                |> Seq.map (map mapFn >> _.Execute(ctx))
+                |> fn
+            return Array.toList results
+        }
+    }
+    let traverse fn (operations: Operation<'T> seq) = traverseImpl fn Async.Sequential operations
+    let parallelTraverse fn (operations: Operation<'T> seq) = traverseImpl fn Async.Parallel operations
+
 /// <summary>Commands as operations: deferred, stage-configured, and explicit about their failure policy.</summary>
 [<AutoOpen>]
 module Operations =

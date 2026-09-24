@@ -102,7 +102,10 @@ an ordinary `StageContext`, so renaming it, toggling its parallelism or adding a
 
 - `clean (directories, files)` takes glob patterns relative to the stage's working directory, `!` excluding
   (`[ "**/bin"; "!bin"; "tmp" ]`). A wildcard-free directory is created if missing, as Fake's `cleanDirs` did. The
-  walk skips `.git` and `node_modules` (Fake's `**/bin` also emptied `node_modules/<pkg>/bin`).
+  walk skips `.git` and `node_modules` (Fake's `**/bin` also emptied `node_modules/<pkg>/bin`). Links are never
+  followed: a linked directory is neither walked nor selected, a literal through a link is dropped, and emptying a
+  directory removes the links in it without touching their targets (Fake's glob followed them, so `**/bin` could
+  empty a directory outside the repository).
 - `pack` runs `dotnet pack -c <config> --no-build --no-restore`, where `Program.fs` rebuilt each project in the
   default configuration, in parallel over shared references.
 - `expecto (project, arguments)` takes the suite's arguments instead of a filter, and is skipped by `--skip-tests`.

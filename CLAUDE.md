@@ -132,7 +132,8 @@ for the options every build CLI ends up wanting (`--configuration` and `Dotnet.c
 writes to disk. `Stages.fs` holds the prefab stages (`restore`, `clean`, `build`, `pack`, `expecto`, `nugetPush`,
 `fantomas`, `npmInstall`): functions answering `InputSpec<StageContext>` that read Baked's own options, each with a
 `…With` counterpart taking those options as `InputSpec`s. A skip carries a reason for `--explain`. `Clean.fs` is the
-glob matcher behind `clean`, on `System.IO` alone.
+glob matcher behind `clean`, on `System.IO` alone; it never follows a symbolic link, so everything it deletes lies
+under its root.
 
 The core model, once a single `Types.fs`, is split by responsibility and compiles in this order:
 1. `Exceptions.fs` (`Partas.Build.ErrorHandling`) — pipeline exceptions, `FailureCause`, `StepOutcome`.

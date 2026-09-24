@@ -153,6 +153,29 @@ let tests =
                 finally
                     directory.Delete true
             }
+            test "links are removed without following them" {
+                let outside = tempTree [ "bin/important.txt"; "bin/a.nupkg"; "secret.nupkg" ]
+                let directory = tempTree [ "bin/own.dll"; "src/A/A.fs" ]
+                try
+                    let root = directory.FullName
+                    let link (path: string) (target: string) = Directory.CreateSymbolicLink(Path.Combine(root, path), target) |> ignore
+                    link "link" outside.FullName
+                    link "bin/inner" outside.FullName
+                    link "src/loop" root
+                    File.CreateSymbolicLink(Path.Combine(root, "src/A/linked.nupkg"), Path.Combine(outside.FullName, "secret.nupkg"))
+                    |> ignore
+                    let emptied, deleted = Baked.Clean.run root [ "**/bin"; "link/bin" ] [ "**/*.nupkg" ]
+                    Expect.sequenceEqual emptied [ "bin" ] "a linked directory is neither walked nor selected"
+                    Expect.sequenceEqual deleted [ "src/A/linked.nupkg" ] "a linked file is selected by its own path"
+                    let intact (path: string) = File.Exists(Path.Combine(outside.FullName, path))
+                    Expect.isTrue (intact "bin/important.txt" && intact "bin/a.nupkg" && intact "secret.nupkg") "the link targets are intact"
+                    Expect.isFalse (Directory.Exists(Path.Combine(root, "bin/inner"))) "a link inside an emptied directory is removed"
+                    Expect.isFalse (File.Exists(Path.Combine(root, "bin/own.dll"))) "the directory itself is emptied"
+                    Expect.isTrue (File.Exists(Path.Combine(root, "src/A/A.fs"))) "an unselected file is untouched"
+                finally
+                    directory.Delete true
+                    outside.Delete true
+            }
             test "glob matching" {
                 Expect.isTrue (Baked.Clean.isMatch "**/bin" "bin") "** matches no directories"
                 Expect.isTrue (Baked.Clean.isMatch "**/bin" "a/b/bin") "** matches several directories"

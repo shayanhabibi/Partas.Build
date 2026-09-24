@@ -50,7 +50,6 @@ order: 0
 #load "../../src/Partas.Build.Baked/SemVer.fs"
 
 open Partas.Build
-open Partas.Build.Internal
 
 (**
 

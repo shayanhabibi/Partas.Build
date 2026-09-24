@@ -199,12 +199,12 @@ module Stages =
 
         return stage "bump" {
             when' (not ci)
-            run (fun (_: Internal.StageContext) ->
+            run (fun (ctx: StageContext) ->
                 projects
                 |> List.map (fun project ->
                     match Version.IO.bumpVersion project bump with
                     | Ok (previous, next) ->
-                        printfn $"%s{project}: %s{previous} -> %s{next}"
+                        StageContext.writeLine ctx StdStream.Out $"%s{project}: %s{previous} -> %s{next}"
                         Ok()
                     | Error error -> Error $"%s{project}: %s{error.Message}"
                     )
@@ -220,7 +220,7 @@ module Stages =
     /// <param name="projects">
     /// The input spec for the project path(s) to bump.
     /// </param>
-    let bumpArgument (projects: InputSpec<string list>): InputSpec<Internal.StageContext> =
+    let bumpArgument (projects: InputSpec<string list>): InputSpec<StageContext> =
         bumpImpl (InputSpec.ofInput bump.argument |> InputSpec.map (Option.defaultValue Patch)) projects
 
     /// <summary>
@@ -230,7 +230,7 @@ module Stages =
     /// <param name="projects">
     /// The input spec for the project path(s) to bump.
     /// </param>
-    let bumpOption (projects: InputSpec<string list>): InputSpec<Internal.StageContext> =
+    let bumpOption (projects: InputSpec<string list>): InputSpec<StageContext> =
         input {
             let! bump = bump.option
             and! bumpImpl =

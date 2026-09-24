@@ -55,7 +55,6 @@ order: 4
 
 open System.Threading
 open Partas.Build
-open Partas.Build.Internal
 (**
 # Computation Expression Operations
 

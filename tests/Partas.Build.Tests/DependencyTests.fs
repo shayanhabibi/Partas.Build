@@ -117,7 +117,7 @@ let tests =
                 }
             }
 
-            Expect.equal (built.Parse("").Invoke()) 1 "validation fails invocation"
+            Expect.equal (built.Parse("").Invoke()) ExitCode.UsageError "validation fails invocation as a usage error"
             Expect.isFalse ran "even earlier work waits for whole-plan validation"
         }
 

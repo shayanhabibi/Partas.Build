@@ -38,6 +38,7 @@
         <Compile Include="Builders\Dependencies.fs" />
         <Compile Include="Explain.fs" />
         <Compile Include="Summary.fs" />
+        <Compile Include="RunResult.fs" />
         <Compile Include="Builders\Command.fs" />
         <None Include="../../README.md" Pack="true" PackagePath="\" />
     </ItemGroup>

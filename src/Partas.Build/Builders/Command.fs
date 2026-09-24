@@ -6,6 +6,8 @@ open System.IO
 open System.CommandLine
 open System.CommandLine.Help
 open System.CommandLine.Invocation
+open System.Runtime.CompilerServices
+open System.Threading
 open Partas.Build
 open Partas.Build.Internal
 
@@ -64,48 +66,74 @@ let private register (command: Command) (input: ActionInput) =
 
 /// Prints the tree the command's pipelines resolve to under <paramref name="parseResult"/>, then the invocation
 /// paths still missing a description. Materialising a pipeline runs its stage builders, never its steps.
-let private explain (command: Command) (pipelines: PipelineContext list) =
+let private explain (output: TextWriter) (command: Command) (pipelines: PipelineContext list) =
     pipelines
     |> Explain.ofPipelines command
-    |> Console.Out.WriteLine
+    |> output.WriteLine
 
-    0
+    ExitCode.Success
+
+/// The state an invocation through <c>RootCommandDefinition.Invoke</c> shares with the command action it reaches.
+[<Sealed>]
+type private InvocationState(cancellationToken: CancellationToken) =
+    let pipelines = ResizeArray<PipelineRun>()
+    member _.CancellationToken = cancellationToken
+    member _.Record(run: PipelineRun) = lock pipelines (fun () -> pipelines.Add run)
+    member _.Pipelines = lock pipelines (fun () -> List.ofSeq pipelines)
+
+/// The invocation state of each parse result an invocation is running. A parse result invoked directly through
+/// System.CommandLine has none, and runs uncancellable with its pipeline runs unrecorded.
+let private invocations = ConditionalWeakTable<ParseResult, InvocationState>()
 
 /// <summary>Runs <paramref name="pipeline"/> and prints what each of its stages took.</summary>
 /// <remarks>
 /// A run that failed prints the table too, with the stage that failed in it. A quiet pipeline prints none, and
 /// so does a run of a single stage, whose wall time is the pipeline's own.
 /// </remarks>
-let private runReportingTimings (pipeline: PipelineContext) =
+let private runReportingTimings (output: TextWriter) (state: InvocationState voption) (pipeline: PipelineContext) =
+    let cancellationToken = state |> ValueOption.map _.CancellationToken |> ValueOption.defaultValue CancellationToken.None
     try
-        PipelineContext.run pipeline
+        PipelineContext.runWith cancellationToken pipeline
     finally
+        let timings = StageTimings.ordered pipeline.Timings
+        state |> ValueOption.iter (fun state ->
+            state.Record { Name = pipeline.Name; Reports = ScopeReports.stages pipeline.Reports; Timings = timings })
+
         let verbosity = defaultValueArg pipeline.Verbosity Verbosity.Default
 
-        match StageTimings.ordered pipeline.Timings with
+        match timings with
         | [] | [ _ ] -> ()
         | _ when verbosity.IsQuiet -> ()
-        | timings -> Summary.render timings |> Console.Out.WriteLine
+        | timings -> Summary.render timings |> output.WriteLine
 
 /// Reads each pipeline out of the parse result and runs it, in declaration order. Producer work is placed into
 /// the pipelines that run, after the whole invocation validates and never on the way to <c>--explain</c>.
 /// The runner has already reported the failure by the time it raises, so this only maps it to an exit code.
 let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseResult) =
+    let state =
+        match invocations.TryGetValue parseResult with
+        | true, state -> ValueSome state
+        | false, _ -> ValueNone
+
+    let configuration = parseResult.InvocationConfiguration
     let pipelines = spec.Pipelines |> List.map (fun pipeline -> pipeline.Read parseResult)
     match DependencyPlan.validate pipelines with
     | Error message ->
-        Console.Error.WriteLine message
-        1
-    | Ok _ when Explain.option.GetValue parseResult -> explain command pipelines
+        configuration.Error.WriteLine message
+        ExitCode.UsageError
+    | Ok _ when Explain.option.GetValue parseResult -> explain configuration.Output command pipelines
     | Ok plan ->
         try
             for pipeline in ExecutionSchedule.schedule parseResult plan pipelines do
-                runReportingTimings pipeline
+                match state with
+                | ValueSome state when state.CancellationToken.IsCancellationRequested ->
+                    raise (PipelineCancelledException "Cancelled by the invocation")
+                | _ -> runReportingTimings configuration.Output state pipeline
 
-            0
+            ExitCode.Success
         with
-        | :? PipelineFailedException -> 1
-        | :? PipelineCancelledException -> 130
+        | :? PipelineFailedException -> ExitCode.Failure
+        | :? PipelineCancelledException -> ExitCode.Cancelled
 
 /// Applies a finished spec to a command, registering the options its pipelines declared.
 let private applyTo (command: Command) (spec: CommandSpec) =
@@ -537,8 +565,77 @@ type CommandBuilder(name: string) =
 
     member this.Run(stages: CommandStages): Command = this.Run(addPipeline (pipelineOfCommandStages stages))
 
-/// <summary>Builds the root command and runs it against <c>args</c>, returning the process exit code.</summary>
-type RootCommandBuilder(args: string array) =
+/// <summary>A root command, built and ready to parse and run any number of argument lists.</summary>
+/// <remarks>
+/// Built by <c>Command.root { … }</c>, which takes every operation <c>rootCommand</c> takes. Parsing and running
+/// happen only in <c>Invoke</c>, never at construction, so the value can be bound once in a long-lived host
+/// and invoked repeatedly, one invocation after another. Concurrent invocations of one value are unsupported.
+/// </remarks>
+[<Sealed>]
+type RootCommandDefinition
+    internal (command: RootCommand, parserConfiguration: ParserConfiguration voption, invocationConfiguration: InvocationConfiguration voption) =
+
+    /// The System.CommandLine command the definition parses against.
+    member _.Command = command
+
+    /// <summary>Parses <paramref name="args"/>, runs what they select, and returns the structured result.</summary>
+    /// <param name="args">The arguments, without the executable or script name.</param>
+    /// <param name="output">
+    /// Receives help, <c>--version</c>, <c>--explain</c> and the timing summary, and — unless
+    /// <paramref name="error"/> is given — parse and validation errors. Defaults to the
+    /// <c>invocationConfiguration</c> the root was built with, else the console. Stage output continues to
+    /// follow each stage's own output setting.
+    /// </param>
+    /// <param name="error">Receives parse and validation errors.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the running pipeline as its own <c>timeout</c> would, killing the process tree of any step
+    /// running, and prevents the remaining pipelines from starting. The result is then <c>Cancelled</c>.
+    /// </param>
+    member _.Invoke(args: string seq, ?output: TextWriter, ?error: TextWriter, ?cancellationToken: CancellationToken): RunResult =
+        let args = Array.ofSeq args
+
+        let parseResult =
+            match parserConfiguration with
+            | ValueSome config -> command.Parse(args, config)
+            | ValueNone -> command.Parse args
+
+        let state = InvocationState(defaultArg cancellationToken CancellationToken.None)
+        invocations.Add(parseResult, state)
+
+        let configuration =
+            match output, error with
+            | None, None -> invocationConfiguration
+            | _ ->
+                let configuration = InvocationConfiguration()
+
+                invocationConfiguration
+                |> ValueOption.iter (fun given ->
+                    configuration.EnableDefaultExceptionHandler <- given.EnableDefaultExceptionHandler
+                    configuration.ProcessTerminationTimeout <- given.ProcessTerminationTimeout
+                    configuration.Output <- given.Output
+                    configuration.Error <- given.Error)
+
+                output |> Option.iter (fun output -> configuration.Output <- output; configuration.Error <- output)
+                error |> Option.iter (fun error -> configuration.Error <- error)
+                ValueSome configuration
+
+        let exitCode =
+            try
+                match configuration with
+                | ValueSome config -> parseResult.Invoke config
+                | ValueNone -> parseResult.Invoke()
+            finally
+                invocations.Remove parseResult |> ignore
+
+        let exitCode =
+            match parseResult.Action with
+            | :? ParseErrorAction -> ExitCode.UsageError
+            | _ -> exitCode
+
+        { ExitCode = exitCode; Outcome = RunOutcome.ofExitCode exitCode; Pipelines = state.Pipelines }
+
+/// <summary>The operations only a root command takes.</summary>
+type RootCommandBuilderBase() =
     inherit CommandBuilderBase()
 
     /// <summary>Configures System.CommandLine's parser behavior.</summary>
@@ -566,30 +663,49 @@ type RootCommandBuilder(args: string array) =
         ([<InlineIfLambda>] build: BuildCommand, name: string): BuildCommand
         = build >> fun cmd -> { cmd with DisplayName = ValueSome name }
 
-    member this.Run(stages: CommandStages): int = this.Run(addPipeline (pipelineOfCommandStages stages))
-
-    member _.Run(build: BuildCommand): int =
+    // Not `inline`: it applies the `BuildCommand` function (`FS1118` in Release).
+    member _.Define(build: BuildCommand): RootCommandDefinition =
         let spec = CommandSpec.create "" |> build
-        let root = applyTo (RootCommand()) spec
+        let root = RootCommand()
+        applyTo root spec |> ignore
         let displayName = spec.DisplayName |> ValueOption.orElse (Args.scriptName ())
 
         displayName |> ValueOption.iter (nameHelpOutput root)
         nameVersionOutput root displayName
+        RootCommandDefinition(root, spec.ParserConfiguration, spec.InvocationConfiguration)
 
-        let parseResult =
-            match spec.ParserConfiguration with
-            | ValueSome config -> root.Parse(args, config)
-            | ValueNone -> root.Parse args
+/// <summary>Builds a root command without running it; see <c>RootCommandDefinition</c>.</summary>
+type RootCommandDefinitionBuilder() =
+    inherit RootCommandBuilderBase()
 
-        match spec.InvocationConfiguration with
-        | ValueSome config -> parseResult.Invoke config
-        | ValueNone -> parseResult.Invoke()
+    member this.Run(build: BuildCommand): RootCommandDefinition = this.Define build
+    member this.Run(stages: CommandStages): RootCommandDefinition = this.Define(addPipeline (pipelineOfCommandStages stages))
+
+/// <summary>Builds the root command and runs it against <c>args</c>, returning the process exit code.</summary>
+/// <remarks>The exit code is <c>ExitCode</c>'s: <c>Command.root { … }</c> with <c>Command.invoke args</c> is the same run returning the whole <c>RunResult</c>.</remarks>
+type RootCommandBuilder(args: string array) =
+    inherit RootCommandBuilderBase()
+
+    member this.Run(build: BuildCommand): int = this.Define(build).Invoke(args).ExitCode
+    member this.Run(stages: CommandStages): int = this.Run(addPipeline (pipelineOfCommandStages stages))
 
 module Command =
     /// <summary>
     /// Only use within a <c>command</c> or <c>rootCommand</c>.
     /// </summary>
     let pipeline = PipelineBuilder(null)
+
+    /// <summary>
+    /// Builds a root command without parsing or running anything: <c>rootCommand</c>'s operations, returning a
+    /// <c>RootCommandDefinition</c> for <c>Command.invoke</c>.
+    /// </summary>
+    let root = RootCommandDefinitionBuilder()
+
+    /// <summary>
+    /// Parses <paramref name="args"/> against <paramref name="root"/>, runs what they select, and returns the
+    /// structured result. <c>RootCommandDefinition.Invoke</c> takes an output writer and a cancellation token.
+    /// </summary>
+    let invoke (args: string seq) (root: RootCommandDefinition) : RunResult = root.Invoke args
 
 let inline command name = CommandBuilder name
 let inline rootCommand args = RootCommandBuilder args

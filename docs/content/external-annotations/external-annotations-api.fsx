@@ -40,6 +40,7 @@ index: 2
 #load "../../../src/Partas.Build/Builders/Inputs.fs"
 #load "../../../src/Partas.Build/Explain.fs"
 #load "../../../src/Partas.Build/Summary.fs"
+#load "../../../src/Partas.Build/RunResult.fs"
 #load "../../../src/Partas.Build/Builders/Command.fs"
 #load "../../../src/Partas.Build.Baked/Program.fs"
 #load "../../../src/Partas.Build.Baked/Common.fs"

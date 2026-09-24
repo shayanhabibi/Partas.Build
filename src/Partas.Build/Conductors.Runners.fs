@@ -618,14 +618,17 @@ module PipelineContext =
 
     let runStages (ctx: PipelineContext) (cancelToken: CancellationToken) (stages: StageContext seq) = runStagesWithFailFast ctx false cancelToken stages
 
-    /// <summary>Runs every stage of <paramref name="this"/> and raises on failure or cancellation.</summary>
+    /// <summary>
+    /// Runs every stage of <paramref name="this"/> under <paramref name="cancellationToken"/>, and raises on
+    /// failure or cancellation.
+    /// </summary>
     /// <remarks>
-    /// Skips <c>DependencyPlan.validate</c>: the command path validates placement before this runs and never
-    /// reaches it for <c>--explain</c>, but a caller invoking this directly gets no such check, and an
-    /// arrangement <c>DependencyPlan.validate</c> would reject — a producer placed under a <c>parallel'</c> or
-    /// <c>shuffleExecuteSequence</c> scope, say — runs instead of failing at validation.
+    /// A cancellation of <paramref name="cancellationToken"/> acts as the pipeline's own <c>timeout</c> does: the
+    /// stages observe a cancellation, a process started by a step is killed with its tree, and the run raises
+    /// <see cref="T:Partas.Build.ErrorHandling.PipelineCancelledException"/>. Skips <c>DependencyPlan.validate</c>,
+    /// as <c>run</c> does.
     /// </remarks>
-    let rec run (this: PipelineContext) =
+    let runWith (cancellationToken: CancellationToken) (this: PipelineContext) =
         Console.InputEncoding <- Encoding.UTF8
         Console.OutputEncoding <- Encoding.UTF8
         StageTimings.clear this.Timings
@@ -646,7 +649,8 @@ module PipelineContext =
 
         let sw = Stopwatch.StartNew()
         let pipelineExns = ResizeArray<exn>()
-        use cts = new CancellationTokenSource(timeoutForPipeline)
+        use cts = CancellationTokenSource.CreateLinkedTokenSource cancellationToken
+        cts.CancelAfter timeoutForPipeline
         let mutable hasErrors = false
 
         // Once per failed run, after every stage of it has reported to its own handlers. The failure the
@@ -751,4 +755,13 @@ module PipelineContext =
             match ScopeReports.propagated this.Reports with
             | failure :: _ -> raise (PipelineFailedException(message, FailureCause.toException failure.Cause))
             | [] -> raise (PipelineFailedException message)
+
+    /// <summary>Runs every stage of <paramref name="this"/> and raises on failure or cancellation.</summary>
+    /// <remarks>
+    /// Skips <c>DependencyPlan.validate</c>: the command path validates placement before this runs and never
+    /// reaches it for <c>--explain</c>, but a caller invoking this directly gets no such check, and an
+    /// arrangement <c>DependencyPlan.validate</c> would reject — a producer placed under a <c>parallel'</c> or
+    /// <c>shuffleExecuteSequence</c> scope, say — runs instead of failing at validation.
+    /// </remarks>
+    let run (this: PipelineContext) = runWith CancellationToken.None this
 

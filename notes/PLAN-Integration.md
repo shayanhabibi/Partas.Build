@@ -89,6 +89,32 @@ Open question: whether prefabs are functions returning `InputSpec<StageContext>`
 fields (W12 in `FEEDBACK-Xantham.md`, deferred). Functions first; records only if a consumer needs to patch
 one prefab field.
 
+**Status: implemented on `claude/partas-build-patterns-jgrwr0-baked-stages`.** `src/Partas.Build.Baked/Stages.fs`
+(`module Partas.Build.Baked.Stages`) and `Clean.fs`; `Common.quick`/`skipTests`/`watch` and `Dotnet.configOrRelease`.
+Tests in `tests/Partas.Build.Tests/BakedTests.fs` resolve each prefab against parsed options and walk the
+`StageContext` (names, step labels with the key masked, skip reasons, parallelism); only `clean` runs, on a temp
+tree. `Build/Program.fs` now takes restore, clean, build, pack, the four Expecto suites and the push from Baked,
+and has no Fake dependency (the `Fake.*` package references are gone from `Build.fsproj`). Q3 (§8) is decided:
+**functions**. Each prefab reads Baked's own options, and a `…With` counterpart takes each of those options as an
+`InputSpec`, so a consumer with its own `--fast` or configuration option composes without a record. The result is
+an ordinary `StageContext`, so renaming it, toggling its parallelism or adding a condition is an `InputSpec.map`
+(`Program.fs`'s `Tests.buildAll` does all three). Deviations from the table:
+
+- `clean (directories, files)` takes glob patterns relative to the stage's working directory, `!` excluding
+  (`[ "**/bin"; "!bin"; "tmp" ]`). A wildcard-free directory is created if missing, as Fake's `cleanDirs` did. The
+  walk skips `.git` and `node_modules` (Fake's `**/bin` also emptied `node_modules/<pkg>/bin`).
+- `pack` runs `dotnet pack -c <config> --no-build --no-restore`, where `Program.fs` rebuilt each project in the
+  default configuration, in parallel over shared references.
+- `expecto (project, arguments)` takes the suite's arguments instead of a filter, and is skipped by `--skip-tests`.
+- `nugetPush` matches on the key rather than going through `whenSome`, since the keyless case yields the
+  local-feed push instead of nothing. The key is bound by the pattern and added through `Cmd.secretOption`.
+- `npmInstall` runs `npm ci` under `--ci` and `npm install` otherwise, with `--prefix <directory>` so a relative
+  directory resolves against the pipeline's working directory.
+- Skips carry an `--explain` reason (`--quick is set`) through `StageContext.addPredicateBecause`, pending §3.2's
+  `when'` with a reason.
+- Left hand-rolled in `Program.fs`: the compiler probe (it must build, in both configurations, so a `--no-build`
+  suite does not fit), the docs stages, and the outer `test` stage's own `--skip-tests` guard over the probe.
+
 ### 3.2 API traps
 
 - **`run (fun ctx -> "…")` executes the returned string as a command line** (`StageSettings.fs:363`). A lambda

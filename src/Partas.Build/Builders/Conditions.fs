@@ -271,8 +271,8 @@ type StageBuilder with
     [<CustomOperation("when'")>]
     member inline _.when'([<IIL>] build: BuildStage, value: bool) = StageContext.buildStageIsActive build (fun _ -> value)
 
-    /// <summary>Sets whether the stage is active using a literal boolean condition, and names the reason
-    /// <c>--explain</c> prints when the condition is false.</summary>
+    /// <summary>Sets whether the stage is active from a literal boolean condition; <paramref name="skipReason"/> is
+    /// reported by <c>--explain</c> against an inactive stage.</summary>
     /// <remarks>
     /// <include file="../xmldoc/conditions.xml" path="/conditions/conjoin/*"/>
     /// <c>when' (not quick) "--quick is set"</c> renders a skipped stage as <c>(skipped: --quick is set)</c>.
@@ -280,7 +280,7 @@ type StageBuilder with
     /// </remarks>
     /// <param name="build" />
     /// <param name="value">The condition.</param>
-    /// <param name="skipReason">The text <c>--explain</c> prints against the stage when <paramref name="value"/> is false.</param>
+    /// <param name="skipReason">The reason reported by <c>--explain</c> when <paramref name="value"/> is false.</param>
     [<CustomOperation("when'")>]
     member inline _.when'([<IIL>] build: BuildStage, value: bool, skipReason: string) =
         StageContext.buildStageIsActiveBecause (ValueSome skipReason) build (fun _ -> value)

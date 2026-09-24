@@ -142,6 +142,17 @@ let tests =
                 finally
                     directory.Delete true
             }
+            test "a selected directory nested inside another selected directory is omitted" {
+                let directory = tempTree [ "src/A/bin/A.dll"; "a/b/c.txt" ]
+                try
+                    let root = directory.FullName
+                    Expect.sequenceEqual (Baked.Clean.directories root [ "**/bin"; "src/A/bin/keep" ]) [ "src/A/bin" ] "literal under a match"
+                    Expect.sequenceEqual (Baked.Clean.directories root [ "a"; "a/b" ]) [ "a" ] "literal under a literal"
+                    Expect.sequenceEqual (Baked.Clean.directories root [ "src"; "**/bin" ]) [ "src" ] "match under a literal"
+                    Expect.sequenceEqual (Baked.Clean.directories root [ "ab"; "a" ]) [ "ab"; "a" ] "a shared prefix is not nesting"
+                finally
+                    directory.Delete true
+            }
             test "glob matching" {
                 Expect.isTrue (Baked.Clean.isMatch "**/bin" "bin") "** matches no directories"
                 Expect.isTrue (Baked.Clean.isMatch "**/bin" "a/b/bin") "** matches several directories"

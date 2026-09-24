@@ -156,7 +156,8 @@ changed since the last call and nothing else replaced `AnsiConsole.Console` mean
 as the tests' `capturingOut` makes, is kept). Under `Terminal.withOutput writer` — an `AsyncLocal`, so it flows
 into the thread-pool work the run starts — `ansi ()` is a plain (no ANSI, no colour) console over `writer`,
 `Terminal.out ()` (where a `Console`-sink step line goes) is `writer`, and `CmdRunner.outputPolicy` redirects a
-`Console`-sink child, which would otherwise inherit the real stdout. A console whose writer has no terminal
+`Console`-sink child, which would otherwise inherit the real stdout; `withOutput` installs the writer through
+`TextWriter.Synchronized`, since several threads write to it. A console whose writer has no terminal
 reports width `-1` and renders nothing, so `ansi`/`plain` give it `FallbackWidth` (80). `Terminal.ensureUtf8`
 sets the console encodings at most once per process, skips a redirected stream, and swallows a failure.
 
@@ -165,6 +166,9 @@ them over `PipelineContext.ambientEnvironment ()` read as the run starts, so a v
 value was built is visible to its steps. `runWith` also refuses a second concurrent run of one pipeline value
 (identity: the `ScopeReports` a value and its record copies share) with an `InvalidOperationException` before
 touching anything; `PipelineContext.withRunState` gives a copy collections of its own that runs independently.
+`Builders/Command.fs`'s `runReportingTimings` holds the guard itself (`PipelineContext.Running.enter`, then
+`runEntered`) outside the `try` whose `finally` records and prints the run, so a refused invocation reports
+nothing of the run holding the value.
 
 `src/Partas.Build.Cmd` (`Program.fs`, `Execution.fs`) is the process layer, defining `Cmd` and compiling before `Partas.Build`.
 

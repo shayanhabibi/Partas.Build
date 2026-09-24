@@ -256,7 +256,9 @@ From SageFs's source (`SageFs.Core/AppState.fs`, `Features/LiveTestingExecutors.
      changes.
    - `invoke`'s `output`, when given, is an `AsyncLocal` run writer (`Terminal.withOutput`): the pipeline's own
      lines, `Console`-sink step lines, and — by forcing redirection in `CmdRunner.outputPolicy` — a
-     `Console`-sink child process's output go there, as plain text.
+     `Console`-sink child process's output go there, as plain text. `withOutput` wraps the writer in
+     `TextWriter.Synchronized`: `parallel'` stages and a redirected child's two reader callbacks write to it at
+     once, and a caller's `StringWriter` is not thread-safe.
    - Found by the spike: without a terminal (SageFs's worker, a CI container) Spectre reports width `-1` and
      `MarkupLine` renders nothing at all, while tables and rules throw "Console width must be greater than
      zero". The library's consoles fall back to 80 columns (`Terminal.FallbackWidth`), and `Summary.render`
@@ -275,7 +277,8 @@ From SageFs's source (`SageFs.Core/AppState.fs`, `Features/LiveTestingExecutors.
    seconds for the run to wind down, and rethrows; `Invoke` then returns no `RunResult`. The cmd test tracks the
    sleep processes it started by id and ignores zombies: in this container nothing reaps an orphaned grandchild,
    so a killed `sleep` lingers `<defunct>` and the existing count-based no-survivor tests fail here on the base
-   branch too.
+   branch too. The linked source is disposed in a `finally`, so a failed or interrupted invocation leaves no
+   registration on a caller's long-lived token.
 
 5. **Environment read at run time**: `PipelineContext.run` refreshes the ambient environment it starts from,
    keeping the pipeline's own `envVars` on top.
@@ -297,7 +300,10 @@ From SageFs's source (`SageFs.Core/AppState.fs`, `Features/LiveTestingExecutors.
    command ran, and `ExecutionSchedule.schedule` closes over `pipeline.Producers`, so a copy would have to be
    taken before scheduling and would hide the run from those readers. Two concurrent invocations reaching the
    same pipeline value therefore fail the second (System.CommandLine's exception handler, exit 1); an
-   input-aware pipeline builds a fresh value per invocation and is unaffected.
+   input-aware pipeline builds a fresh value per invocation and is unaffected. The command path enters the
+   guard (`PipelineContext.Running.enter`) before the `try` whose `finally` records the run into the
+   `RunResult` and prints the timing summary, then runs through `runEntered`: a refused invocation records no
+   pipeline run and prints nothing of the run holding the value.
 
 ### 5.4 Consumer-side pattern (docs, not library code)
 

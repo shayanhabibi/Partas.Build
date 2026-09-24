@@ -92,8 +92,10 @@ let private invocations = ConditionalWeakTable<ParseResult, InvocationState>()
 /// </remarks>
 let private runReportingTimings (output: TextWriter) (state: InvocationState voption) (pipeline: PipelineContext) =
     let cancellationToken = state |> ValueOption.map _.CancellationToken |> ValueOption.defaultValue CancellationToken.None
+    // Entered outside the `try`: a run refused here must not record or print the collections of the run holding it.
+    use _running = PipelineContext.Running.enter pipeline
     try
-        PipelineContext.runWith cancellationToken pipeline
+        PipelineContext.runEntered cancellationToken pipeline
     finally
         let timings = StageTimings.ordered pipeline.Timings
         state |> ValueOption.iter (fun state ->
@@ -580,17 +582,19 @@ let private runInterruptibly (cts: CancellationTokenSource) (fn: unit -> 'T) : '
             Func<'T> fn, CancellationToken.None, Tasks.TaskCreationOptions.LongRunning, Tasks.TaskScheduler.Default)
 
     try
-        worker.Wait()
-    with
-    | :? ThreadInterruptedException ->
-        cts.Cancel()
-        (try worker.Wait interruptGracePeriod |> ignore with _ -> ())
-        reraise ()
-    | :? AggregateException as ex when ex.InnerExceptions.Count = 1 ->
-        Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw()
+        try
+            worker.Wait()
+        with
+        | :? ThreadInterruptedException ->
+            cts.Cancel()
+            (try worker.Wait interruptGracePeriod |> ignore with _ -> ())
+            reraise ()
+        | :? AggregateException as ex when ex.InnerExceptions.Count = 1 ->
+            Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw()
 
-    cts.Dispose()
-    worker.Result
+        worker.Result
+    finally
+        cts.Dispose()
 
 /// <summary>A root command, built and ready to parse and run any number of argument lists.</summary>
 /// <remarks>

@@ -605,6 +605,40 @@ let invocation =
             Expect.equal exitCode ExitCode.UsageError "and parses what the function answered"
         }
 
+        test "an invocation refused a running pipeline records and prints nothing of the run holding it" {
+            use started = new Threading.ManualResetEventSlim false
+            use release = new Threading.ManualResetEventSlim false
+            let root = Command.root {
+                pipeline "shared" {
+                    stage "stage-alpha" {
+                        run (fun (_: StageContext) ->
+                            started.Set()
+                            release.Wait(TimeSpan.FromSeconds 30.) |> ignore)
+                    }
+                    stage "stage-beta" { run noop }
+                }
+            }
+            use firstOutput = new StringWriter()
+            use secondOutput = new StringWriter()
+            let first = Threading.Tasks.Task.Run(fun () -> root.Invoke([], output = firstOutput))
+
+            try
+                Expect.isTrue (started.Wait(TimeSpan.FromSeconds 30.)) "the first invocation reaches its stage"
+                let second = root.Invoke([], output = secondOutput)
+
+                Expect.notEqual second.ExitCode ExitCode.Success "the refused invocation fails"
+                Expect.isEmpty second.Pipelines "the refused invocation records no pipeline run"
+                Expect.isFalse
+                    (secondOutput.ToString().Contains "stage-alpha")
+                    $"the refused invocation prints nothing of the other run; got:\n{secondOutput}"
+            finally
+                release.Set()
+
+            Expect.isTrue (first.Wait(TimeSpan.FromSeconds 30.)) "the first invocation finishes"
+            Expect.equal first.Result.ExitCode ExitCode.Success "the first invocation is undisturbed"
+            Expect.equal [ for timing in first.Result.Timings -> timing.Name ] [ "stage-alpha"; "stage-beta" ] "and records its own run"
+        }
+
         test "help and --explain write to the given output and exit zero" {
             let root = recordingRoot (ResizeArray())
             use help = new StringWriter()

@@ -76,10 +76,13 @@ let ansi () : IAnsiConsole =
 let width () = (ansi ()).Profile.Width
 
 /// <summary>Runs <paramref name="fn"/> with <paramref name="writer"/> as the run's writer.</summary>
-/// <remarks>The setting flows to the work <paramref name="fn"/> starts, across threads, and ends when it returns.</remarks>
+/// <remarks>
+/// The setting flows to the work <paramref name="fn"/> starts, across threads, and ends when it returns. Writes
+/// reach <paramref name="writer"/> through a synchronised wrapper, one at a time.
+/// </remarks>
 let withOutput (writer: TextWriter) (fn: unit -> 'T) : 'T =
     let previous = runOutput.Value
-    runOutput.Value <- writer
+    runOutput.Value <- TextWriter.Synchronized writer
     try fn () finally runOutput.Value <- previous
 
 let private encodingSet = ref 0

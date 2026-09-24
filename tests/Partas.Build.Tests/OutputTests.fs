@@ -298,6 +298,18 @@ let terminal =
             Expect.isTrue (Terminal.runWriter ()).IsNone "the setting ends with the function"
         }
 
+        test "withOutput serialises concurrent writes to its writer" {
+            use writer = new StringWriter()
+            let ctx = StageContext.create "concurrent"
+            let count = 4000
+
+            Terminal.withOutput writer (fun () ->
+                System.Threading.Tasks.Parallel.For(0, count, fun i -> StageContext.writeLine ctx StdStream.Out $"line-%05d{i}") |> ignore)
+
+            let lines = writer.ToString().Split('\n', System.StringSplitOptions.RemoveEmptyEntries) |> Array.map _.TrimEnd('\r')
+            Expect.equal (Set.ofArray lines).Count count "every line arrives whole, once"
+        }
+
         test "ensureUtf8 never throws, however often it is called" {
             Terminal.ensureUtf8 ()
             Terminal.ensureUtf8 ()

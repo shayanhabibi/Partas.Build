@@ -722,5 +722,27 @@ let machineOutputTests =
             Expect.equal code 0 "the command still runs"
             Expect.equal (List.ofSeq seen) [ "out.json" ] "and reads its own option"
         }
+
+        test "a stage that reads the library's --json registers it once" {
+            let seen = ResizeArray<bool>()
+
+            let built = command "emit" {
+                input {
+                    let! json = MachineOutput.json
+                    return stage "write" { run (fun (_: StageContext) -> seen.Add json) }
+                }
+            }
+
+            Expect.equal (optionNames built |> List.filter ((=) "--json")) [ "--json" ] "the flag is declared once"
+
+            use output = new StringWriter()
+            built.Parse("--schema").Invoke(InvocationConfiguration(Output = output)) |> ignore
+            let options = JsonDocument.Parse(output.ToString()).RootElement |> property "command" |> property "options" |> items
+            let jsonEntries = options |> List.filter (fun option -> (option |> property "name").GetString() = "--json")
+            Expect.equal jsonEntries.Length 1 "and described once"
+
+            Helpers.quietly (fun () -> built.Parse("--json").Invoke()) |> ignore
+            Expect.equal (List.ofSeq seen) [ true ] "the stage reads the flag"
+        }
     ]
 

@@ -260,7 +260,5 @@ module MachineOutput =
         | ParsedOption option ->
             let names = Seq.append [ option.Name ] option.Aliases |> Set.ofSeq
             command.Options
-            |> Seq.exists (fun existing ->
-                not (obj.ReferenceEquals(existing, option))
-                && (names.Contains existing.Name || existing.Aliases |> Seq.exists names.Contains))
+            |> Seq.exists (fun existing -> names.Contains existing.Name || existing.Aliases |> Seq.exists names.Contains)
         | _ -> false

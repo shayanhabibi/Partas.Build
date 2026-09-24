@@ -1,7 +1,7 @@
 # PLAN-Integration
 
 Findings from a survey of how Partas.Build is used in practice, and the design that follows. Drafted
-2026-09-24. **Status: proposal; §3.3, §3.2's `printfn` item and §7 rows 1-2 are implemented (see each section).**
+2026-09-24. **Status: proposal; §3.1, §3.3, §3.2's `printfn` item and §7 rows 1-2 and 9 are implemented (see each section).**
 
 Companion to `PLAN-Discoverability.md`, which responded to `FEEDBACK-Xantham.md` (a report written against
 0.3.0). This document starts from the consumers' *code* instead of a written report, and adds a third axis the
@@ -88,6 +88,32 @@ composes with the consumer's own options:
 Open question: whether prefabs are functions returning `InputSpec<StageContext>` or records with overridable
 fields (W12 in `FEEDBACK-Xantham.md`, deferred). Functions first; records only if a consumer needs to patch
 one prefab field.
+
+**Status: implemented on `claude/partas-build-patterns-jgrwr0-baked-stages`.** `src/Partas.Build.Baked/Stages.fs`
+(`module Partas.Build.Baked.Stages`) and `Clean.fs`; `Common.quick`/`skipTests`/`watch` and `Dotnet.configOrRelease`.
+Tests in `tests/Partas.Build.Tests/BakedTests.fs` resolve each prefab against parsed options and walk the
+`StageContext` (names, step labels with the key masked, skip reasons, parallelism); only `clean` runs, on a temp
+tree. `Build/Program.fs` now takes restore, clean, build, pack, the four Expecto suites and the push from Baked,
+and has no Fake dependency (the `Fake.*` package references are gone from `Build.fsproj`). Q3 (§8) is decided:
+**functions**. Each prefab reads Baked's own options, and a `…With` counterpart takes each of those options as an
+`InputSpec`, so a consumer with its own `--fast` or configuration option composes without a record. The result is
+an ordinary `StageContext`, so renaming it, toggling its parallelism or adding a condition is an `InputSpec.map`
+(`Program.fs`'s `Tests.buildAll` does all three). Deviations from the table:
+
+- `clean (directories, files)` takes glob patterns relative to the stage's working directory, `!` excluding
+  (`[ "**/bin"; "!bin"; "tmp" ]`). A wildcard-free directory is created if missing, as Fake's `cleanDirs` did. The
+  walk skips `.git` and `node_modules` (Fake's `**/bin` also emptied `node_modules/<pkg>/bin`).
+- `pack` runs `dotnet pack -c <config> --no-build --no-restore`, where `Program.fs` rebuilt each project in the
+  default configuration, in parallel over shared references.
+- `expecto (project, arguments)` takes the suite's arguments instead of a filter, and is skipped by `--skip-tests`.
+- `nugetPush` matches on the key rather than going through `whenSome`, since the keyless case yields the
+  local-feed push instead of nothing. The key is bound by the pattern and added through `Cmd.secretOption`.
+- `npmInstall` runs `npm ci` under `--ci` and `npm install` otherwise, with `--prefix <directory>` so a relative
+  directory resolves against the pipeline's working directory.
+- Skips carry an `--explain` reason (`--quick is set`) through `StageContext.addPredicateBecause`, pending §3.2's
+  `when'` with a reason.
+- Left hand-rolled in `Program.fs`: the compiler probe (it must build, in both configurations, so a `--no-build`
+  suite does not fit), the docs stages, and the outer `test` stage's own `--skip-tests` guard over the probe.
 
 ### 3.2 API traps
 
@@ -300,7 +326,7 @@ needs checking against the code.
 | 6 | JSON for `--explain`, the run result, `--schema` (§4.1) — serializes 5's result | discoverability | medium |
 | 7 | Console hygiene, argv capture, env at run time (§5.3.2-5.3.5) — after the Spectre spike | SageFs | medium |
 | 8 | Thread-interrupt bridge + no-orphan test (§5.3.4) | SageFs | medium |
-| 9 | Baked prefab stages (§3.1), `Build/Program.fs` rewritten on them as the acceptance test | usability | large |
+| 9 | Baked prefab stages (§3.1), `Build/Program.fs` rewritten on them as the acceptance test — **done** | usability | large |
 | 10 | Side-effect-free `--explain` (§4.3) | discoverability | medium |
 | 11 | XML `<example>`s, agent snippet, consumer pattern docs (§4.4, §4.5, §5.4) | discoverability | medium |
 
@@ -313,7 +339,8 @@ without `open Partas.Build.Internal` and without the hand-rolled rows of §2's f
    (System.CommandLine rejects duplicate aliases at construction)?
 2. Should §4.1's run result go to stdout or only to `--report <path>`? Stdout is simpler for agents but mixes with
    step output that is not captured.
-3. Prefab stages as functions or records (§3.1, W12).
+3. Prefab stages as functions or records (§3.1, W12). **Decided: functions**, each with a `…With` counterpart
+   taking its options as `InputSpec`s (§3.1's status).
 4. Does `Command.invoke` take the `RootCommandBuilder` result, the `CommandSpec`, or both — and does it live in
    `Partas.Build` or a separate `Partas.Build.Hosting` namespace?
 5. Is the Spectre singleton hazard (§5.2) real? Spike: create `AnsiConsole` under one `Console.SetOut`, swap,

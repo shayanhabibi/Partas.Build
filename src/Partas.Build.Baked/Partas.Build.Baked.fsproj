@@ -17,6 +17,8 @@
         <Compile Include="NuGet.fs" />
         <Compile Include="Dotnet.fs" />
         <Compile Include="SemVer.fs" />
+        <Compile Include="Clean.fs" />
+        <Compile Include="Stages.fs" />
         <None Include="../../README.md" Pack="true" PackagePath="\" />
     </ItemGroup>
 

@@ -15,3 +15,19 @@ let isCI =
         || vars.Contains "GITLAB_CI"
         || vars.Contains "GITHUB_ACTIONS"
         )
+
+/// `--quick`/`-q`: skips restores, installations, cleaning and formatting.
+let quick =
+    Input.option<bool> "--quick"
+    |> Input.alias "-q"
+    |> Input.desc "Skips restores, installations, cleaning and formatting"
+
+/// `--skip-tests`: skips building and running the test suites.
+let skipTests =
+    Input.option<bool> "--skip-tests"
+    |> Input.desc "Skips building and running the test suites"
+
+/// `--watch`: runs the operation in watch mode.
+let watch =
+    Input.option<bool> "--watch"
+    |> Input.desc "Runs the operation in watch mode"

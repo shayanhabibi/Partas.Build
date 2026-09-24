@@ -66,7 +66,10 @@ let private empty (directory: string) =
         Directory.Delete(child, true)
 
 /// <summary>The directories below <paramref name="root"/> that <paramref name="patterns"/> select, relative to it.</summary>
-/// <remarks>The result holds no directory nested inside another selected directory.</remarks>
+/// <remarks>
+/// The result holds only the outermost selected directories: a selected directory nested inside another selected
+/// directory, literal or matched, is omitted.
+/// </remarks>
 let directories (root: string) (patterns: string list) =
     let patterns = partition patterns
     let selected path = matchesAny patterns.Include path && not (matchesAny patterns.Exclude path)
@@ -77,7 +80,11 @@ let directories (root: string) (patterns: string list) =
             |> Seq.filter selected
             |> List.ofSeq
         else []
-    (literals |> List.filter (matchesAny patterns.Exclude >> not)) @ found |> List.distinct
+    let comparison = if ignoreCase then StringComparison.OrdinalIgnoreCase else StringComparison.Ordinal
+    let candidates = (literals |> List.filter (matchesAny patterns.Exclude >> not)) @ found |> List.distinct
+    let isNested (path: string) =
+        candidates |> List.exists (fun (outer: string) -> path.StartsWith(outer + "/", comparison))
+    candidates |> List.filter (isNested >> not)
 
 /// <summary>The files below <paramref name="root"/> that <paramref name="patterns"/> select, relative to it.</summary>
 let files (root: string) (patterns: string list) =

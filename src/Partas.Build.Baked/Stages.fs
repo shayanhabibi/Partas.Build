@@ -114,7 +114,8 @@ let pack (outDir: string) (projects: string list) = packWith Dotnet.configOrRele
 /// <c>dotnet run --no-build</c>, passing <paramref name="arguments"/> after <c>--</c>; skipped when
 /// <paramref name="skip"/> reads <c>true</c>.</summary>
 /// <remarks>
-/// MSBuild resolves the test assembly, so a change of target framework or output path needs no change here.
+/// The suite runs through <c>dotnet run --no-build --project</c>: the test assembly is the one MSBuild resolves for
+/// <paramref name="project"/> in <paramref name="configuration"/>.
 /// When <paramref name="isCI"/> reads <c>true</c>, the suite also takes <c>--summary</c> and its output is
 /// captured: a passing run prints nothing, and a failing one carries the whole output in its error.
 /// </remarks>

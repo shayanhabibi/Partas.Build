@@ -11,14 +11,8 @@ module Build
 
 open System
 open System.IO
-open Fake.Core.Context
-open Fake.IO
-open Fake.IO.Globbing.Operators
 open Partas.Build
 open Partas.TypeProvider.BuildHelper
-
-let execContext = FakeExecutionContext.Create false "build.fsx" []
-setExecutionContext (RuntimeContext.Fake execContext)
 
 [<Literal>]
 let __REPOSITORY_DIRECTORY__ =
@@ -33,23 +27,6 @@ type Repo =
     """>
 
 let private root = Repo.FileSystem.``.``.ToString()
-
-module Options =
-    let quick =
-        Input.option<bool> "--quick"
-        |> Input.alias "-q"
-        |> Input.description "Skips restores, installations, formatting etc"
-    let skipTests =
-        Input.option<bool> "--skip-tests"
-        |> Input.description "Skips running tests"
-    let watch =
-        Input.option<bool> "--watch"
-        |> Input.description "Runs the operation in watch mode."
-
-    let config =
-        Baked.Dotnet.config.option
-        |> InputSpec.ofInput
-        |> InputSpec.map (Option.defaultValue "Release")
 
 module Project =
     let projects = Repo.Project.AllProjects()
@@ -87,119 +64,49 @@ module Project =
 
 /// <summary>Stages every command opens with. All are skipped by <c>--quick</c>.</summary>
 module Prelude =
-    let restore = input {
-        let! quick = Options.quick
-        return stage "restore" {
-            when' (not quick) "--quick is set"
-            run "dotnet tool restore --verbosity q"
-            run (cmd $"dotnet restore {Repo.Project.SolutionFile}")
-        }
-    }
-    let clean = input {
-        let! quick = Options.quick
-
-        return stage "clean" {
-            when' (not quick) "--quick is set"
-
-            run (fun (_: StageContext) ->
-                Repo.VirtualFileSystem.bin.``.``.EnumerateFiles("*.nupkg", SearchOption.AllDirectories)
-                |> Seq.iter (_.ToString() >> Shell.rm)
-                !! "**/**/bin"
-                ++ Repo.VirtualFileSystem.tmp.ToString()
-                -- Repo.VirtualFileSystem.bin.ToString()
-                |> Shell.cleanDirs
-                )
-        }
-    }
+    let restore = Baked.Stages.restore Repo.Project.SolutionFile
+    /// Empties every <c>bin</c> directory except the root's, and deletes the packages in the root's.
+    let clean = Baked.Stages.clean [ "**/bin"; "!bin"; "tmp" ] [ "bin/**/*.nupkg" ]
 
 module ProjectManagement =
-    let build (project: InputSpec<string>) = input {
-        let! config = Options.config
-        and! project = project
-        return stage $"build {project}" {
-            run (cmd $"dotnet build {project} -c {config}")
-        }
-    }
-    let buildAll = stage "build" {
-        parallel'
-        for _, project in Project.allProjects do
-        build (InputSpec.ret project)
-    }
+    let private packages = Repo.VirtualFileSystem.bin.ToString()
 
-    let pack (project: InputSpec<string>) = input {
-        let! project = project
-        return stage $"pack {project}" {
-            run (cmd $"dotnet pack {project} --no-restore -o {Repo.VirtualFileSystem.bin.ToString()}")
-        }
-    }
-    let packAll = stage "pack" {
-        parallel'
-        for _, project in Project.allProjects do
-        InputSpec.ret project
-        |> pack
-    }
-    let publish (project: InputSpec<string>) = input {
-        let! key = Baked.NuGet.apiKey.option
-        and! project = project
-        return stage $"publish {project}" {
-            stage "local publish" {
-                when' key.IsNone "a NuGet API key is set"
-                echo "Publishing to local feed"
-                run $"dotnet nuget push {project} --source local --skip-duplicate"
-            }
-            whenSome key (fun key ->
-                stage "nuget publish" {
-                    echo "Publishing to nuget.org"
-                    runSensitive
-                        $"dotnet nuget push {project} --source https://api.nuget.org/v3/index.json --api-key {key} --skip-duplicate"
-                })
-        }
-    }
-    let publishAll = stage "publish" {
-        Path.Combine(Repo.VirtualFileSystem.bin.ToString(), "*.nupkg")
-        |> InputSpec.ret
-        |> publish
-    }
+    let buildAll = Baked.Stages.build (Project.allProjects |> List.map snd)
+    let packAll = Baked.Stages.pack packages (Project.allProjects |> List.map snd)
+    let publishAll = Baked.Stages.nugetPush (Path.Combine(packages, "*.nupkg"))
     let bumpArgument =
         Baked.SemVer.Stages.bumpArgument (InputSpec.ofInput Project.target)
 
 module Tests =
-    let buildAll = input {
-        let! skipTests = Options.skipTests
-        and! projects =
-            Project.testProjects
-            |> List.map (_.Path >> InputSpec.ret >> ProjectManagement.build)
-            |> InputSpec.sequence
-        return stage "build tests" {
-            when' (not skipTests) "--skip-tests is set"
-            projects
-        }
-    }
+    /// Builds the test projects one at a time; skipped by <c>--skip-tests</c>.
+    let buildAll =
+        Baked.Stages.buildWith Baked.Dotnet.configOrRelease (Project.testProjects |> List.map _.Path)
+        |> InputSpec.map (fun build -> { StageContext.toggleParallel false build with Name = "build tests" })
+        |> InputSpec.map2 (fun skipTests -> StageContext.addPredicateBecause (ValueSome "--skip-tests is set") (fun _ -> not skipTests))
+            (InputSpec.ofInput Baked.Common.skipTests)
 
-    /// <summary>The arguments every Expecto suite takes after <c>--</c>; <c>--summary</c> only under <c>--ci</c>.</summary>
-    let private expectoArgs (ci: bool) (command: Cmd) =
-        command
-        |> Cmd.argIf ci [ "--summary" ]
-        |> Cmd.args [ "--colours"; "256"; "--sequenced" ]
+    let private expectoArguments = [ "--colours"; "256"; "--sequenced" ]
 
     let execute = input {
-        let! skipTests = Options.skipTests
-        and! config = Options.config
+        let! skipTests = Baked.Common.skipTests
         and! ci = Baked.Common.isCI
+        and! suites =
+            [ Repo.Project.``Partas.Build.Cmd.NetStandard.Tests``.Path
+              Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Path
+              Repo.Project.``Partas.Build.Tests``.Path
+              Repo.Project.``Partas.ExternalAnnotations.Tests``.Path ]
+            |> InputSpec.traverse (fun project -> Baked.Stages.expecto project expectoArguments)
         return stage "test" {
             when' (not skipTests) "--skip-tests is set"
             outputTo (if ci then StageOutput.Captured(OutputCapture.create()) else StageOutput.Console)
-            for project in [
-                Repo.Project.``Partas.Build.Cmd.NetStandard.Tests``.Path
-                Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Path
-                Repo.Project.``Partas.Build.Tests``.Path
-                Repo.Project.``Partas.ExternalAnnotations.Tests``.Path
-            ] do stage $"test {project}" {
-                run (cmd $"dotnet run --project {project} --no-build -c {config} --" |> expectoArgs ci)
-            }
-            // Runs in both configurations regardless of `--configuration`: Release is what catches FS1118.
+            suites
+            // Built by the run, in both configurations regardless of `--configuration`: Release is what catches FS1118.
             for probeConfig in [ "Debug"; "Release" ] do stage $"compiler probe ({probeConfig})" {
-                run (cmd $"dotnet run --project {Repo.Project.``Partas.Build.CompilerProbe``.Path} -c {probeConfig} --" |> expectoArgs ci)
+                run (
+                    cmd $"dotnet run --project {Repo.Project.``Partas.Build.CompilerProbe``.Path} -c {probeConfig} --"
+                    |> Cmd.argIf ci [ "--summary" ]
+                    |> Cmd.args expectoArguments
+                )
             }
         }
     }
@@ -207,7 +114,7 @@ module Tests =
 module Documentation =
     /// Serves under --watch, builds otherwise.
     let generate = input {
-        let! watch = Options.watch
+        let! watch = Baked.Common.watch
         and! noHotReload = Input.option<bool> "--no-hot-reload"
         return stage "docs" {
             run (
@@ -225,7 +132,7 @@ module Documentation =
     /// Written for fsdocs, which generated both files at the site root as a link inventory under such a heading.
     /// </remarks>
     let llms = input {
-        let! watch = Options.watch
+        let! watch = Baked.Common.watch
         return stage "llms" {
             when' (not watch) "--watch is set"
             run (fun ctx ->

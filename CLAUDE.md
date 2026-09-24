@@ -207,9 +207,14 @@ nothing of the run holding the value.
 `src/Partas.Build.Cmd` (`Program.fs`, `Execution.fs`) is the process layer, defining `Cmd` and compiling before `Partas.Build`.
 
 `src/Partas.Build.Baked` is the batteries-included layer over the library: ready-made `Input.*`/`Argument.*` definitions
-for the options every build CLI ends up wanting (`--configuration`, `--nuget-key`, `--project`, `--ci`, a version
-bump), the semver arithmetic in `Version`, and `IO.writeVersion`/`IO.bumpVersion` for editing a project file's
-`<Version>`. It is the only place in the library that writes to disk, apart from the result file `--report` names.
+for the options every build CLI ends up wanting (`--configuration` and `Dotnet.configOrRelease`, `--nuget-key`,
+`--project`, `--ci`, `--quick`, `--skip-tests`, `--watch`, a version bump), the semver arithmetic in `Version`, and
+`IO.writeVersion`/`IO.bumpVersion` for editing a project file's `<Version>`. It is the only place in the library that
+writes to disk, apart from the result file `--report` names. `Stages.fs` holds the prefab stages (`restore`, `clean`, `build`, `pack`, `expecto`, `nugetPush`,
+`fantomas`, `npmInstall`): functions answering `InputSpec<StageContext>` that read Baked's own options, each with a
+`…With` counterpart taking those options as `InputSpec`s. A skip carries a reason for `--explain`. `Clean.fs` is the
+glob matcher behind `clean`, on `System.IO` alone; it never follows a symbolic link, so everything it deletes lies
+under its root.
 
 The core model, once a single `Types.fs`, is split by responsibility and compiles in this order:
 1. `Exceptions.fs` (`Partas.Build.ErrorHandling`) — pipeline exceptions, `FailureCause`, `StepOutcome`.
@@ -254,11 +259,11 @@ Overload resolution in these builders fails in ways that are invisible by inspec
 
 `Build/Program.fs` is the whole CLI — repository paths, options, stages and commands in one file. Repository paths come from `Partas.TypeProvider.BuildHelper` (`type Repo = BuildHelperProvider<...>`, with `Repo.FileSystem` and `Repo.VirtualFileSystem` for the real and virtual file systems), so a renamed project breaks compilation instead of failing mid-release. A new packable project goes in `Project.allProjects`, which is both what `bump` can version and what `pack` packs; `Repo.Project.<name>.Path` is a compile-time constant, while `PackageId`/`AssemblyName`/`Version` are MSBuild evaluations that shell out to `dotnet msbuild -getProperty`, so keep those off any path that runs before parsing.
 
-Since Phase 7 the CLI is written against Partas.Build (`Build.fsproj` has a project reference to `src/Partas.Build`), so it doubles as the design's acceptance test. A step is a stage; a stage that needs a flag binds it in `input { let! quick = Options.quick ... return stage "..." { when' (not quick) "--quick is set"; run (cmd $"dotnet ...") } }`, and the command registers it by running the pipeline that contains it. The CLI has no per-command option lists and no process wrappers. Custom operations cannot sit under an `if`/`match`, so a stage that branches builds a `Cmd` first and runs it unconditionally, and a stage that exists only when an option was supplied is yielded through `whenSome` — `ProjectManagement.publish` yields its `nuget publish` stage that way, so the stage closes over the key rather than reaching for `key.Value` under a `when'`.
+Since Phase 7 the CLI is written against Partas.Build (`Build.fsproj` has a project reference to `src/Partas.Build`), so it doubles as the design's acceptance test. A step is a stage; a stage that needs a flag binds it in `input { let! quick = Baked.Common.quick ... return stage "..." { when' (not quick) "--quick is set"; run (cmd $"dotnet ...") } }`, and the command registers it by running the pipeline that contains it. The CLI has no per-command option lists and no process wrappers. Custom operations cannot sit under an `if`/`match`, so a stage that branches builds a `Cmd` first and runs it unconditionally, and a stage that exists only when an option was supplied is yielded through `whenSome` — `Baked.Stages.nugetPush`, which `ProjectManagement.publishAll` uses, matches on the key the same way, so the stage closes over the key rather than reaching for `key.Value` under a `when'`. Restore, clean, build, pack, the Expecto suites and the push are Baked prefabs (`notes/PLAN-Integration.md` §3.1); the CLI keeps only what is its own — the compiler probe, the docs stages, `bump`'s project list.
 
-The four Expecto suites run `--sequenced`. Each drives real pipelines, and a pipeline writes to one process-wide console and holds a thread in `Async.RunSynchronously` for the length of every stage — run in parallel on a two-core runner, that yields a log whose lines belong to no test in particular, with enough blocked workers that the thread pool grows one thread at a time. `Tests.execute` captures the suites' output when `--ci` is set, so a green CI run says nothing and a red one lifts the whole failure into the annotation; locally it stays live. `Tests.execute` also runs `tests/Partas.Build.CompilerProbe` twice, once per configuration, regardless of `--configuration`. Release catches an `inline` member that applies a `Build*` alias (`FS1118`), which a Debug build compiles clean.
+The four Expecto suites run `--sequenced`. Each drives real pipelines, and a pipeline writes to one process-wide console and holds a thread in `Async.RunSynchronously` for the length of every stage — run in parallel on a two-core runner, that yields a log whose lines belong to no test in particular, with enough blocked workers that the thread pool grows one thread at a time. `Baked.Stages.expecto` captures each suite's output when `--ci` is set, so a green CI run says nothing and a red one lifts the whole failure into the annotation; locally it stays live. `Tests.execute` also runs `tests/Partas.Build.CompilerProbe` twice, once per configuration, regardless of `--configuration`. Release catches an `inline` member that applies a `Build*` alias (`FS1118`), which a Debug build compiles clean.
 
-Fake survives only where it is better than a process call: `!!` and `Shell.cleanDirs` for the clean. Everything else is a `run` step.
+There is no Fake dependency: the clean is `Baked.Stages.clean`, over `System.IO`. Everything else is a `run` step.
 
 ### Versioning
 

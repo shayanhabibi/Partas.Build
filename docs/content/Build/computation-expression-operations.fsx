@@ -121,31 +121,36 @@ let _ = stage "stage" {
     run (fun _ -> task { do () })
 
 (**
+#### `runLine`
+
+A function returning a command line is `runLine`, not `run`. `run (fun ctx -> "...")` still compiles, marked
+obsolete: a lambda written to return a message would otherwise start a process. The line is split on whitespace,
+honouring quotes; build a `Cmd` with `cmd $"..."` to keep each interpolation hole as one argument.
+
 ##### `commandFn: StageContext -> string`
 ##### `commandFn: StageContext -> Async<string>`
 ##### `commandFn: StageContext -> Task<string>`
 *)
-    run (fun _ -> "dotnet build")
-    run (fun _ -> async { return "dotnet build" })
-    run (fun _ -> task { return "dotnet build" })
+    runLine (fun _ -> "dotnet build")
+    runLine (fun _ -> async { return "dotnet build" })
+    runLine (fun _ -> task { return "dotnet build" })
     // With CancellationToken
-    run (fun _ -> "dotnet build") CancellationToken.None
-    run (fun _ -> async { return "dotnet build" }) CancellationToken.None
-    run (fun _ -> task { return "dotnet build" }) CancellationToken.None
+    runLine (fun _ -> "dotnet build") CancellationToken.None
+    runLine (fun _ -> async { return "dotnet build" }) CancellationToken.None
+    runLine (fun _ -> task { return "dotnet build" }) CancellationToken.None
 
 (**
 ##### `commandMaybeFn: StageContext -> string option`
 ##### `commandMaybeFn: StageContext -> Async<string option>`
 ##### `commandMaybeFn: StageContext -> Task<string option>`
 *)
-    // todo - overloads without CancellationToken should not require explicit typing
-    run (fun _ -> Some "dotnet build")
-    run (fun _ -> async { return Option<string>.None })
-    run (fun _ -> task { return Some "dotnet build" })
+    runLine (fun _ -> Some "dotnet build")
+    runLine (fun _ -> async { return Option<string>.None })
+    runLine (fun _ -> task { return Some "dotnet build" })
     // With CancellationToken
-    run (fun _ -> Some "dotnet build") CancellationToken.None
-    run (fun _ -> async { return Some "dotnet build" }) CancellationToken.None
-    run (fun _ -> task { return Some "dotnet build" }) CancellationToken.None
+    runLine (fun _ -> Some "dotnet build") CancellationToken.None
+    runLine (fun _ -> async { return Some "dotnet build" }) CancellationToken.None
+    runLine (fun _ -> task { return Some "dotnet build" }) CancellationToken.None
 
 
 (**

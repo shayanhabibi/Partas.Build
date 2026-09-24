@@ -47,12 +47,13 @@ Available inside `stage`, and inside `whenStage`, which accepts everything `stag
 
 | Operation | What it does |
 |---|---|
-| `run` | Adds a step. Takes a literal command line, a `Cmd`, or a function of the `StageContext` returning `unit`, `int`, `Result<unit, string>`, a `Cmd`, an `Async<_>` or a `Task<_>` of any of those, optionally wrapped in `option` |
+| `run` | Adds a step. Takes a literal command line, a `Cmd`, or a function of the `StageContext` returning `unit`, `int`, `Result<unit, string>`, a `Cmd`, an `Async<_>` or a `Task<_>` of any of those, optionally wrapped in `option`. A function returning a `string` is obsolete: use `runLine` |
+| `runLine` | Adds a step that runs the command line a function of the `StageContext` returns (`string`, `Async<string>` or `Task<string>`, optionally wrapped in `option`). The line is split on whitespace, honouring quotes |
 | `runSensitive` | Adds a step from an interpolated command line with every hole masked as `***` wherever the library prints it |
 | `runOperation` | Adds a step from an `Operation<unit>`, with an optional label for `--explain`. Runs under the stage's working directory, environment, acceptable exit codes and output routing |
 | `runHttpHealthCheck` | Adds a step that polls a URL until it answers or the stage is cancelled |
 | `echo` | Adds a step that prints a message through the stage's output sink |
-| `when'` | Runs the stage only when a `bool` holds, or only when a given `StageContext` succeeds |
+| `when'` | Runs the stage only when a `bool` holds, or only when a given `StageContext` succeeds. `when' (not quick) "--quick is set"` gives `--explain` the reason it prints against the skipped stage |
 | `whenEnvVar` | Runs the stage only when an environment variable is set, or set to a given value; also takes an `EnvArg` |
 | `whenBranch` / `whenBranches` | Runs the stage only on the named git branch. Reads `git branch --show-current` in the stage's working directory; a missing git evaluates false rather than throwing |
 | `whenWindows` / `whenLinux` / `whenOSX` | Runs the stage only on that platform. Pass `false` to invert |
@@ -318,7 +319,7 @@ Shaping combinators, all `ActionInput<'T> -> ActionInput<'T>` and all pipeable:
 | Function                                                            | What it does                                                                                                              |
 |---------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|
 | `Input.alias` / `Input.aliases`                                     | Adds alternative names. Options only                                                                                      |
-| `Input.description`, `Input.desc`                                   | The help text                                                                                                             |
+| `Input.description` (`Input.desc` is obsolete)                      | The help text                                                                                                             |
 | `Input.helpName`                                                    | The value placeholder in help — `<Debug\|Release>`                                                                        |
 | `Input.defaultValue`, `Input.def`                                   | The value used when the token is absent                                                                                   |
 | `Input.defaultValueFactory`                                         | The same, computed from the `ArgumentResult`                                                                              |
@@ -364,7 +365,7 @@ let build (projects: InputSpec<string list>) = input {
 | `InputSpec.union` | Concatenates input lists, keeping the first occurrence of each |
 
 The `input { let! … and! … return … }` CE is the usual way to build one; `inputs` is the same builder under
-a second name (`src/Partas.Build/Builders/Inputs.fs` binds both). It is applicative: bind every source
+an obsolete second name (`src/Partas.Build/Builders/Inputs.fs` binds both). It is applicative: bind every source
 in a single `let!`/`and!` group. A sequential second `let!` is a compile error (`FS0708`): the input set must
 be readable before anything is parsed. An `input { }` nested inside another's `return` produces an
 `InputSpec<InputSpec<_>>`, which nothing accepts — pass the *source* in as an `InputSpec` instead.

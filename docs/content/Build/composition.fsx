@@ -78,7 +78,7 @@ module Options =
     let quick =
         Input.option<bool> "--quick"
         |> Input.alias "-q"
-        |> Input.desc "Skip restores and cleaning"
+        |> Input.description "Skip restores and cleaning"
 
     let verbose = Input.option<bool> "--verbose" |> Input.alias "-v"
 
@@ -259,7 +259,7 @@ items` does the same over a mapping. These are the two functions to reach for wh
 A wrapper can bind flags the wrapped blocks know nothing about, alongside the sequenced blocks:
 *)
 
-let skipTests = Input.option<bool> "--skip-tests" |> Input.desc "Build the tests but do not run them"
+let skipTests = Input.option<bool> "--skip-tests" |> Input.description "Build the tests but do not run them"
 
 let testGroup (blocks: InputSpec<StageContext> list) = input {
     let! stages = InputSpec.sequence blocks
@@ -468,7 +468,7 @@ module Options =
         Input.option<string> "--target"
         |> Input.mapFromAmong [ "node", "node"; "browser", "browser" ]
         |> Input.def "node"
-        |> Input.desc "Runtime the wire layer is generated for"
+        |> Input.description "Runtime the wire layer is generated for"
 
 module Stages =
     let generate layer = input {

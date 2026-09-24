@@ -152,6 +152,15 @@ let tests =
             Expect.isFalse (isActive debug) "the stage should be inactive otherwise"
         }
 
+        test "a when' with a reason conjoins like a bare when'" {
+            let on = stage "on" { when' true "never printed"; run noop }
+            let off = stage "off" { when' true "first"; when' false "second"; run noop }
+
+            Expect.isTrue (isActive on) "a true condition leaves the stage active"
+            Expect.isFalse (isActive off) "a false condition turns the stage off"
+            Expect.equal [ for c in off.Conditions -> c.Reason ] [ ValueSome "first"; ValueSome "second" ] "each reason is recorded"
+        }
+
         test "the runner skips an inactive stage" {
             let ran = ResizeArray<string>()
 

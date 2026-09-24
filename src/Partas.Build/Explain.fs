@@ -167,7 +167,7 @@ module Explain =
 
     let private declare () =
         Input.option<bool> "--explain"
-        |> Input.desc "Print the resolved stage tree and exit, running nothing"
+        |> Input.description "Print the resolved stage tree and exit, running nothing"
         |> Input.def false
 
     /// <summary>The flag as registered on a command that runs pipelines, whose own action reads it.</summary>

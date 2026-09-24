@@ -94,6 +94,35 @@ let tests =
             Expect.isFalse (text.Contains "skipped:") "a bool argument leaves nothing to report"
         }
 
+        test "explain reports the reason a when' names" {
+            let built = pipeline "p" { stage "off" { when' false "the flag is off"; run "dotnet --version" } }
+
+            let text = Explain.render [ built ]
+
+            Expect.stringContains text "off  (skipped: the flag is off)" "the reason is printed against the stage"
+        }
+
+        test "explain prints the reason of a when' over a bound flag when the command is invoked" {
+            let quick = Input.option<bool> "--quick"
+
+            let built =
+                command "build" {
+                    pipeline "p" {
+                        input {
+                            let! quick = quick
+                            return stage "restore" { when' (not quick) "--quick is set"; run "dotnet restore" }
+                        }
+                    }
+                }
+
+            let code, printed = capturingOut (fun () -> built.Parse("--explain --quick").Invoke())
+            let _, unset = capturingOut (fun () -> built.Parse("--explain").Invoke())
+
+            Expect.equal code 0 "explain exits zero"
+            Expect.stringContains printed "restore  (skipped: --quick is set)" "the flag that skipped the stage is named"
+            Expect.isFalse (unset.Contains "skipped") "a true condition prints no reason"
+        }
+
         test "a command that runs a pipeline registers --explain" {
             let built = command "build" { pipeline "p" { stage "s" { run (fun (_: StageContext) -> ()) } } }
 

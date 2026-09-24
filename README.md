@@ -24,7 +24,7 @@ module Options =
     let quick =
         Input.option<bool> "--quick"
         |> Input.alias "-q"
-        |> Input.desc "Skip restores and cleaning"
+        |> Input.description "Skip restores and cleaning"
 
     let config =
         Input.option<string> "--configuration"
@@ -32,14 +32,14 @@ module Options =
         |> Input.def "Release"
         |> Input.helpName "Debug|Release"
         |> Input.acceptOnlyFromAmong [ "Debug"; "Release" ]
-        |> Input.desc "Build configuration"
+        |> Input.description "Build configuration"
 
 module Stages =
     let restore = input {
         let! quick = Options.quick
 
         return stage "restore" {
-            when' (not quick)
+            when' (not quick) "--quick is set"   // the reason --explain prints when the stage is skipped
             run "dotnet restore"
         }
     }

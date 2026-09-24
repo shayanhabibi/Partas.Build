@@ -359,6 +359,7 @@ type StageSettingsBuilder() =
 
     /// <summary>Adds a step that runs a command line derived from the stage context.</summary>
     /// <remarks>The command line string is split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<Obsolete("A string returned from the function runs as a command line. Use `runLine` to run a derived command line, `run (fun ctx -> cmd $\"...\")` to run a prepared command, or `echo` to print a message.")>]
     [<CustomOperation>]
     member inline _.run(state: ^State, step: StageContext -> string, ?cancellationToken: CancellationToken): ^State =
         StageMap.mapStage (fun ctx ->
@@ -368,6 +369,7 @@ type StageSettingsBuilder() =
 
     /// <summary>Adds a step that runs a command line asynchronously derived from the stage context.</summary>
     /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<Obsolete("A string returned from the function runs as a command line. Use `runLine` to run a derived command line, `run (fun ctx -> cmd $\"...\")` to run a prepared command, or `echo` to print a message.")>]
     [<CustomOperation>]
     member inline _.run(state: ^State, step: StageContext -> Async<string>, ?cancellationToken: CancellationToken): ^State =
         StageMap.mapStage (fun ctx ->
@@ -377,6 +379,7 @@ type StageSettingsBuilder() =
 
     /// <summary>Adds a step that runs a command line derived from the stage context by a task.</summary>
     /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<Obsolete("A string returned from the function runs as a command line. Use `runLine` to run a derived command line, `run (fun ctx -> cmd $\"...\")` to run a prepared command, or `echo` to print a message.")>]
     [<CustomOperation>]
     member inline _.run(state: ^State, step: StageContext -> Task<string>, ?cancellationToken: CancellationToken): ^State =
         StageMap.mapStage (fun ctx ->
@@ -394,6 +397,7 @@ type StageSettingsBuilder() =
 
     /// <summary>Adds a step that runs a command line derived from the stage context, or no step at all.</summary>
     /// <remarks>The command line string is split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<Obsolete("A string returned from the function runs as a command line. Use `runLine` to run a derived command line, `run (fun ctx -> cmd $\"...\")` to run a prepared command, or `echo` to print a message.")>]
     [<CustomOperation>]
     member inline _.run(state: ^State, step: StageContext -> string option, ?cancellationToken: CancellationToken): ^State =
         StageMap.mapStage (fun ctx ->
@@ -403,6 +407,7 @@ type StageSettingsBuilder() =
 
     /// <summary>Adds a step that runs a command line asynchronously derived from the stage context, or no step at all.</summary>
     /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<Obsolete("A string returned from the function runs as a command line. Use `runLine` to run a derived command line, `run (fun ctx -> cmd $\"...\")` to run a prepared command, or `echo` to print a message.")>]
     [<CustomOperation>]
     member inline _.run(state: ^State, step: StageContext -> Async<string option>, ?cancellationToken: CancellationToken): ^State =
         StageMap.mapStage (fun ctx ->
@@ -412,6 +417,7 @@ type StageSettingsBuilder() =
 
     /// <summary>Adds a step that runs a command line derived from the stage context by a task, or no step at all.</summary>
     /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<Obsolete("A string returned from the function runs as a command line. Use `runLine` to run a derived command line, `run (fun ctx -> cmd $\"...\")` to run a prepared command, or `echo` to print a message.")>]
     [<CustomOperation>]
     member inline _.run(state: ^State, step: StageContext -> Task<string option>, ?cancellationToken: CancellationToken): ^State =
         StageMap.mapStage (fun ctx ->
@@ -475,6 +481,63 @@ type StageSettingsBuilder() =
             let cancellationToken = defaultArg cancellationToken CancellationToken.None
             { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepResultOption (buildCmd >> Async.singleton) cancellationToken) ] }) state
 
+    // =================================================================
+    //   runLine: a command line derived from the stage context
+    // =================================================================
+
+    /// <summary>Adds a step that runs the command line derived from the stage context.</summary>
+    /// <remarks>The command line string is split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.runLine(state: ^State, step: StageContext -> string, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = Cmd.ofString (step ctx) |> Async.singleton
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.step buildCmd cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs the command line asynchronously derived from the stage context.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.runLine(state: ^State, step: StageContext -> Async<string>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = step ctx |> Async.map Cmd.ofString
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.step buildCmd cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs the command line derived from the stage context by a task.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.runLine(state: ^State, step: StageContext -> Task<string>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = step ctx |> Task.map Cmd.ofString |> Async.AwaitTask
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.step buildCmd cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs the command line derived from the stage context, or no step at all.</summary>
+    /// <remarks>The command line string is split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.runLine(state: ^State, step: StageContext -> string option, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = step ctx |> Option.map Cmd.ofString |> Async.singleton
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepOption buildCmd cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs the command line asynchronously derived from the stage context, or no step at all.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.runLine(state: ^State, step: StageContext -> Async<string option>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = step ctx |> Async.map (Option.map Cmd.ofString)
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepOption buildCmd cancellationToken) ] }) state
+
+    /// <summary>Adds a step that runs the command line derived from the stage context by a task, or no step at all.</summary>
+    /// <remarks>The command line string is computed asynchronously and split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    [<CustomOperation>]
+    member inline _.runLine(state: ^State, step: StageContext -> Task<string option>, ?cancellationToken: CancellationToken): ^State =
+        StageMap.mapStage (fun ctx ->
+            let cancellationToken = defaultArg cancellationToken CancellationToken.None
+            let buildCmd ctx = step ctx |> Task.map (Option.map Cmd.ofString) |> Async.AwaitTask
+            { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepOption buildCmd cancellationToken) ] }) state
     /// <summary>Adds a step with flexible signature support.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/run/*"/>
     [<CustomOperation>]

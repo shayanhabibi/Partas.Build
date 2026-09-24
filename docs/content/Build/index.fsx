@@ -65,7 +65,7 @@ automatic validation and help.
 |---|---|---|
 | Step | `run`, `echo`, … | one action inside a stage |
 | Stage | `stage "name" { }` | `StageContext` |
-| Inputs | `inputs { }` | `InputSpec<'T>` |
+| Inputs | `input { }` | `InputSpec<'T>` |
 | Pipeline | `pipeline "name" { }` | `PipelineContext` or `InputSpec<PipelineContext>` |
 | Command | `command "name" { }` | `System.CommandLine.Command` |
 | Root | `rootCommand argv { }` | `int` exit code — **it runs immediately** |
@@ -188,6 +188,9 @@ let combined =
 `when'` also accepts a whole `StageContext`. It runs for real, side effects and console output included, and
 its success is the answer.
 
+A `bool` carries no reason, so `--explain` prints a stage it turns off as `(skipped)`. Name the reason as a second
+argument, `when' (not quick) "--quick is set"`, and `--explain` prints `(skipped: --quick is set)`.
+
 ## Inputs
 
 A stage that needs a CLI flag binds it in an `input` CE. It is then lifted into any command that asks for it,
@@ -198,7 +201,7 @@ module Options =
     let quick =
         Input.option<bool> "--quick"
         |> Input.alias "-q"
-        |> Input.desc "Skip restores and cleaning"
+        |> Input.description "Skip restores and cleaning"
 
     let config =
         Input.option<string> "--configuration"

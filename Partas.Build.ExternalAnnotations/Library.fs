@@ -58,30 +58,30 @@ module ExternalAnnotations =
     module Options =
         let strict =
             Input.option<bool> "--strict"
-            |> Input.desc "Fail when any member is skipped, rather than warning and continuing"
+            |> Input.description "Fail when any member is skipped, rather than warning and continuing"
 
         let annotationsTool =
             Input.optionMaybe<string> "--annotations-tool"
             |> Input.arity Arity.ExactlyOne
-            |> Input.desc "Command that generates annotations during pack, e.g. 'dotnet partas-annotations'"
+            |> Input.description "Command that generates annotations during pack, e.g. 'dotnet partas-annotations'"
             |> Input.helpName "COMMAND"
 
         let force =
             Input.option<bool> "--force"
-            |> Input.desc "Overwrite an existing Directory.Build.targets"
+            |> Input.description "Overwrite an existing Directory.Build.targets"
 
         let assembly =
             Input.option<string> "--assembly"
             |> Input.required
             |> Input.acceptLegalFilePathsOnly
-            |> Input.desc "Assembly to scan for annotations"
+            |> Input.description "Assembly to scan for annotations"
             |> Input.helpName "PATH"
 
         let output =
             Input.option<string> "--output"
             |> Input.required
             |> Input.acceptLegalFilePathsOnly
-            |> Input.desc "Annotations file to write"
+            |> Input.description "Annotations file to write"
             |> Input.helpName "PATH"
 
         let attribute =
@@ -89,28 +89,28 @@ module ExternalAnnotations =
             |> Input.def [||]
             |> Input.arity Arity.ZeroOrMore
             |> Input.allowMultipleArgumentsPerToken
-            |> Input.desc
+            |> Input.description
                 "Collect only these attributes, by simple name; the default is every JetBrains.Annotations attribute"
             |> Input.helpName "NAME"
 
         let minMembers =
             Input.option<int> "--min-members"
             |> Input.def 0
-            |> Input.desc "Fail when any assembly's sidecar annotates fewer members than this"
+            |> Input.description "Fail when any assembly's sidecar annotates fewer members than this"
             |> Input.helpName "N"
 
         let package =
             Input.option<string> "--package"
             |> Input.required
             |> Input.acceptLegalFilePathsOnly
-            |> Input.desc "The .nupkg to check"
+            |> Input.description "The .nupkg to check"
             |> Input.helpName "PATH"
 
         let directory =
             Input.option<string> "--directory"
             |> Input.def "."
             |> Input.acceptLegalFilePathsOnly
-            |> Input.desc "Directory to write Directory.Build.targets into"
+            |> Input.description "Directory to write Directory.Build.targets into"
             |> Input.helpName "PATH"
 
     /// <summary>

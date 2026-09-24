@@ -192,13 +192,13 @@ let private tests = testList "compiler probe" [
 
         // No annotation on any binding: the functions below are what fixes the type.
         let plain = stage "plain" { run touch }
-        let derived = stage "derived" { run (fun (_: StageContext) -> "dotnet --version") }
+        let derived = stage "derived" { runLine (fun (_: StageContext) -> "dotnet --version") }
         let prepared = stage "prepared" { run (fun (_: StageContext) -> Cmd.create "dotnet" "--version") }
         let awaited = stage "awaited" { run (fun (_: StageContext) -> async { return Cmd.create "dotnet" "--version" }) }
         let reported = stage "reported" { run (fun (_: StageContext) -> Ok(Cmd.create "dotnet" "--version"): Result<Cmd, string>) }
         let indexed = stage "indexed" { run (fun (_: StageContext) (_: StageContext) (_: StepIndex) -> async { return Ok(): Result<unit, string> }) }
         let before = stage "before" { run touch; child "a" }
-        let after = stage "after" { child "b"; run (fun (_: StageContext) -> Some "dotnet --version") }
+        let after = stage "after" { child "b"; runLine (fun (_: StageContext) -> Some "dotnet --version") }
         let around = stage "around" { run touch; child "c"; run (fun (_: StageContext) -> async { return 0 }) }
 
         Expect.equal (requiresStage plain) "plain" "a flexible step leaves a stage a StageContext"

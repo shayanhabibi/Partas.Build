@@ -95,10 +95,31 @@ one prefab field.
   written to return a message becomes a process launch. Rename to `runLine`, or mark the `string`-returning
   overload `[<Obsolete>]` in favour of `run (fun ctx -> cmd …)`. Check that the rename does not disturb the
   `FS0041` balance recorded in CLAUDE.md for `run (build, buildStep)`.
+  **Status: implemented on `claude/partas-build-patterns-jgrwr0-api-traps`.** Both: the six `run` overloads over
+  `StageContext -> string`, `Async<string>`, `Task<string>` and their `option` forms are `[<Obsolete>]` (they keep
+  working), and `runLine` carries the same six under a name that says what the string is. The `option` forms are
+  included, a deviation from the plan's "the `string`-returning overload": `fun _ -> Some "…"` is the same trap.
+  `runLine` is a separate operation, so `run`'s overload set is unchanged and the `FS0041` balance with it;
+  compiler-established in a scratch project over every call-site shape (annotated and bare lambdas, each return
+  type, `fun _ -> None`, `fun ctx -> failwith …`, the `BuildStep`-returning lambda, a `runLine` after an
+  input-declaring sub-stage) and by `tests/Partas.Build.CompilerProbe` in Debug and Release. `Obsolete` does not
+  take part in overload resolution: the warning fires only where an obsolete overload is the one chosen. No
+  project in the repository sets `TreatWarningsAsErrors`; the call sites were migrated anyway.
 - **Duplicate names**: `Input.desc`/`Input.description` (`Inputs.fs:209,215`) and `input`/`inputs`
   (`Builders/Inputs.fs:61,64`). Consumers mix them. Keep one of each, `[<Obsolete>]` the other.
+  **Status: implemented on `claude/partas-build-patterns-jgrwr0-api-traps`.** `Input.description` and `input` are
+  kept: `description` matches System.CommandLine's `Description` and the `description` operation of `command` and
+  `pipeline`; `inputs` was already `[<Obsolete>]`. Every `Input.desc` in `src/`, `Build/`, `Partas.Build.ExternalAnnotations/`,
+  `README.md` and `docs/content/` now reads `Input.description`. Deviation: `docs/blog/` and `notes/` keep
+  `Input.desc` — they are dated records of the API at the time they were written.
 - **`when' bool` carries no reason.** Add `when' (reason: string, cond: bool)` or a `whenNotFlag` for the
   `when' (not quick)` idiom, so `--explain` names the flag that skipped the stage.
+  **Status: implemented on `claude/partas-build-patterns-jgrwr0-api-traps`.** `when' value "reason"` on `stage`
+  (and its `InputSpec` mirror), recorded through `addPredicateBecause`: `when' (not quick) "--quick is set"` renders
+  as `(skipped: --quick is set)`. Deviation: the condition comes first, so a reason is appended to an existing
+  `when'` rather than wrapped around it; CE custom operations take their arguments space-separated, so the plan's
+  tupled `when' (reason, cond)` was never the call-site shape. `ConditionsBuilder`'s `when'` is unchanged: a
+  `whenAll`/`whenAny`/`whenNot` records no per-leaf reason. `Build/Program.fs` gives every `when'` a reason.
 - **`printfn` in Baked**: replace with `StageContext.writeLine`. **Status: implemented on `claude/partas-build-patterns-jgrwr0-int-usability`**
   (`bumpImpl`; the only `printfn` in Baked), with a test in `tests/Partas.Build.Tests/BakedTests.fs`.
 
@@ -427,7 +448,7 @@ needs checking against the code.
 |---|---|---|---|
 | 1 | `.mcp.json`, `printfn` in Baked, `Cmd.argIf` in `Program.fs` — **done** | hygiene | trivial |
 | 2 | Task 14b: no consumer needs `Internal` — **done** | usability | medium |
-| 3 | `run (fun _ -> string)` rename/obsolete; `desc`/`input` duplicates | usability | small |
+| 3 | `run (fun _ -> string)` rename/obsolete; `desc`/`input` duplicates — **done** | usability | small |
 | 4 | Exit codes (§4.2) | discoverability | small |
 | 5 | `Command.invoke` + `RunResult` (§5.3.1) | SageFs, discoverability | medium |
 | 6 | JSON for `--explain`, the run result, `--schema` (§4.1) — serializes 5's result — **done** | discoverability | medium |

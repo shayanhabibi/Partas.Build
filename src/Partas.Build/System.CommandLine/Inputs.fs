@@ -211,8 +211,8 @@ module Input =
         |> editOption (fun o -> o.Description <- description)
         |> editArgument (fun a -> a.Description <- description)
 
-    /// An alias for `description` to set the description of the input.
-    let desc = description
+    [<System.Obsolete("Use `Input.description`.")>]
+    let desc (description': string) (input: ActionInput<'T>) = description description' input
 
     /// Sets the default value of an option or argument.
     let defaultValue (defaultValue: 'T) (input: ActionInput<'T>) =

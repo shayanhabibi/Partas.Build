@@ -3,6 +3,7 @@ module Partas.Build.Tests.CmdTests
 open System.Diagnostics
 open System.Runtime.InteropServices
 open System.Threading
+open System.Threading.Tasks
 open Expecto
 open Partas.Build
 open Partas.Build.Internal
@@ -151,14 +152,49 @@ let tests =
                     stage "exeAndArgs" { run "dotnet" "--version" }
                     stage "commandLine" { run succeeds }
                     stage "prepared" { run (cmd $"dotnet --version") }
-                    stage "fromContext" { run (fun (_: StageContext) -> succeeds) }
-                    stage "fromContextAsync" { run (fun (_: StageContext) -> async { return succeeds }) }
+                    stage "fromContext" { runLine (fun (_: StageContext) -> succeeds) }
+                    stage "fromContextAsync" { runLine (fun (_: StageContext) -> async { return succeeds }) }
                     stage "buildsACmd" { run (fun (_: StageContext) -> Cmd.ofString succeeds) }
                     stage "sensitive" { runSensitive $"dotnet --version" }
                 }
 
             Expect.isTrue (runs built) "each overload should run its command"
         }
+
+        test "every runLine overload reaches the process" {
+            let built =
+                pipeline "lines" {
+                    stage "line" { runLine (fun _ -> succeeds) }
+                    stage "lineAsync" { runLine (fun _ -> async { return succeeds }) }
+                    stage "lineTask" { runLine (fun _ -> Task.FromResult succeeds) }
+                    stage "lineOption" { runLine (fun _ -> Some succeeds) }
+                    stage "lineAsyncOption" { runLine (fun _ -> async { return Some succeeds }) }
+                    stage "lineTaskOption" { runLine (fun _ -> Task.FromResult(Some succeeds)) }
+                }
+
+            Expect.isTrue (runs built) "each overload should run its command line"
+        }
+
+        test "runLine fails the stage on a failing command line" {
+            Expect.isFalse (runs (pipeline "bad" { stage "bad" { runLine (fun _ -> fails) } })) "the line runs as a process"
+        }
+
+        test "runLine adds no step when the derived line is None" {
+            let built = pipeline "none" { stage "none" { runLine (fun (_: StageContext) -> (None: string option)) } }
+            Expect.isTrue (runs built) "an absent line is not a failure"
+        }
+
+#nowarn "44"
+        test "the obsolete string-returning run overloads still run their command line" {
+            let built =
+                pipeline "obsolete" {
+                    stage "fromContext" { run (fun (_: StageContext) -> succeeds) }
+                    stage "fromContextOption" { run (fun (_: StageContext) -> Some succeeds) }
+                }
+
+            Expect.isTrue (runs built) "the obsolete overloads keep working"
+        }
+#warnon "44"
 
         test "a stage timeout kills the process and everything it started" {
             let before = sleepsAlive ()

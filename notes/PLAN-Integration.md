@@ -254,6 +254,16 @@ From SageFs's source (`SageFs.Core/AppState.fs`, `Features/LiveTestingExecutors.
      library ever makes finds a static console created earlier under a different `Console.Out` (another
      library used `AnsiConsole` in a previous SageFs eval), it keeps that console until `Console.Out` next
      changes.
+   - Found in review: following `Console.Out` can deadlock under a host whose `Console.Out` takes a lock of its
+     own and then writes to the real terminal. On Unix the runtime locks `Console.Out` for every terminal write,
+     so Expecto's logger (Expecto lock, then `Console.Out`) and a pipeline thread writing through Expecto's
+     `FuncTextWriter` (`Console.Out`, then Expecto lock) invert. The Release suite under a pseudo-terminal hung
+     in 3 of 7 runs. `Console.WriteLine` from any second thread carries the same hazard, so the library cannot
+     remove it while it follows `Console.Out`; SageFs's `StringWriter`s are not exposed. Two changes: each
+     `Console.Out` writer keeps the console it was first seen with (a writer restored after a swap gets its
+     console back rather than a new one over itself), and the test host pins `AnsiConsole.Console` to the real
+     stdout before Expecto starts. A host with a writer like Expecto's passes `output` to `invoke` or pins the
+     console the same way.
    - `invoke`'s `output`, when given, is an `AsyncLocal` run writer (`Terminal.withOutput`): the pipeline's own
      lines, `Console`-sink step lines, and — by forcing redirection in `CmdRunner.outputPolicy` — a
      `Console`-sink child process's output go there, as plain text. `withOutput` wraps the writer in

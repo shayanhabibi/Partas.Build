@@ -153,7 +153,13 @@ initialisation; `rootCommand` is annotated `string array` to keep the array cons
 `Console.Out` (spike in `PLAN-Integration.md` §8 Q5), so the library never calls `AnsiConsole.*` directly:
 `Terminal.ansi ()` answers `AnsiConsole.Console`, rebinding it to the current `Console.Out` when `Console.Out`
 changed since the last call and nothing else replaced `AnsiConsole.Console` meanwhile (an explicit assignment,
-as the tests' `capturingOut` makes, is kept). Under `Terminal.withOutput writer` — an `AsyncLocal`, so it flows
+as the tests' `capturingOut` makes, is kept). Each `Console.Out` writer keeps the console it was first seen
+with, so restoring a writer restores its console. Writing through a host's `Console.Out` can deadlock: on Unix
+the runtime locks `Console.Out` for every terminal write, and Expecto's `Console.Out` takes Expecto's lock before
+writing to the terminal, so a pipeline thread and Expecto's logger take the two locks in opposite orders under a
+pseudo-terminal. `tests/Partas.Build.Tests/Main.fs` therefore pins `AnsiConsole.Console` to the real stdout
+before Expecto starts; a host with the same kind of writer passes `output` to `invoke` or pins the console the
+same way. Under `Terminal.withOutput writer` — an `AsyncLocal`, so it flows
 into the thread-pool work the run starts — `ansi ()` is a plain (no ANSI, no colour) console over `writer`,
 `Terminal.out ()` (where a `Console`-sink step line goes) is `writer`, and `CmdRunner.outputPolicy` redirects a
 `Console`-sink child, which would otherwise inherit the real stdout; `withOutput` installs the writer through

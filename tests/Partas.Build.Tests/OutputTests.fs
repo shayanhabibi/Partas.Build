@@ -262,6 +262,32 @@ let terminal =
             Expect.stringContains (second.ToString()) "to-the-second" "and lands in the writer current at the time"
         }
 
+        test "a Console.Out that becomes current again gets its first console back" {
+            let original = System.Console.Out
+            let originalAnsi = AnsiConsole.Console
+            use host = new StringWriter()
+            use hostRecorded = new StringWriter()
+            use swapped = new StringWriter()
+
+            try
+                System.Console.SetOut host
+                // SetOut wraps a writer on every call; a host restores the wrapper it read from Console.Out.
+                let hostOut = System.Console.Out
+                AnsiConsole.Console <- Terminal.plain hostRecorded
+                Terminal.ansi () |> ignore
+                System.Console.SetOut swapped
+                Terminal.ansi().WriteLine "to-the-swapped"
+                System.Console.SetOut hostOut
+                Terminal.ansi().WriteLine "back-to-the-host"
+            finally
+                System.Console.SetOut original
+                AnsiConsole.Console <- originalAnsi
+
+            Expect.stringContains (swapped.ToString()) "to-the-swapped" "the swapped writer receives the write made while it is current"
+            Expect.stringContains (hostRecorded.ToString()) "back-to-the-host" "the restored writer gets the console it was first seen with"
+            Expect.equal (host.ToString()) "" "the restored writer's own text is untouched"
+        }
+
         test "a console assigned to AnsiConsole.Console is kept" {
             let originalAnsi = AnsiConsole.Console
             use recorded = new StringWriter()

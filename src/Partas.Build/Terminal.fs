@@ -19,6 +19,7 @@ let FallbackWidth = 80
 
 let private runOutput = AsyncLocal<TextWriter>()
 let private plainConsoles = ConditionalWeakTable<TextWriter, IAnsiConsole>()
+let private boundConsoles = ConditionalWeakTable<TextWriter, IAnsiConsole>()
 let private gate = obj ()
 let mutable private lastConsole: IAnsiConsole = null
 let mutable private lastOut: TextWriter = null
@@ -47,10 +48,20 @@ let out () : TextWriter =
 
 /// <summary>The Spectre console the library renders to.</summary>
 /// <remarks>
-/// Under <c>withOutput</c>, a plain console over that writer. Otherwise <c>AnsiConsole.Console</c>, rebound to
-/// the current <c>Console.Out</c> when <c>Console.Out</c> has changed since the last call and nothing else has
-/// replaced <c>AnsiConsole.Console</c> in the meantime; a console assigned explicitly is kept. A console whose
-/// writer reports no width is given <c>FallbackWidth</c>.
+/// <para>
+/// Under <c>withOutput</c>, a plain console over that writer. Otherwise <c>AnsiConsole.Console</c>, rebound when
+/// <c>Console.Out</c> has changed since the last call and nothing else has replaced <c>AnsiConsole.Console</c> in
+/// the meantime; a console assigned explicitly is kept. Each <c>Console.Out</c> writer keeps the console it was
+/// first seen with, compared by reference as read from <c>Console.Out</c>: a writer that becomes current again gets
+/// that console back, and a writer never seen before gets a new console over it. A console whose writer reports
+/// no width is given <c>FallbackWidth</c>.
+/// </para>
+/// <para>
+/// A host that installs a <c>Console.Out</c> which takes a lock of its own and then writes to the process's real
+/// terminal can deadlock against the .NET runtime, which locks <c>Console.Out</c> for every terminal write on
+/// Unix; <c>Console.WriteLine</c> from a second thread is exposed in the same way. Such a host passes an
+/// <c>output</c> writer to <c>invoke</c>, or assigns <c>AnsiConsole.Console</c> before the first run.
+/// </para>
 /// </remarks>
 let ansi () : IAnsiConsole =
     match runOutput.Value with
@@ -60,10 +71,19 @@ let ansi () : IAnsiConsole =
             let console = AnsiConsole.Console
 
             let console =
-                if isNull lastConsole || not (obj.ReferenceEquals(console, lastConsole)) || obj.ReferenceEquals(current, lastOut) then
+                if isNull lastConsole || not (obj.ReferenceEquals(console, lastConsole)) then
+                    boundConsoles.Remove current |> ignore
+                    boundConsoles.Add(current, console)
+                    console
+                elif obj.ReferenceEquals(current, lastOut) then
                     console
                 else
-                    let rebound = AnsiConsole.Create(AnsiConsoleSettings(Out = AnsiConsoleOutput current))
+                    let rebound =
+                        boundConsoles.GetValue(
+                            current,
+                            ConditionalWeakTable<_, _>.CreateValueCallback(fun writer ->
+                                AnsiConsole.Create(AnsiConsoleSettings(Out = AnsiConsoleOutput writer)))
+                        )
                     AnsiConsole.Console <- rebound
                     rebound
 

@@ -1,6 +1,6 @@
 # Typed execution, producer dependencies, and failure handling
 
-- Status: behavioral decisions agreed; implementation not started.
+- Status: implemented. The *Implemented surface* sections below record what shipped; CLAUDE.md's architecture notes describe the current model.
 - Date: 2026-09-17.
 - Implementation checklist: [PLAN-Execution-Tasks.md](PLAN-Execution-Tasks.md).
 - Input-model prerequisite: [PLAN.md](PLAN.md), especially verified findings and the prescribed composition workaround.

@@ -49,7 +49,6 @@ order: 0
 #load "../../../src/Partas.Build.Baked/SemVer.fs"
 
 open Partas.Build
-open Partas.Build.Internal
 
 (**
 <img src="/Partas.Build/img/sun-ztu.jpeg" width="50%" />

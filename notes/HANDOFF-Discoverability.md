@@ -88,7 +88,7 @@ keeping on this task.
 | 12 | Per-stage timing summary | complete, one fix round |
 | 13 | `retry` on a stage | complete, two fix rounds |
 | 14 | Buffered output under `parallel'` | two fix rounds committed; **round-2 re-review partial** |
-| 14b | No consumer signature needs an `Internal` type | not started; brief written |
+| 14b | No consumer signature needs an `Internal` type | done — see `PLAN-Integration.md` §3.3 |
 | 15 | Documentation second pass | not started |
 | 16 | Verification against the acceptance criteria | not started |
 

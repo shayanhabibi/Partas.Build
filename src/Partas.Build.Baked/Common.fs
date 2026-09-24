@@ -5,7 +5,7 @@ open Partas.Build
 
 let isCI =
     Input.option<bool> "--ci"
-    |> Input.desc "Indicates that the build is running in a CI environment; defaults to true if environment variables indicate so"
+    |> Input.description "Indicates that the build is running in a CI environment; defaults to true if environment variables indicate so"
     |> Input.def (
         let vars = System.Environment.GetEnvironmentVariables()
         vars.Contains "CI"
@@ -20,14 +20,14 @@ let isCI =
 let quick =
     Input.option<bool> "--quick"
     |> Input.alias "-q"
-    |> Input.desc "Skips restores, installations, cleaning and formatting"
+    |> Input.description "Skips restores, installations, cleaning and formatting"
 
 /// `--skip-tests`: skips building and running the test suites.
 let skipTests =
     Input.option<bool> "--skip-tests"
-    |> Input.desc "Skips building and running the test suites"
+    |> Input.description "Skips building and running the test suites"
 
 /// `--watch`: runs the operation in watch mode.
 let watch =
     Input.option<bool> "--watch"
-    |> Input.desc "Runs the operation in watch mode"
+    |> Input.description "Runs the operation in watch mode"

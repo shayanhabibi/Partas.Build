@@ -673,14 +673,15 @@ let private failingRoot () =
 [<Tests>]
 let machineOutputTests =
     testList "machine output" [
-        test "--json writes the run result as the only line of the invocation's output" {
+        test "--json writes the run result as the last line of the invocation's output" {
             use output = new StringWriter()
             let result = Helpers.quietly (fun () -> (failingRoot ()).Invoke([ "--json" ], output = output))
 
+            // The given output also receives the run's own console lines; the result follows them, on one line.
             let lines = output.ToString().Split([| '\n' |], StringSplitOptions.RemoveEmptyEntries)
-            Expect.equal lines.Length 1 "the result replaces the timing table, on one line"
+            Expect.isFalse (output.ToString().Contains "Outcome") "the result replaces the timing table"
 
-            let document = JsonDocument.Parse(lines[0]).RootElement
+            let document = JsonDocument.Parse(Array.last lines).RootElement
             Expect.equal ((document |> property "exitCode").GetInt32()) result.ExitCode "the exit code matches the result"
             Expect.equal ((document |> property "outcome").GetString()) "failed" "the outcome is named"
 
@@ -705,10 +706,10 @@ let machineOutputTests =
             use output = new StringWriter()
 
             let result = Helpers.quietly (fun () -> root.Invoke([ "--json" ], output = output))
-            let json = output.ToString()
+            let json = output.ToString().Split([| '\n' |], StringSplitOptions.RemoveEmptyEntries) |> Array.last
 
             Expect.equal result.ExitCode ExitCode.Failure "the command fails"
-            Expect.isFalse (json.Contains key) "the secret stays out of the result"
+            Expect.isFalse (output.ToString().Contains key) "the secret stays out of the output and the result"
             let cause = (JsonDocument.Parse json).RootElement |> property "pipelines" |> items |> List.exactlyOne |> property "reports" |> items |> named "push" |> property "failures" |> items |> List.exactlyOne |> property "cause"
             Expect.isNonEmpty ((cause |> property "message").GetString()) "the failure is described"
         }
@@ -721,7 +722,7 @@ let machineOutputTests =
                 let result = Helpers.quietly (fun () -> (recordingRoot (ResizeArray())).Invoke([ "--report"; path ], output = output))
 
                 Expect.equal result.ExitCode ExitCode.Success "the run passes"
-                Expect.equal (output.ToString()) "" "the report stays out of the output"
+                Expect.isFalse (output.ToString().Contains "formatVersion") "the report stays out of the output"
                 let document = JsonDocument.Parse(File.ReadAllText path).RootElement
                 Expect.equal ((document |> property "outcome").GetString()) "succeeded" "the file holds the result"
                 Expect.equal (document |> property "pipelines" |> items |> List.exactlyOne |> property "timings" |> items |> List.length) 2 "with every stage it ran"
@@ -734,7 +735,7 @@ let machineOutputTests =
             let configuration =
                 Input.option<string> "--configuration"
                 |> Input.alias "-c"
-                |> Input.desc "The build configuration"
+                |> Input.description "The build configuration"
                 |> Input.def "Release"
                 |> Input.acceptOnlyFromAmong [ "Debug"; "Release" ]
 

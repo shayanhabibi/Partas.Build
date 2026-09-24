@@ -228,20 +228,20 @@ module MachineOutput =
     /// <summary>The <c>--json</c> flag.</summary>
     let json: ActionInput<bool> =
         Input.option<bool> "--json"
-        |> Input.desc "Write JSON instead of text: the --explain tree, or the run result as the last line of output"
+        |> Input.description "Write JSON instead of text: the --explain tree, or the run result as the last line of output"
         |> Input.def false
 
     /// <summary>The <c>--report</c> option: a file the run result is written to as JSON.</summary>
     /// <remarks>Written once the command's pipelines finish, whether they succeeded or not, and never under <c>--explain</c>.</remarks>
     let report: ActionInput<string option> =
         Input.optionMaybe<string> "--report"
-        |> Input.desc "Write the run result as JSON to this file"
+        |> Input.description "Write the run result as JSON to this file"
         |> Input.helpName "path"
 
     /// <summary>The <c>--schema</c> flag, which prints <c>schema</c> for the command it is given to, and exits.</summary>
     let schemaOption: ActionInput<bool> =
         Input.option<bool> "--schema"
-        |> Input.desc "Print this command, its options and its subcommands as JSON, and exit"
+        |> Input.description "Print this command, its options and its subcommands as JSON, and exit"
         |> Input.def false
         |> Input.editOption (fun option ->
             option.Action <-

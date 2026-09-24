@@ -133,12 +133,26 @@ module MachineOutput =
 
         writer.WriteEndObject()
 
-    let private writeDefault (writer: Utf8JsonWriter) (value: obj voption) =
+    /// Whether <paramref name="value"/> is <c>null</c>, <c>None</c> or <c>ValueNone</c>.
+    let private isAbsent (value: obj) =
+        match value with
+        | null -> true
+        | _ ->
+            let valueType = value.GetType()
+
+            valueType.IsGenericType
+            && valueType.GetGenericTypeDefinition() = typedefof<voption<_>>
+            && not (valueType.GetProperty("IsSome").GetValue value :?> bool)
+
+    /// Writes the default, with a present default of a sensitive symbol written as <c>"***"</c>.
+    let private writeDefault (writer: Utf8JsonWriter) (sensitive: bool) (value: obj voption) =
+        writer.WriteBoolean("sensitive", sensitive)
+
         match value with
         | ValueSome value ->
             writer.WriteBoolean("hasDefault", true)
             writer.WritePropertyName "default"
-            writeValue writer value
+            if sensitive && not (isAbsent value) then writer.WriteStringValue "***" else writeValue writer value
         | ValueNone ->
             writer.WriteBoolean("hasDefault", false)
             writer.WriteNull "default"
@@ -154,7 +168,7 @@ module MachineOutput =
         writer.WriteBoolean("hidden", option.Hidden)
         writer.WriteBoolean("recursive", option.Recursive)
         writeArity writer option.Arity
-        writeDefault writer (tryDefault option.HasDefaultValue option.GetDefaultValue)
+        writeDefault writer (Input.isSensitive option) (tryDefault option.HasDefaultValue option.GetDefaultValue)
         writeStrings writer "choices" (choices option.ValueType (fun () -> option.GetCompletions CompletionContext.Empty))
         writer.WriteEndObject()
 
@@ -166,7 +180,7 @@ module MachineOutput =
         writer.WriteString("clrType", argument.ValueType.FullName)
         writer.WriteBoolean("hidden", argument.Hidden)
         writeArity writer argument.Arity
-        writeDefault writer (tryDefault argument.HasDefaultValue argument.GetDefaultValue)
+        writeDefault writer (Input.isSensitive argument) (tryDefault argument.HasDefaultValue argument.GetDefaultValue)
         writeStrings writer "choices" (choices argument.ValueType (fun () -> argument.GetCompletions CompletionContext.Empty))
         writer.WriteEndObject()
 
@@ -199,7 +213,8 @@ module MachineOutput =
     /// as an indented JSON document.</summary>
     /// <remarks>
     /// Each option lists its name, aliases, description, type, whether it is required, hidden or recursive, its
-    /// arity, its default and the values it is restricted to. <c>runsPipelines</c> is <c>false</c> for a command
+    /// arity, its default and the values it is restricted to. The default of a symbol marked by
+    /// <c>Input.sensitive</c> is written as <c>"***"</c>. <c>runsPipelines</c> is <c>false</c> for a command
     /// that only dispatches to its subcommands.
     /// </remarks>
     let schema (command: Command) =

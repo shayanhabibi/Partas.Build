@@ -147,6 +147,10 @@ console width. Add `--format json` (name open) on every command:
 - `choices` is what System.CommandLine offers for completion: `acceptOnlyFromAmong`, `mapFromAmong`,
   `addCompletions` and enums all appear there; booleans list none. A default whose factory reads its parse is
   reported absent.
+- A default can be a secret (`Baked.NuGet.apiKey` defaults to `NUGET_API_KEY`). `Input.sensitive` marks the
+  option; `--schema` then writes `"sensitive": true` and a present default as `"***"` (`null` stays `null`, so a
+  consumer can still tell a secret is configured). Masking is opt-in: a default is a plain value, and nothing on
+  it says where it came from. Text `--help` still prints the default, as it did before this branch.
 - Not covered: a System.CommandLine parse error (unknown option, missing subcommand) happens before any command
   action, so it writes no JSON — the exit code (2) is the machine-readable part.
 

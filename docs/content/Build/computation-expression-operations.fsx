@@ -22,6 +22,7 @@ order: 4
 #load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
 #load "../../../src/Partas.Build/Exceptions.fs"
 #load "../../../src/Partas.Build/Output.fs"
+#load "../../../src/Partas.Build/Terminal.fs"
 #load "../../../src/Partas.Build/Annotations.fs"
 #load "../../../src/Partas.Build/Environment.fs"
 #load "../../../src/Partas.Build/Timing.fs"
@@ -51,6 +52,8 @@ order: 4
 #load "../../../src/Partas.Build.Baked/NuGet.fs"
 #load "../../../src/Partas.Build.Baked/Dotnet.fs"
 #load "../../../src/Partas.Build.Baked/SemVer.fs"
+#load "../../../src/Partas.Build.Baked/Clean.fs"
+#load "../../../src/Partas.Build.Baked/Stages.fs"
 
 
 

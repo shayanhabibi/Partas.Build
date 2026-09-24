@@ -47,19 +47,42 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Architecture notes
 
-Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Environment.fs` → `Timing.fs` → `Producer.fs` → `Failures.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/PipelineSettings.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `RunResult.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
+Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Environment.fs` → `Timing.fs` → `Producer.fs` → `Failures.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/PipelineSettings.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Builders/Dependencies.fs` → `MachineOutput.fs` → `Explain.fs` → `Summary.fs` → `RunResult.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
 
-`Explain.fs` renders the resolved stage tree `--explain` prints, as text only, independent of the console and
-any stage sink — a stage that silences or captures its output is still described in full. It compiles before
+`Explain.fs` renders the resolved stage tree `--explain` prints, as text or JSON, independent of the console and
+any stage sink — a stage that silences or captures its output is still described in full. `Explain.explain mode`
+builds the model (`ExplainedPipeline`/`ExplainedStage`/`ExplainedStep`/`ExplainedCondition`); `renderWith` and
+`toJson` render it. It compiles before
 `Builders/Command.fs`, whose `applyTo` registers the flag on every command and prints what the renderer returns.
 It depends on nothing beyond the core model and the `Input.*` combinators. A command that runs pipelines gets
 `Explain.option` and reads it in its own action. A grouping command gets `Explain.groupingOption`, which carries
 the rendering — a list of the subcommands it dispatches to — on the option's own `Action`: such a command has no
 action of its own, and adding one would displace System.CommandLine's "Required command was not provided.".
-Rendering evaluates every stage's `IsActive`, so a `whenBranch` starts `git` and a `whenStage` runs its condition
-stage. `StageContext.Conditions` lets a skip name the condition that caused it: `addPredicateBecause` writes it
-alongside `IsActive`. The structured conditions in `Builders/Conditions.fs` supply a reason; `when'` supplies
-none, since a `bool` argument carries no reason to report.
+Rendering never calls `IsActive`: it walks `StageContext.Conditions` — `addPredicateBecause` is the single writer
+of both, so the list conjoins to `IsActive` — calling each condition at most once, stopping at the first that fails
+or throws, and rendering a throw as its message (`condition failed: …`) instead of crashing. Under
+`ExplainMode.Evaluated` (text `--explain`) a `whenBranch` starts `git` and a `whenStage` runs its condition stage,
+once. Under `ExplainMode.Static` (`--explain --json`) a condition marked `Conditions.effectful` is reported
+`unevaluated` with its description and left uncalled. The mark is the condition's runtime type,
+`EffectfulCondition` (an `FSharpFunc` subclass), not a closure-keyed table: the optimiser copies a closure it
+inlines, and an eta-expansion at a call site that coerces an argument (`whenBranches ["main"]` against a
+`string seq` parameter) wraps it, so `whenBranches` takes `#seq<string>` to keep the call a plain application.
+`whenBranches`, `whenStageSucceeds` (`when' stage`, `whenStage`) are marked; `whenAll`/`whenAny`/`whenNot` mark
+their result when any child is marked (`Conditions.combined`). A condition wrapped in an unmarked lambda is
+evaluated. `StageContext.Conditions` also lets a skip name the condition that caused it. The structured
+conditions in `Builders/Conditions.fs` supply a reason; `when'` supplies none, since a `bool` argument carries
+no reason to report.
+
+`MachineOutput.fs` holds the machine-readable flags and the command-tree schema. `applyTo` registers `--json` and
+`--schema` on every command and `--report <path>` on a command that runs pipelines, each through `reserve`, which
+skips a flag whose name or alias the command already declares (the consumer's option wins; System.CommandLine
+would reject the duplicate). `--schema` carries its action on the option, like `Explain.groupingOption`, and
+prints `MachineOutput.schema` of the parsed command. Under `--json`, `--explain` prints `Explain.toJson` (static)
+and a run prints `RunResult.toJson false` as one line after the run, in place of the timing table; `--report`
+writes the indented form to a file. Both are written for every outcome the command action reaches, a failed
+dependency validation included, but not for a System.CommandLine parse error. JSON is written with
+`Utf8JsonWriter` by hand, not reflection serialization: every document carries `formatVersion`
+(`MachineOutput.FormatVersion`). `System.Text.Json` is a package reference on `netstandard2.0` only.
 
 `Failures.fs` holds what a scope reports about itself, apart from what it prints. A `ScopeReport` carries three
 fields: `Outcome` (the scope's own `StageOutcome`), `Propagates` (whether that failure fails the scope
@@ -135,7 +158,8 @@ and `RootCommandDefinition.Invoke(args, ?output, ?error, ?cancellationToken)` pa
 a parse result whose `Action` is System.CommandLine's `ParseErrorAction` becomes 2 there, whatever the action
 returned. The command action finds its invocation's state — the cancellation token and the `PipelineRun`
 collector — in a `ConditionalWeakTable` keyed by the `ParseResult`; a parse result invoked directly through
-System.CommandLine has none, runs uncancellable, and still gets 2 for a failed dependency validation (the
+System.CommandLine has none (the action makes a local, uncancellable one so `--json`/`--report` still see its
+runs), and still gets 2 for a failed dependency validation (the
 action returns it) but 1 for a parse error (System.CommandLine's own). The token reaches the engine through
 `PipelineContext.runWith`, which links it into the pipeline's own timeout source. `output` replaces the
 invocation configuration's `Output`/`Error`, which is where help, parse errors, `--explain`, the timing summary
@@ -146,7 +170,7 @@ and the dependency diagnostic go; stage output still goes to Spectre's ambient c
 `src/Partas.Build.Baked` is the batteries-included layer over the library: ready-made `Input.*`/`Argument.*` definitions
 for the options every build CLI ends up wanting (`--configuration`, `--nuget-key`, `--project`, `--ci`, a version
 bump), the semver arithmetic in `Version`, and `IO.writeVersion`/`IO.bumpVersion` for editing a project file's
-`<Version>`. It is the only place in the library that writes to disk.
+`<Version>`. It is the only place in the library that writes to disk, apart from the result file `--report` names.
 
 The core model, once a single `Types.fs`, is split by responsibility and compiles in this order:
 1. `Exceptions.fs` (`Partas.Build.ErrorHandling`) — pipeline exceptions, `FailureCause`, `StepOutcome`.

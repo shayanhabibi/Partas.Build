@@ -36,10 +36,10 @@ let private countingBlock (reads: int ref) name (config: ActionInput<string>) = 
 }
 
 /// The command's own options, minus the `--help` System.CommandLine adds to every command and the
-/// `--explain` the library adds to every command that runs a pipeline.
+/// `--explain`, `--json`, `--report` and `--schema` the library adds to every command that runs a pipeline.
 let private declared (command: Command) =
     [ for option in command.Options -> option.Name ]
-    |> List.filter (fun name -> name <> "--help" && name <> "--explain")
+    |> List.filter (fun name -> not (List.contains name [ "--help"; "--explain"; "--json"; "--report"; "--schema" ]))
 
 [<Tests>]
 let tests =

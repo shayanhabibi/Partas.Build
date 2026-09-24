@@ -15,6 +15,13 @@ type private EBAttribute = EditorBrowsableAttribute
 let [<Literal>] private never = EditorBrowsableState.Never
 let [<Literal>] private advanced = EditorBrowsableState.Advanced
 
+/// <summary>A condition that performs IO or runs work to answer, made by <c>Conditions.effectful</c>.</summary>
+[<Sealed; EB(advanced)>]
+type EffectfulCondition(description: string, condition: BuildStageIsActive) =
+    inherit FSharpFunc<StageContext, bool>()
+    member _.Description = description
+    override _.Invoke(ctx: StageContext) = condition ctx
+
 /// <summary>The leaf conditions, as plain <c>StageContext -&gt; bool</c> functions.</summary>
 /// <remarks>
 /// Fun.Build's originals branch on <c>Mode</c> to double as help and verification printers. That mode is not
@@ -22,6 +29,33 @@ let [<Literal>] private advanced = EditorBrowsableState.Advanced
 /// under <c>Mode.Execution</c>.
 /// </remarks>
 module Conditions =
+    /// <summary>Marks <paramref name="condition"/> as performing IO or running work to answer, described by
+    /// <paramref name="description"/>.</summary>
+    /// <remarks>
+    /// A static <c>--explain</c> reports a marked condition as unevaluated, under its description, and leaves it
+    /// uncalled. The mark belongs to the returned function value: a lambda calling it is unmarked unless marked
+    /// itself. <c>whenAll</c>, <c>whenAny</c> and <c>whenNot</c> mark their result when any condition in them is marked.
+    /// </remarks>
+    let effectful (description: string) (condition: BuildStageIsActive): BuildStageIsActive =
+        unbox<BuildStageIsActive> (box (EffectfulCondition(description, condition)))
+
+    /// <summary>The description of <paramref name="condition"/> when it is marked <c>effectful</c>.</summary>
+    let tryEffect (condition: BuildStageIsActive): string voption =
+        match box condition with
+        | :? EffectfulCondition as condition -> ValueSome condition.Description
+        | _ -> ValueNone
+
+    /// <summary><paramref name="condition"/>, marked <c>effectful</c> when any of <paramref name="conditions"/> is,
+    /// described as <paramref name="name"/> over the marked conditions' descriptions.</summary>
+    let combined (name: string) (conditions: BuildStageIsActive list) (condition: BuildStageIsActive): BuildStageIsActive =
+        match conditions |> List.choose (tryEffect >> ValueOption.toOption) with
+        | [] -> condition
+        | described ->
+            let others = conditions.Length - described.Length
+            let described = String.Join("; ", described)
+            if others = 0 then effectful $"%s{name} {{ %s{described} }}" condition
+            else effectful $"%s{name} {{ %s{described}; %i{others} more }}" condition
+
     let whenPlatform (platform: OSPlatform): BuildStageIsActive = fun _ -> RuntimeInformation.IsOSPlatform platform
 
     let whenEnvArg (info: EnvArg): BuildStageIsActive = fun ctx ->
@@ -36,18 +70,23 @@ module Conditions =
 
     /// The branch is read with <c>git branch --show-current</c> in the stage's working directory.
     // TODO Phase 6: retarget onto the `Cmd` runner once it exists, so this inherits env vars and cancellation too.
-    let whenBranches (branches: string seq): BuildStageIsActive = fun ctx ->
-        try
-            let startInfo = ProcessStartInfo("git", "branch --show-current", RedirectStandardOutput = true)
-            startInfo.StandardOutputEncoding <- Text.Encoding.UTF8
-            StageContext.getWorkingDir ctx |> ValueOption.iter (fun dir -> startInfo.WorkingDirectory <- dir)
-            use proc = Process.Start startInfo
-            let branch = proc.StandardOutput.ReadLine()
-            proc.WaitForExit()
-            Seq.contains branch branches
-        with ex ->
-            AnsiConsole.MarkupLineInterpolated $"[red]Run git to get branch info failed: {ex.Message}[/]"
-            false
+    let whenBranches (branches: #seq<string>): BuildStageIsActive =
+        let branches = List.ofSeq branches
+
+        let isOnBranch (ctx: StageContext) =
+            try
+                let startInfo = ProcessStartInfo("git", "branch --show-current", RedirectStandardOutput = true)
+                startInfo.StandardOutputEncoding <- Text.Encoding.UTF8
+                StageContext.getWorkingDir ctx |> ValueOption.iter (fun dir -> startInfo.WorkingDirectory <- dir)
+                use proc = Process.Start startInfo
+                let branch = proc.StandardOutput.ReadLine()
+                proc.WaitForExit()
+                List.contains branch branches
+            with ex ->
+                AnsiConsole.MarkupLineInterpolated $"[red]Run git to get branch info failed: {ex.Message}[/]"
+                false
+
+        effectful $"""whenBranch %s{String.Join(", ", branches)}""" isOnBranch
 
     let whenBranch (branch: string) = whenBranches [ branch ]
 
@@ -58,9 +97,12 @@ module Conditions =
     /// <see cref="M:Partas.Build.ScopeReportModule.continues"/>, the policy-folded outcome — a condition stage carrying
     /// <c>continueStageOnFailure</c> reports itself as succeeded even where it failed.
     /// </remarks>
-    let whenStageSucceeds (stage: StageContext): BuildStageIsActive = fun ctx ->
-        let stage = { stage with ParentContext = ValueSome(StageParent.Stage ctx) }
-        StageContext.run stage StageIndex.Condition CancellationToken.None |> ScopeReport.continues
+    let whenStageSucceeds (stage: StageContext): BuildStageIsActive =
+        let succeeds (ctx: StageContext) =
+            let stage = { stage with ParentContext = ValueSome(StageParent.Stage ctx) }
+            StageContext.run stage StageIndex.Condition CancellationToken.None |> ScopeReport.continues
+
+        effectful $"whenStage %s{stage.Name}" succeeds
 
     /// <summary>The text <c>--explain</c> prints against a stage each of the conditions above turned off.</summary>
     /// <remarks>
@@ -202,7 +244,7 @@ type WhenAnyBuilder() =
     [<EB(never)>]
     member _.Run(build: BuildConditions): BuildStageIsActive =
         let conditions = build []
-        fun ctx -> conditions |> List.exists (fun condition -> condition ctx)
+        Conditions.combined "whenAny" conditions (fun ctx -> conditions |> List.exists (fun condition -> condition ctx))
 
 [<EB(advanced)>]
 type WhenAllBuilder() =
@@ -210,7 +252,7 @@ type WhenAllBuilder() =
     [<EB(never)>]
     member _.Run(build: BuildConditions): BuildStageIsActive =
         let conditions = build []
-        fun ctx -> conditions |> List.forall (fun condition -> condition ctx)
+        Conditions.combined "whenAll" conditions (fun ctx -> conditions |> List.forall (fun condition -> condition ctx))
 
 [<EB(advanced)>]
 type WhenNotBuilder() =
@@ -218,7 +260,7 @@ type WhenNotBuilder() =
     [<EB(never)>]
     member _.Run(build: BuildConditions): BuildStageIsActive =
         let conditions = build []
-        fun ctx -> conditions |> List.forall (fun condition -> not (condition ctx))
+        Conditions.combined "whenNot" conditions (fun ctx -> conditions |> List.forall (fun condition -> not (condition ctx)))
 
 /// Describes one environment variable, in place of a wall of `whenEnvVar` overloads.
 [<EB(advanced)>]

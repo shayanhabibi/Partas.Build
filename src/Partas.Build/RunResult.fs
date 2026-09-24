@@ -1,5 +1,8 @@
 namespace Partas.Build
 
+open System
+open System.Text.Json
+
 /// <summary>The process exit codes a command invocation ends with.</summary>
 /// <remarks>
 /// <c>UsageError</c> covers every failure to parse or validate the command line, dependency validation included,
@@ -72,3 +75,117 @@ type RunResult = {
 
     /// Every failure recorded by the run, absorbed failures among them, in pre-order.
     member this.Failures = this.Reports |> List.collect ScopeReport.failures
+
+module RunResult =
+    let private outcomeName (outcome: RunOutcome) =
+        match outcome with
+        | RunOutcome.Succeeded -> "succeeded"
+        | RunOutcome.Failed -> "failed"
+        | RunOutcome.UsageError -> "usageError"
+        | RunOutcome.Cancelled -> "cancelled"
+
+    let private writeStageOutcome (writer: Utf8JsonWriter) (outcome: StageOutcome) =
+        match outcome with
+        | StageOutcome.Succeeded ->
+            writer.WriteString("outcome", "succeeded")
+            writer.WriteNull "error"
+        | StageOutcome.Skipped ->
+            writer.WriteString("outcome", "skipped")
+            writer.WriteNull "error"
+        | StageOutcome.Failed error ->
+            writer.WriteString("outcome", "failed")
+            writer.WriteString("error", error)
+
+    let private writeCause (writer: Utf8JsonWriter) (cause: FailureCause) =
+        writer.WriteStartObject "cause"
+
+        match cause with
+        | FailureCause.Command(command, exitCode, _) ->
+            writer.WriteString("kind", "command")
+            writer.WriteString("command", command)
+            writer.WriteNumber("exitCode", exitCode)
+        | FailureCause.Start(executable, error) ->
+            writer.WriteString("kind", "start")
+            writer.WriteString("executable", executable)
+            writer.WriteString("exceptionType", error.GetType().FullName)
+        | FailureCause.Raised error ->
+            writer.WriteString("kind", "raised")
+            writer.WriteString("exceptionType", error.GetType().FullName)
+        | FailureCause.TimedOut -> writer.WriteString("kind", "timedOut")
+        | FailureCause.Reported _ -> writer.WriteString("kind", "reported")
+
+        writer.WriteString("message", FailureCause.describe cause)
+        writer.WriteEndObject()
+
+    let rec private writeReport (writer: Utf8JsonWriter) (report: ScopeReport) =
+        writer.WriteStartObject()
+        writer.WriteString("name", report.Name)
+        writer.WriteString("address", ScopeAddress.text report.Address)
+
+        writer.WriteStartArray "path"
+        for ordinal in report.Address.Path do
+            writer.WriteNumberValue ordinal
+        writer.WriteEndArray()
+
+        writeStageOutcome writer report.Outcome
+        writer.WriteBoolean("propagates", report.Propagates)
+
+        writer.WriteStartArray "failures"
+        for failure in report.Failures do
+            writer.WriteStartObject()
+
+            if failure.Index = StepFailure.NoStep then writer.WriteNull "step"
+            else writer.WriteNumber("step", failure.Index)
+
+            MachineOutput.writeOptionalString writer "label" failure.Label
+            writeCause writer failure.Cause
+            writer.WriteEndObject()
+        writer.WriteEndArray()
+
+        writer.WriteStartArray "nested"
+        for nested in report.Nested do
+            writeReport writer nested
+        writer.WriteEndArray()
+
+        writer.WriteEndObject()
+
+    let private writeTiming (writer: Utf8JsonWriter) (timing: StageTiming) =
+        writer.WriteStartObject()
+        writer.WriteString("name", timing.Name)
+        writer.WriteNumber("depth", timing.Depth)
+        writer.WriteNumber("elapsedMs", Math.Round(timing.Elapsed.TotalMilliseconds, 3))
+        writeStageOutcome writer timing.Outcome
+        writer.WriteEndObject()
+
+    /// <summary><paramref name="result"/> as a JSON document, one line long unless <paramref name="indented"/>.</summary>
+    /// <remarks>
+    /// Each pipeline carries its reports, nested as the scopes nest, and its timings in pre-order. A failure's
+    /// <c>step</c> counts from zero and is <c>null</c> for a cause no step produced. A command's line is its log
+    /// form, with every secret masked.
+    /// </remarks>
+    let toJson (indented: bool) (result: RunResult) =
+        MachineOutput.document indented (fun writer ->
+            writer.WriteStartObject()
+            writer.WriteNumber("formatVersion", MachineOutput.FormatVersion)
+            writer.WriteNumber("exitCode", result.ExitCode)
+            writer.WriteString("outcome", outcomeName result.Outcome)
+
+            writer.WriteStartArray "pipelines"
+            for pipeline in result.Pipelines do
+                writer.WriteStartObject()
+                writer.WriteString("name", pipeline.Name)
+
+                writer.WriteStartArray "reports"
+                for report in pipeline.Reports do
+                    writeReport writer report
+                writer.WriteEndArray()
+
+                writer.WriteStartArray "timings"
+                for timing in pipeline.Timings do
+                    writeTiming writer timing
+                writer.WriteEndArray()
+
+                writer.WriteEndObject()
+            writer.WriteEndArray()
+
+            writer.WriteEndObject())

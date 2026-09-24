@@ -278,6 +278,20 @@ become one implicit pipeline carrying the command's name and description. `Comma
 pipeline written out, for when it needs pipeline-level settings. `pipeline "name" { }` is for several pipelines
 under one command, or a pipeline that needs its own name.
 
+## Flags every command carries
+
+| Flag | What it does |
+|---|---|
+| `--explain` | Prints the resolved stage tree and runs nothing. A grouping command lists its subcommands |
+| `--json` | With `--explain`, prints the tree as JSON, leaving `whenBranch` and `whenStage` conditions unevaluated. On a run, prints the run result — each stage's outcome, failures and timing — as one line of JSON after the run, in place of the timing table |
+| `--report <path>` | Writes the run result as JSON to a file. Only on commands that run pipelines |
+| `--schema` | Prints the command, its options (name, aliases, type, default, accepted values, description) and its subcommands as JSON, and runs nothing |
+
+A command that declares one of these names itself keeps its own option. Every JSON document carries
+`formatVersion`. Text `--explain` evaluates every condition, running a `whenStage` condition stage once; a
+condition that throws is shown with its message. `Conditions.effectful description condition` marks a
+condition of your own so the JSON form leaves it unevaluated too.
+
 ## Condition builders
 
 `whenAll { }`, `whenAny { }` and `whenNot { }` take these. Each yields a single condition to a stage. An empty

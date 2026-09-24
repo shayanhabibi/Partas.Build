@@ -213,6 +213,34 @@ let tests =
             Expect.isEmpty skipped.Secrets "and marks nothing secret"
         }
 
+        test "interrupting the thread waiting on an invocation kills the process and everything it started" {
+            // Tracked by process id rather than by count: other processes on the machine may run the same command.
+            // A killed grandchild lingers as a zombie where nothing reaps orphans, as in some containers.
+            let isZombie (proc: Process) =
+                try (System.IO.File.ReadAllText $"/proc/%i{proc.Id}/stat").Split(')').[1].TrimStart().StartsWith "Z"
+                with _ -> false
+            let sleepIds () =
+                set [ for proc in Process.GetProcessesByName sleepProcessName do if not (isZombie proc) then proc.Id ]
+            let before = sleepIds ()
+            let root = Command.root { pipeline "interrupted" { quiet; stage "sleep" { run sleeps } } }
+            let raised: exn ref = ref null
+            let invoking = Thread(fun () -> try root.Invoke([]) |> ignore with ex -> raised.Value <- ex)
+            invoking.Start()
+
+            let watch = Stopwatch.StartNew()
+            while Set.isEmpty (sleepIds () - before) && watch.ElapsedMilliseconds < 20000L do
+                Thread.Sleep 50
+            let started = sleepIds () - before
+            Expect.isNonEmpty started "the stage should have started its child"
+
+            invoking.Interrupt()
+            Expect.isTrue (invoking.Join(System.TimeSpan.FromSeconds 20.)) "the interrupted invocation should return"
+            Expect.isTrue (raised.Value :? ThreadInterruptedException) $"the interrupt should propagate; got %A{raised.Value}"
+
+            Thread.Sleep 1500
+            Expect.isEmpty (Set.intersect started (sleepIds ())) "the interrupt should kill the whole tree, as a cancellation does"
+        }
+
         // Pins the legacy contract the typed executor (PLAN-Execution C02) deliberately leaves alone: a command
         // cancelled through the token its author passed to `run` is a successful step, and only the ambient
         // stage timeout turns a kill into a failure.

@@ -1,4 +1,4 @@
-﻿[<AutoOpen>]
+[<AutoOpen>]
 module Partas.Build.ConditionsBuilder
 
 open System
@@ -83,7 +83,7 @@ module Conditions =
                 proc.WaitForExit()
                 List.contains branch branches
             with ex ->
-                AnsiConsole.MarkupLineInterpolated $"[red]Run git to get branch info failed: {ex.Message}[/]"
+                Terminal.ansi().MarkupLineInterpolated $"[red]Run git to get branch info failed: {ex.Message}[/]"
                 false
 
         effectful $"""whenBranch %s{String.Join(", ", branches)}""" isOnBranch

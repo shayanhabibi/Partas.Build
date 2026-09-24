@@ -200,4 +200,20 @@ type StageBuilder(name: string) =
         (spec: InputSpec<BuildStage>, buildStep: StageContext -> BuildStep): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.run(build, buildStep)) spec
 
+/// <summary>Builds a named stage: settings, conditions, steps and nested stages, run in the order written.</summary>
+/// <remarks>
+/// The result is a <c>StageContext</c>, or an <c>InputSpec&lt;StageContext&gt;</c> when a nested stage declares
+/// CLI inputs. Either is yielded into a <c>pipeline</c>, a <c>command</c> or another <c>stage</c>.
+/// </remarks>
+/// <example>
+/// <code lang="fsharp">
+/// stage "build" {
+///     workingDir "src"
+///     whenBranch "main"
+///     run "dotnet restore"
+///     run (cmd $"dotnet build -c {configuration}")
+///     stage "docs" { run "dotnet run --project docs" }
+/// }
+/// </code>
+/// </example>
 let inline stage name = StageBuilder(name)

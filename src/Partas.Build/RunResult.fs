@@ -61,6 +61,17 @@ type PipelineRun = {
 /// or was cancelled. It is empty for an invocation that ran nothing: help, a version, <c>--explain</c>, or a
 /// usage error.
 /// </remarks>
+/// <example>
+/// <code lang="fsharp">
+/// let result = Command.invoke [ "test" ] root
+///
+/// for timing in result.Timings do
+///     printfn "%s%s %.0fms" (String.replicate timing.Depth "  ") timing.Name timing.Elapsed.TotalMilliseconds
+///
+/// for failure in result.Failures do
+///     printfn "step %d: %s" failure.Index (FailureCause.describe failure.Cause)
+/// </code>
+/// </example>
 type RunResult = {
     ExitCode: int
     Outcome: RunOutcome
@@ -163,6 +174,20 @@ module RunResult =
     /// <c>step</c> counts from zero and is <c>null</c> for a cause no step produced. A command's line is its log
     /// form, with every secret masked.
     /// </remarks>
+    /// <example>
+    /// A failed run, as <c>--json</c> prints it (indented here):
+    /// <code lang="json">
+    /// {"formatVersion": 1, "exitCode": 1, "outcome": "failed",
+    ///  "pipelines": [{"name": "test",
+    ///    "reports": [{"name": "unit", "address": "unit", "path": [0], "outcome": "failed",
+    ///                 "error": "Exit code not acceptable.", "propagates": true,
+    ///                 "failures": [{"step": 0, "label": "dotnet test",
+    ///                               "cause": {"kind": "reported", "message": "Exit code not acceptable."}}],
+    ///                 "nested": []}],
+    ///    "timings": [{"name": "unit", "depth": 0, "elapsedMs": 90.7, "outcome": "failed",
+    ///                 "error": "Exit code not acceptable."}]}]}
+    /// </code>
+    /// </example>
     let toJson (indented: bool) (result: RunResult) =
         MachineOutput.document indented (fun writer ->
             writer.WriteStartObject()

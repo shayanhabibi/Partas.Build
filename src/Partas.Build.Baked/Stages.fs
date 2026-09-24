@@ -14,6 +14,34 @@
 /// condition (<c>StageContext.addPredicateBecause</c>).
 /// </para>
 /// </remarks>
+/// <example>
+/// A whole build CLI. <c>test --help</c> lists <c>--quick</c>, <c>--configuration</c>, <c>--skip-tests</c> and
+/// <c>--ci</c>; <c>publish --help</c> lists <c>--configuration</c> and <c>--nuget-key</c>:
+/// <code lang="fsharp">
+/// open Partas.Build.Baked
+///
+/// let projects = [ "src/MyLib/MyLib.fsproj" ]
+///
+/// rootCommandOfScript {
+///     command "test" {
+///         Command.pipeline {
+///             Stages.restore "MyLib.slnx"
+///             Stages.clean [ "**/bin" ] [ "*.nupkg" ]
+///             Stages.build projects
+///             Stages.expecto "tests/MyLib.Tests/MyLib.Tests.fsproj" [ "--sequenced" ]
+///         }
+///     }
+///     command "publish" {
+///         Command.pipeline {
+///             Stages.build projects
+///             Stages.pack "bin" projects
+///             Stages.nugetPush "bin/*.nupkg"
+///         }
+///     }
+/// }
+/// |> exit
+/// </code>
+/// </example>
 module Partas.Build.Baked.Stages
 
 open System.IO
@@ -119,6 +147,14 @@ let pack (outDir: string) (projects: string list) = packWith Dotnet.configOrRele
 /// When <paramref name="isCI"/> reads <c>true</c>, the suite also takes <c>--summary</c> and its output is
 /// captured: a passing run prints nothing, and a failing one carries the whole output in its error.
 /// </remarks>
+/// <example>
+/// A suite skipped by a consumer's own <c>--fast</c> flag instead of <c>--skip-tests</c>:
+/// <code lang="fsharp">
+/// let fast = Input.option&lt;bool&gt; "--fast" |> InputSpec.ofInput
+///
+/// Stages.expectoWith fast Dotnet.configOrRelease (InputSpec.ofInput Common.isCI) "tests/Unit/Unit.fsproj" []
+/// </code>
+/// </example>
 let expectoWith (skip: InputSpec<bool>) (configuration: InputSpec<string>) (isCI: InputSpec<bool>) (project: string) (arguments: string list) =
     input {
         let! configuration = configuration

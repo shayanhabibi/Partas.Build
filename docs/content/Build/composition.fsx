@@ -51,7 +51,6 @@ order: 3
 
 
 open Partas.Build
-open Partas.Build.Internal
 
 (**
 # Composing reusable blocks

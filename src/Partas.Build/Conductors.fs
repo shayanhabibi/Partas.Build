@@ -659,6 +659,26 @@ open Partas.Build.Internal
 open System.Net.Http
 open Output
 
+/// <summary>The model types a consumer names in a signature, reachable from <c>Partas.Build</c>.</summary>
+/// <remarks>
+/// Each is an abbreviation of the type of the same name in <c>Partas.Build.Internal</c>, and is interchangeable
+/// with it. The modules of functions over these types (<c>StageContext.create</c>, <c>PipelineContext.run</c>, …)
+/// stay in <c>Partas.Build.Internal</c>; the consumer-facing lookups are in <c>Partas.Build.StageContext</c>.
+/// </remarks>
+[<AutoOpen>]
+module ConsumerTypes =
+    [<Measure>] type stepIndex = Internal.stepIndex
+    type StepIndex = Internal.StepIndex
+    type StageContext = Internal.StageContext
+    type PipelineContext = Internal.PipelineContext
+    type CommandSpec = Internal.CommandSpec
+    type StageParent = Internal.StageParent
+    type RuntimeContext = Internal.RuntimeContext
+    type BuildStage = Internal.BuildStage
+    type BuildStep = Internal.BuildStep
+    type BuildPipeline = Internal.BuildPipeline
+    type BuildCommand = Internal.BuildCommand
+
 module StageContext =
     /// <summary>The inputs stage and the stages nested under it declare, deduplicated.</summary>
     /// <remarks>
@@ -684,6 +704,24 @@ module StageContext =
         match StageContext.getParentPipeline stage with
         | Some pipeline -> ExecutionState.values pipeline.Producers
         | None -> ProducerValues.empty
+
+    /// <summary>Writes one line of step output to the stage's sink: the console, a capture, a redirect, or
+    /// nowhere for a silenced stage.</summary>
+    /// <remarks>
+    /// The routed counterpart of <c>printfn</c> inside a step. A bare <c>printfn</c> reaches the console whatever
+    /// the stage's output setting is.
+    /// </remarks>
+    let writeLine (ctx: StageContext) (stream: StdStream) (line: string) = StageContext.writeLine ctx stream line
+
+    /// <summary>Where the stage's step output goes, from the nearest declaration walking upward.</summary>
+    /// <remarks><c>ValueNone</c> is <c>StageOutput.Console</c>.</remarks>
+    let getOutput (ctx: StageContext) = StageContext.getOutput ctx
+
+    /// <summary>The verbosity in effect for the stage.</summary>
+    let getVerbosity (ctx: StageContext) = StageContext.getVerbosity ctx
+
+    /// <summary>The <c>/</c>-separated names of the stages enclosing the stage, outermost first, ending in its own.</summary>
+    let getNamePath (ctx: StageContext) = StageContext.getNamePath ctx
 
     let rec getStageLevel (ctx: StageContext) = StageContext.mapStageParentContext 0 (getStageLevel >> (+) 1) ctx
 

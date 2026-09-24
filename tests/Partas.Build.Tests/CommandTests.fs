@@ -424,3 +424,161 @@ let defaultsTests =
             Expect.equal described.Description "restore + build" "the command keeps its own description"
         }
     ]
+
+/// A root whose one pipeline records the configuration it ran with, and fails under <c>--fail</c>.
+let private recordingRoot (seen: ResizeArray<string>) =
+    let config = Input.option<string> "--configuration" |> Input.def "Debug"
+    let fail = Input.option<bool> "--fail" |> Input.def false
+
+    let compile = input {
+        let! cfg = config
+        and! fail = fail
+        return stage "compile" {
+            run (fun (_: StageContext) ->
+                seen.Add cfg
+                if fail then failwith "compile failed")
+        }
+    }
+
+    Command.root {
+        pipeline "build" {
+            quiet
+            stage "restore" { run noop }
+            compile
+        }
+    }
+
+[<Tests>]
+let invocation =
+    testList "invocation" [
+        test "a passing run exits zero and returns its reports and timings" {
+            let result = Helpers.quietly (fun () -> recordingRoot (ResizeArray()) |> Command.invoke [ "--configuration"; "Release" ])
+
+            Expect.equal result.ExitCode ExitCode.Success "a passing run exits zero"
+            Expect.equal result.Outcome RunOutcome.Succeeded "the outcome names the category"
+            Expect.equal [ for run in result.Pipelines -> run.Name ] [ "build" ] "the one pipeline that ran is recorded"
+            Expect.equal [ for timing in result.Timings -> timing.Name ] [ "restore"; "compile" ] "each stage has its timing"
+            Expect.equal [ for report in result.Reports -> report.Name, report.Outcome ]
+                [ "restore", StageOutcome.Succeeded; "compile", StageOutcome.Succeeded ]
+                "each stage has its report"
+            Expect.isEmpty result.Failures "a passing run records no failure"
+        }
+
+        test "a failing run exits one and its reports carry the failure" {
+            let result = Helpers.quietly (fun () -> recordingRoot (ResizeArray()) |> Command.invoke [ "--fail"; "true" ])
+
+            Expect.equal result.ExitCode ExitCode.Failure "a stage failure exits one"
+            Expect.equal result.Outcome RunOutcome.Failed "the outcome names the category"
+            Expect.equal [ for timing in result.Timings -> timing.Name ] [ "restore"; "compile" ] "the failed stage is timed too"
+
+            let compile = result.Reports |> List.find (fun report -> report.Name = "compile")
+            Expect.isTrue compile.Outcome.IsFailed "the failed stage reports itself failed"
+            Expect.isNonEmpty result.Failures "the failure is readable off the result"
+        }
+
+        test "one definition invoked twice with different arguments runs each set once" {
+            let seen = ResizeArray()
+            let root = recordingRoot seen
+
+            let first = Helpers.quietly (fun () -> root |> Command.invoke [ "--configuration"; "Release" ])
+            let second = Helpers.quietly (fun () -> root |> Command.invoke [ "--configuration"; "Debug"; "--fail"; "true" ])
+
+            Expect.sequenceEqual seen [ "Release"; "Debug" ] "each invocation reads its own arguments"
+            Expect.equal first.ExitCode ExitCode.Success "the first invocation passes"
+            Expect.equal second.ExitCode ExitCode.Failure "the second invocation fails"
+            Expect.equal first.Timings.Length 2 "the first result keeps its own run"
+            Expect.equal second.Timings.Length 2 "the second result holds its own run, not the first one's too"
+            Expect.isEmpty first.Failures "a later failing run leaves an earlier result untouched"
+        }
+
+        test "a parse error exits two and runs nothing" {
+            let seen = ResizeArray()
+            use output = new StringWriter()
+            let result = (recordingRoot seen).Invoke([ "--no-such-option" ], output = output)
+
+            Expect.equal result.ExitCode ExitCode.UsageError "an unknown option is a usage error"
+            Expect.equal result.Outcome RunOutcome.UsageError "the outcome names the category"
+            Expect.isEmpty result.Pipelines "no pipeline ran"
+            Expect.isEmpty seen "no stage ran"
+            Expect.stringContains (output.ToString()) "--no-such-option" "the parse error reaches the given writer"
+        }
+
+        test "a missing subcommand exits two" {
+            let root = Command.root { addCommand (command "build" { stage "one" { run noop } }) }
+            use output = new StringWriter()
+
+            Expect.equal (root.Invoke([], output = output)).ExitCode ExitCode.UsageError "a grouping root without a subcommand is a usage error"
+        }
+
+        test "rootCommand exits two on a parse error" {
+            use output = new StringWriter()
+            let exitCode =
+                rootCommand [| "--no-such-option" |] {
+                    invocationConfiguration (InvocationConfiguration(Output = output, Error = output))
+                    stage "one" { run noop }
+                }
+
+            Expect.equal exitCode ExitCode.UsageError "rootCommand shares the invocation's exit codes"
+        }
+
+        test "a rejected dependency arrangement exits two" {
+            let source = Producer.define "compile" (InputSpec.ret ()) DependencySpec.empty (fun _ _ -> Operation.ret 42)
+            let root = Command.root {
+                pipeline "work" {
+                    Stage.consuming "use" (DependencySpec.require source) (fun (_: int) -> Operation.ret ())
+                    Producer.stage source
+                }
+            }
+            use output = new StringWriter()
+
+            let result = root.Invoke([], output = output)
+            Expect.equal result.ExitCode ExitCode.UsageError "dependency validation is a usage error"
+            Expect.isEmpty result.Pipelines "no pipeline ran"
+            Expect.isNonEmpty (output.ToString()) "the diagnostic reaches the given writer"
+        }
+
+        test "a cancelled invocation exits 130" {
+            let root = Command.root {
+                pipeline "slow" {
+                    quiet
+                    stage "sleep" { run (fun (_: StageContext) -> async { do! Async.Sleep 30000 }) }
+                }
+            }
+            use cts = new Threading.CancellationTokenSource(TimeSpan.FromMilliseconds 300.)
+            let watch = Diagnostics.Stopwatch.StartNew()
+
+            let result = Helpers.quietly (fun () -> root.Invoke([], cancellationToken = cts.Token))
+
+            Expect.equal result.ExitCode ExitCode.Cancelled "cancellation exits 130"
+            Expect.equal result.Outcome RunOutcome.Cancelled "the outcome names the category"
+            Expect.isLessThan watch.Elapsed (TimeSpan.FromSeconds 20.) "the token cut the sleeping stage short"
+            Expect.equal result.Pipelines.Length 1 "the cancelled pipeline is still recorded"
+        }
+
+        test "an invocation already cancelled runs nothing" {
+            let seen = ResizeArray()
+            use cts = new Threading.CancellationTokenSource()
+            cts.Cancel()
+
+            let result = (recordingRoot seen).Invoke([], cancellationToken = cts.Token)
+
+            Expect.equal result.ExitCode ExitCode.Cancelled "a cancelled token exits 130"
+            Expect.isEmpty seen "no stage ran"
+            Expect.isEmpty result.Pipelines "no pipeline started"
+        }
+
+        test "help and --explain write to the given output and exit zero" {
+            let root = recordingRoot (ResizeArray())
+            use help = new StringWriter()
+            use explained = new StringWriter()
+
+            let helpResult = root.Invoke([ "--help" ], output = help)
+            let explainResult = root.Invoke([ "--explain" ], output = explained)
+
+            Expect.equal helpResult.ExitCode ExitCode.Success "help exits zero"
+            Expect.stringContains (help.ToString()) "--configuration" "help reaches the given writer"
+            Expect.equal explainResult.ExitCode ExitCode.Success "--explain exits zero"
+            Expect.stringContains (explained.ToString()) "compile" "the explained tree reaches the given writer"
+            Expect.isEmpty explainResult.Pipelines "--explain runs no pipeline"
+        }
+    ]

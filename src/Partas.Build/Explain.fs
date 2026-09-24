@@ -184,5 +184,5 @@ module Explain =
             option.Action <-
                 { new SynchronousCommandLineAction() with
                     member _.Invoke(parseResult: ParseResult) =
-                        Console.Out.WriteLine (ofSubcommands parseResult.CommandResult.Command)
+                        parseResult.InvocationConfiguration.Output.WriteLine (ofSubcommands parseResult.CommandResult.Command)
                         0 })

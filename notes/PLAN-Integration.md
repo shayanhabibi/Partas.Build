@@ -1,7 +1,7 @@
 # PLAN-Integration
 
 Findings from a survey of how Partas.Build is used in practice, and the design that follows. Drafted
-2026-09-24. **Status: proposal — nothing here is implemented.**
+2026-09-24. **Status: proposal, partly implemented — see the status line under each section.**
 
 Companion to `PLAN-Discoverability.md`, which responded to `FEEDBACK-Xantham.md` (a report written against
 0.3.0). This document starts from the consumers' *code* instead of a written report, and adds a third axis the
@@ -131,6 +131,13 @@ Today a parse/validation error and a stage failure both exit 1 (`Command.fs:93-1
 `1` stage failure, `2` usage/validation error, `130` cancelled. An agent can then tell "I called it wrong" from
 "the build is broken" without parsing stderr.
 
+**Status: implemented on claude/partas-build-patterns-jgrwr0-int-core.** `ExitCode.Success`/`Failure`/`UsageError`/`Cancelled` in `RunResult.fs`.
+Usage errors are a System.CommandLine parse error (unknown option, missing subcommand, failed validator) and a
+failed `DependencyPlan.validate`. The parse-error mapping lives in `RootCommandDefinition.Invoke`, the one path
+`rootCommand` and `Command.invoke` share; a subcommand invoked straight through System.CommandLine
+(`cmd.Parse(…).Invoke()`, as many tests do) still exits 1 on a parse error, since System.CommandLine's own
+`ParseErrorAction` answers it — but 2 on a failed dependency validation, which the command action returns.
+
 ### 4.3 `--explain` without side effects
 
 Rendering evaluates every `IsActive`: `whenBranch` starts `git`, and `whenStage` runs its condition stage —
@@ -204,6 +211,25 @@ From SageFs's source (`SageFs.Core/AppState.fs`, `Features/LiveTestingExecutors.
 
    It parses `args`, runs, and returns the structured result that §4.1 serializes. `RootCommandBuilder.Run`
    becomes `invoke` plus `ExitCode`.
+
+   **Status: implemented on claude/partas-build-patterns-jgrwr0-int-core.** Deviations from the sketch above:
+
+   - `invoke` takes a `RootCommandDefinition`, built by `Command.root { … }` — `rootCommand`'s operations, no
+     argv, nothing parsed or run at construction (§8 Q4). `Command.invoke : string seq -> RootCommandDefinition
+     -> RunResult` is the common case; the optional parameters live on the method
+     `RootCommandDefinition.Invoke(args, ?output, ?error, ?cancellationToken)`, since a let-bound function takes
+     none. `RootCommandBuilder.Run` is `Define` + `Invoke` + `.ExitCode`.
+   - `RunResult = { ExitCode; Outcome: RunOutcome; Pipelines: PipelineRun list }`, with `Reports`/`Timings`/
+     `Failures` members flattening across pipelines. A command runs several pipelines, and `ScopeReports`/
+     `StageTimings` are the mutable per-pipeline collectors a second run clears, so each `PipelineRun` holds an
+     immutable snapshot (`ScopeReport list`, pre-ordered `StageTiming list`) taken as the pipeline finishes.
+   - `output` reaches what goes through System.CommandLine's `InvocationConfiguration` — help, `--version`,
+     parse errors — plus `--explain`, the timing summary and the dependency diagnostic, which now write there
+     too. Stage output still goes to Spectre's ambient console: rerouting it is §5.3.3's.
+   - `cancellationToken` reaches the engine through the new `PipelineContext.runWith`, which links it into the
+     pipeline's own timeout source; a cancelled invocation exits 130 and starts no further pipeline. The
+     `Thread.Interrupt` bridge (§5.3.4) is the seam left: it needs only to cancel a source whose token it passes
+     to `Invoke`.
 
 2. **`rootCommandOfScript` stops capturing argv at module initialisation**: a function, or a builder whose
    `Run` reads `Args.script ()` when invoked.
@@ -297,5 +323,10 @@ without `open Partas.Build.Internal` and without the hand-rolled rows of §2's f
 3. Prefab stages as functions or records (§3.1, W12).
 4. Does `Command.invoke` take the `RootCommandBuilder` result, the `CommandSpec`, or both — and does it live in
    `Partas.Build` or a separate `Partas.Build.Hosting` namespace?
+   **Decided:** neither. `rootCommand args { … }` runs at construction and `CommandSpec` lives in `Internal`, so
+   `invoke` takes a third value, the `RootCommandDefinition` that `Command.root { … }` builds. It lives in
+   `Partas.Build` (the `CommandBuilder` auto-open module, beside `Command.pipeline`), with `RunResult`,
+   `RunOutcome`, `PipelineRun` and `ExitCode` in `Partas.Build` too: one entry point does not warrant a
+   namespace, and none of it needs `open Partas.Build.Internal`.
 5. Is the Spectre singleton hazard (§5.2) real? Spike: create `AnsiConsole` under one `Console.SetOut`, swap,
    write again, and see where the text lands.

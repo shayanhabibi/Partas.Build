@@ -247,7 +247,7 @@ let tests =
                     }
                 }
 
-            Expect.equal (built.Parse("").Invoke()) 1 "an unresolved dependency inside a parallel scope is rejected"
+            Expect.equal (built.Parse("").Invoke()) ExitCode.UsageError "an unresolved dependency inside a parallel scope is rejected"
             Expect.equal executions.Value 0 "the rejected arrangement runs no producer"
             Expect.isEmpty ran "the rejection precedes every stage of the invocation"
         }

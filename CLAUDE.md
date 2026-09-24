@@ -38,7 +38,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Current state (verify before assuming)
 
-- Phases 0-7 of `notes/PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (433 Expecto tests across four suites — 291 in `tests/Partas.Build.Tests`, one file per layer, plus 65 in `tests/Partas.Build.ExternalAnnotations.Tests`, 74 in `tests/Partas.ExternalAnnotations.Tests` and 3 in `tests/Partas.Build.Cmd.NetStandard.Tests`; the `test` stage also runs `tests/Partas.Build.CompilerProbe` in both Debug and Release, 11 tests each). The `Build/` CLI is written against the library: a breaking change breaks it first.
+- Phases 0-7 of `notes/PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (443 Expecto tests across four suites — 301 in `tests/Partas.Build.Tests`, one file per layer, plus 65 in `tests/Partas.Build.ExternalAnnotations.Tests`, 74 in `tests/Partas.ExternalAnnotations.Tests` and 3 in `tests/Partas.Build.Cmd.NetStandard.Tests`; the `test` stage also runs `tests/Partas.Build.CompilerProbe` in both Debug and Release, 11 tests each). The `Build/` CLI is written against the library: a breaking change breaks it first.
 - The DSL exists end to end: `inputs` (`Builders/Inputs.fs`), `stage` (`Builders/Stage.fs`), `pipeline` (`Builders/Pipeline.fs`), `command`/`rootCommand` (`Builders/Command.fs`). A stage that declares an input turns its pipeline into an `InputSpec<PipelineContext>`, and the command registers whatever those specs declare. Conditions are in `Builders/Conditions.fs` — `whenAll`/`whenAny`/`whenNot`/`whenEnv`/`whenStage` plus the `when'`/`whenEnvVar`/`whenBranch`/`when{Windows,Linux,OSX}` operations on `StageBuilder`.
 - A command carries `PipelineDefaults: BuildPipeline` and takes the pipeline-level operations itself (`workingDir`, `envVars`, the three timeouts, `acceptExitCodes`, the output operations, `noPrefixForStep`/`noStdRedirectForStep`, `runBeforeEachStage`/`runAfterEachStage`, `post`, `verbosity`/`verbose`/`quiet`), each one built through `CommandBuilderBase.MapPipelineDefault`. They are **defaults, not overrides**: `PipelineContext.applyDefaults` copies a setting across only where the pipeline left it at the value `PipelineContext.create` gave it, so a pipeline that sets the same thing wins. See *Command defaults* below.
 - `run`/`runSensitive` start real processes through `CmdRunner` (`Process.fs`). A `Cmd`, defined in `src/Partas.Build.Cmd/Program.fs`, keeps the executable and its arguments apart all the way to `ProcessStartInfo.ArgumentList`, so the platform does the escaping. Interpolate through the `cmd` helper — `run (cmd $"dotnet build {project}")`. `run $"..."` binds to the `string` overload and flattens the holes; `runSensitive $"..."` takes the `FormattableString` directly and masks every hole as `***`. There is no `Fake.Core.Process` dependency; `notes/PLAN.md`'s *The command runner* records why.
@@ -47,7 +47,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Architecture notes
 
-Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Environment.fs` → `Timing.fs` → `Producer.fs` → `Failures.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/PipelineSettings.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
+Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Environment.fs` → `Timing.fs` → `Producer.fs` → `Failures.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/PipelineSettings.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `RunResult.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
 
 `Explain.fs` renders the resolved stage tree `--explain` prints, as text only, independent of the console and
 any stage sink — a stage that silences or captures its output is still described in full. It compiles before
@@ -122,6 +122,24 @@ reports, and prints nothing for a quiet pipeline or a run of a single stage, who
 line already carries. `Summary.render` sizes its three columns to the ambient console and elides what does not
 fit — the middle of a stage name, the end of an outcome — so the table is one row per stage at any width, and
 the `Depth` indent survives an 80-column CI log.
+
+`RunResult.fs` holds what a command invocation answers, and the exit codes it ends with: `ExitCode.Success`
+(0 — help, `--version` and `--explain` included), `Failure` (1, a stage failed), `UsageError` (2 — a parse
+error, a missing subcommand, a failed `DependencyPlan.validate`) and `Cancelled` (130). `RunResult` carries the
+code, its `RunOutcome`, and a `PipelineRun` per pipeline started — its `ScopeReports.stages` and ordered
+`StageTimings`, snapshotted in `runReportingTimings`'s `finally` so a later run of the same pipeline value
+leaves an earlier result intact. `Command.root { … }` builds a `RootCommandDefinition` (the `rootCommand`
+operations, via the shared `RootCommandBuilderBase.Define`) without parsing or running; `Command.invoke args`
+and `RootCommandDefinition.Invoke(args, ?output, ?error, ?cancellationToken)` parse and run it, and
+`RootCommandBuilder.Run` is `Define` + `Invoke` + `.ExitCode`, so the exit-code mapping lives in `Invoke` alone:
+a parse result whose `Action` is System.CommandLine's `ParseErrorAction` becomes 2 there, whatever the action
+returned. The command action finds its invocation's state — the cancellation token and the `PipelineRun`
+collector — in a `ConditionalWeakTable` keyed by the `ParseResult`; a parse result invoked directly through
+System.CommandLine has none, runs uncancellable, and still gets 2 for a failed dependency validation (the
+action returns it) but 1 for a parse error (System.CommandLine's own). The token reaches the engine through
+`PipelineContext.runWith`, which links it into the pipeline's own timeout source. `output` replaces the
+invocation configuration's `Output`/`Error`, which is where help, parse errors, `--explain`, the timing summary
+and the dependency diagnostic go; stage output still goes to Spectre's ambient console.
 
 `src/Partas.Build.Cmd` (`Program.fs`, `Execution.fs`) is the process layer, defining `Cmd` and compiling before `Partas.Build`.
 

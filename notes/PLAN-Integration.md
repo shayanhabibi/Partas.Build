@@ -1,7 +1,8 @@
 # PLAN-Integration
 
 Findings from a survey of how Partas.Build is used in practice, and the design that follows. Drafted
-2026-09-24. **Status: proposal, partly implemented — see the status line under each section.**
+2026-09-24. **Status: §3-§5.3 and §6 implemented, and rolled up on `claude/partas-build-patterns-jgrwr0-integration`
+(see the status line under each section, and §7); §4.4, §4.5 and §5.4 (§7 row 11) remain.**
 
 Companion to `PLAN-Discoverability.md`, which responded to `FEEDBACK-Xantham.md` (a report written against
 0.3.0). This document starts from the consumers' *code* instead of a written report, and adds a third axis the
@@ -478,17 +479,32 @@ needs checking against the code.
 | 1 | `.mcp.json`, `printfn` in Baked, `Cmd.argIf` in `Program.fs` — **done** | hygiene | trivial |
 | 2 | Task 14b: no consumer needs `Internal` — **done** | usability | medium |
 | 3 | `run (fun _ -> string)` rename/obsolete; `desc`/`input` duplicates — **done** | usability | small |
-| 4 | Exit codes (§4.2) | discoverability | small |
-| 5 | `Command.invoke` + `RunResult` (§5.3.1) | SageFs, discoverability | medium |
+| 4 | Exit codes (§4.2) — **done** | discoverability | small |
+| 5 | `Command.invoke` + `RunResult` (§5.3.1) — **done** | SageFs, discoverability | medium |
 | 6 | JSON for `--explain`, the run result, `--schema` (§4.1) — serializes 5's result — **done** | discoverability | medium |
-| 7 | Console hygiene, argv capture, env at run time (§5.3.2-5.3.5) — after the Spectre spike | SageFs | medium |
-| 8 | Thread-interrupt bridge + no-orphan test (§5.3.4) | SageFs | medium |
+| 7 | Console hygiene, argv capture, env at run time (§5.3.2-5.3.5) — after the Spectre spike — **done** | SageFs | medium |
+| 8 | Thread-interrupt bridge + no-orphan test (§5.3.4) — **done** | SageFs | medium |
 | 9 | Baked prefab stages (§3.1), `Build/Program.fs` rewritten on them as the acceptance test — **done** | usability | large |
 | 10 | Side-effect-free `--explain` (§4.3) — **done** | discoverability | medium |
 | 11 | XML `<example>`s, agent snippet, consumer pattern docs (§4.4, §4.5, §5.4) | discoverability | medium |
 
 `Build/Program.fs` stays the acceptance test, as in `PLAN.md`: items 2, 3 and 9 are done when it compiles
 without `open Partas.Build.Internal` and without the hand-rolled rows of §2's first table.
+
+**Status: rows 1-10 rolled up on `claude/partas-build-patterns-jgrwr0-integration`**, merged in the order
+int-core, int-usability, json, host, api-traps, baked-stages (int-core and int-usability are the shared bases the
+others branch from). Integration decisions:
+
+- `runReportingTimings` takes json's `--json` flag and always-present `InvocationState` together with host's
+  `PipelineContext.Running.enter`/`runEntered` reentrancy guard; `whenBranches` keeps int-usability's
+  `effectful` marking and prints through host's `Terminal.ansi ()`.
+- Code from json and baked-stages that used `Input.desc` (obsolete since api-traps) uses `Input.description`.
+- `--json` with an `output` writer given to `Invoke`: host routes the run's console lines to that writer as
+  well, so the run result is its *last* line rather than its only one — the contract §4.1 already states for
+  stdout. The json tests read the last line accordingly.
+- `Build/Program.fs` is baked-stages' prefab rewrite with api-traps' `when'` skip reasons. It was compiled from a
+  scratch copy with `Repo` stubbed (the type provider cannot load in the container), and `test --explain` and
+  `publish --explain --json` were run against the stub.
 
 ## 8. Open questions
 

@@ -3,7 +3,7 @@
     "fslangmcp": {
       "type": "stdio",
       "command": "fslangmcp",
-      "args": ["--project", "Partas.Testing.slnx"],
+      "args": ["--project", "Partas.Build.slnx"],
       "env": {}
     }
   }

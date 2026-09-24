@@ -128,7 +128,7 @@ let inline private addCondition ([<IIL>] build: BuildConditions) (condition: Bui
 /// <summary>Collects conditions for <c>whenAll</c>, <c>whenAny</c> and <c>whenNot</c>.</summary>
 /// <remarks>
 /// There is no <c>cmdArg</c> operation: System.CommandLine owns arguments now, so a stage that wants to branch on
-/// a flag binds it in an <c>inputs</c> CE and tests the bound value with <c>when'</c>.
+/// a flag binds it in an <c>input</c> CE and tests the bound value with <c>when'</c>.
 /// </remarks>
 [<EB(advanced)>]
 type ConditionsBuilder() =
@@ -152,7 +152,7 @@ type ConditionsBuilder() =
     /// <summary>Adds a literal boolean condition to the builder.</summary>
     /// <remarks>
     /// <include file="../xmldoc/conditions.xml" path="/conditions/conjoin/*"/>
-    /// The value is typically a boolean bound by an enclosing <c>inputs</c> CE.
+    /// The value is typically a boolean bound by an enclosing <c>input</c> CE.
     /// </remarks>
     [<CustomOperation("when'")>]
     member inline _.when'([<IIL>] build: BuildConditions, value: bool) = addCondition build (fun _ -> value)
@@ -307,11 +307,25 @@ type StageBuilder with
     /// <summary>Sets whether the stage is active using a literal boolean condition.</summary>
     /// <remarks>
     /// <include file="../xmldoc/conditions.xml" path="/conditions/conjoin/*"/>
-    /// The value is typically a boolean bound by an enclosing <c>inputs</c> CE.
+    /// The value is typically a boolean bound by an enclosing <c>input</c> CE.
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     [<CustomOperation("when'")>]
     member inline _.when'([<IIL>] build: BuildStage, value: bool) = StageContext.buildStageIsActive build (fun _ -> value)
+
+    /// <summary>Sets whether the stage is active from a literal boolean condition; <paramref name="skipReason"/> is
+    /// reported by <c>--explain</c> against an inactive stage.</summary>
+    /// <remarks>
+    /// <include file="../xmldoc/conditions.xml" path="/conditions/conjoin/*"/>
+    /// <c>when' (not quick) "--quick is set"</c> renders a skipped stage as <c>(skipped: --quick is set)</c>.
+    /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
+    /// </remarks>
+    /// <param name="build" />
+    /// <param name="value">The condition.</param>
+    /// <param name="skipReason">The reason reported by <c>--explain</c> when <paramref name="value"/> is false.</param>
+    [<CustomOperation("when'")>]
+    member inline _.when'([<IIL>] build: BuildStage, value: bool, skipReason: string) =
+        StageContext.buildStageIsActiveBecause (ValueSome skipReason) build (fun _ -> value)
 
     /// <summary>Runs a stage as a condition and uses its success as the activation answer.</summary>
     /// <remarks>
@@ -438,6 +452,13 @@ type StageBuilder with
         when'
         (spec: InputSpec<BuildStage>, value: bool): InputSpec<BuildStage>
         = InputSpec.map (fun (build: BuildStage) -> this.when'(build, value)) spec
+
+    /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
+    /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>
+    [<CustomOperation("when'")>] member inline this.
+        when'
+        (spec: InputSpec<BuildStage>, value: bool, skipReason: string): InputSpec<BuildStage>
+        = InputSpec.map (fun (build: BuildStage) -> this.when'(build, value, skipReason)) spec
 
     /// <summary>The <c>InputSpec</c> mirror of the operation of the same name.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/mirror/*"/>

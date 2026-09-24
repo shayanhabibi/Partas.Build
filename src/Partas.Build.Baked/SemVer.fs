@@ -23,7 +23,7 @@ let bump =
     BuildOptionInput.create "bump"
     |> BuildOption.createMaybe
     |> BuildOption.map (
-        Input.desc "Bump version by type. Defaults to patch. [major|minor|patch|alpha|beta|rc|preview|<SEMVER>]"
+        Input.description "Bump version by type. Defaults to patch. [major|minor|patch|alpha|beta|rc|preview|<SEMVER>]"
         >> Input.helpName "BUMP_TYPE"
         >> Input.customParser (
             fun result ->

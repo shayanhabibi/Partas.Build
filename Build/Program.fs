@@ -38,13 +38,13 @@ module Options =
     let quick =
         Input.option<bool> "--quick"
         |> Input.alias "-q"
-        |> Input.desc "Skips restores, installations, formatting etc"
+        |> Input.description "Skips restores, installations, formatting etc"
     let skipTests =
         Input.option<bool> "--skip-tests"
-        |> Input.desc "Skips running tests"
+        |> Input.description "Skips running tests"
     let watch =
         Input.option<bool> "--watch"
-        |> Input.desc "Runs the operation in watch mode."
+        |> Input.description "Runs the operation in watch mode."
 
     let config =
         Baked.Dotnet.config.option
@@ -78,7 +78,7 @@ module Project =
         Input.option<string list> "--project"
         |> Input.alias "-p"
         |> Input.arity Arity.OneOrMore
-        |> Input.desc "The project(s) to target"
+        |> Input.description "The project(s) to target"
         |> Input.allowMultipleArgumentsPerToken
         |> Input.mapFromManyWith StringComparer.OrdinalIgnoreCase [
             yield! allProjects
@@ -90,7 +90,7 @@ module Prelude =
     let restore = input {
         let! quick = Options.quick
         return stage "restore" {
-            when' (not quick)
+            when' (not quick) "--quick is set"
             run "dotnet tool restore --verbosity q"
             run (cmd $"dotnet restore {Repo.Project.SolutionFile}")
         }
@@ -99,7 +99,7 @@ module Prelude =
         let! quick = Options.quick
 
         return stage "clean" {
-            when' (not quick)
+            when' (not quick) "--quick is set"
 
             run (fun (_: StageContext) ->
                 Repo.VirtualFileSystem.bin.``.``.EnumerateFiles("*.nupkg", SearchOption.AllDirectories)
@@ -143,7 +143,7 @@ module ProjectManagement =
         and! project = project
         return stage $"publish {project}" {
             stage "local publish" {
-                when' key.IsNone
+                when' key.IsNone "a NuGet API key is set"
                 echo "Publishing to local feed"
                 run $"dotnet nuget push {project} --source local --skip-duplicate"
             }
@@ -171,7 +171,7 @@ module Tests =
             |> List.map (_.Path >> InputSpec.ret >> ProjectManagement.build)
             |> InputSpec.sequence
         return stage "build tests" {
-            when' (not skipTests)
+            when' (not skipTests) "--skip-tests is set"
             projects
         }
     }
@@ -187,7 +187,7 @@ module Tests =
         and! config = Options.config
         and! ci = Baked.Common.isCI
         return stage "test" {
-            when' (not skipTests)
+            when' (not skipTests) "--skip-tests is set"
             outputTo (if ci then StageOutput.Captured(OutputCapture.create()) else StageOutput.Console)
             for project in [
                 Repo.Project.``Partas.Build.Cmd.NetStandard.Tests``.Path
@@ -227,7 +227,7 @@ module Documentation =
     let llms = input {
         let! watch = Options.watch
         return stage "llms" {
-            when' (not watch)
+            when' (not watch) "--watch is set"
             run (fun ctx ->
                 let header = File.ReadAllText(Path.Combine(root, "docs", "static", "llms.txt")).TrimEnd()
                 for name in [ "llms.txt"; "llms-full.txt" ] do

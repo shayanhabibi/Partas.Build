@@ -58,6 +58,27 @@ type InputsBuilder() =
     [<EditorBrowsable(EditorBrowsableState.Never)>]
     member inline _.ReturnFrom(spec: InputSpec<'T>): InputSpec<'T> = spec
 
+/// <summary>Binds CLI inputs to a value — usually a stage or a pipeline — whose inputs a command registers.</summary>
+/// <remarks>
+/// Every source is bound in one <c>let!</c>/<c>and!</c> group. The result is an <c>InputSpec</c>: yielded into a
+/// <c>stage</c>, <c>pipeline</c> or <c>command</c>, its options appear in that command's <c>--help</c>.
+/// </remarks>
+/// <example>
+/// <code lang="fsharp">
+/// module Options =
+///     let configuration = Input.option&lt;string&gt; "--configuration" |> Input.alias "-c" |> Input.def "Release"
+///     let quick = Input.option&lt;bool&gt; "--quick" |> Input.alias "-q"
+///
+/// let build = input {
+///     let! configuration = Options.configuration
+///     and! quick = Options.quick
+///     return stage "build" {
+///         when' (not quick) "--quick is set"
+///         run (cmd $"dotnet build -c {configuration}")
+///     }
+/// }
+/// </code>
+/// </example>
 let input = InputsBuilder()
 
 [<System.Obsolete("Use `input` instead.")>]

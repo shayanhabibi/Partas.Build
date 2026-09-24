@@ -661,6 +661,15 @@ type RootCommandDefinition
     /// calling thread cancels the run as <paramref name="cancellationToken"/> would, then raises
     /// <see cref="T:System.Threading.ThreadInterruptedException"/> from <c>Invoke</c>.
     /// </remarks>
+    /// <example>
+    /// Everything the run prints, the JSON run result last, collected in a writer:
+    /// <code lang="fsharp">
+    /// use cts = new CancellationTokenSource(TimeSpan.FromMinutes 10.)
+    /// let log = new StringWriter()
+    /// let result = root.Invoke([ "test"; "--json" ], output = log, cancellationToken = cts.Token)
+    /// let json = log.ToString().TrimEnd().Split('\n') |> Array.last   // = RunResult.toJson false result
+    /// </code>
+    /// </example>
     member _.Invoke(args: string seq, ?output: TextWriter, ?error: TextWriter, ?cancellationToken: CancellationToken): RunResult =
         let args = Array.ofSeq args
         let cts = CancellationTokenSource.CreateLinkedTokenSource(defaultArg cancellationToken CancellationToken.None)
@@ -779,15 +788,74 @@ module Command =
     /// Builds a root command without parsing or running anything: <c>rootCommand</c>'s operations, returning a
     /// <c>RootCommandDefinition</c> for <c>Command.invoke</c>.
     /// </summary>
+    /// <example>
+    /// A definition bound once, and run from a script's entry point or from a long-lived session:
+    /// <code lang="fsharp">
+    /// let root = Command.root {
+    ///     description "The repository's build"
+    ///     command "build" { build }
+    ///     command "test" { build; test }
+    /// }
+    ///
+    /// exit (Command.invoke (Args.script ()) root).ExitCode
+    /// </code>
+    /// </example>
     let root = RootCommandDefinitionBuilder()
 
     /// <summary>
     /// Parses <paramref name="args"/> against <paramref name="root"/>, runs what they select, and returns the
     /// structured result. <c>RootCommandDefinition.Invoke</c> takes an output writer and a cancellation token.
     /// </summary>
+    /// <example>
+    /// <code lang="fsharp">
+    /// let result = Command.invoke [ "test"; "--quick" ] root
+    ///
+    /// match result.Outcome with
+    /// | RunOutcome.Succeeded -> printfn "%d stages" result.Timings.Length
+    /// | RunOutcome.UsageError -> printfn "bad arguments"
+    /// | RunOutcome.Failed
+    /// | RunOutcome.Cancelled ->
+    ///     for failure in result.Failures do
+    ///         printfn "%s" (FailureCause.describe failure.Cause)
+    /// </code>
+    /// </example>
     let invoke (args: string seq) (root: RootCommandDefinition) : RunResult = root.Invoke args
 
+/// <summary>Builds a named subcommand from the stages and pipelines it runs.</summary>
+/// <remarks>
+/// The command's options are the inputs its stages declare, plus <c>--help</c>, <c>--explain</c>, <c>--json</c>
+/// and <c>--schema</c>, and <c>--report</c> when it runs pipelines. Stages yielded straight into it form one
+/// implicit pipeline named after the command.
+/// </remarks>
+/// <example>
+/// <code lang="fsharp">
+/// command "test" {
+///     description "Builds and runs the tests"
+///     timeout 1800
+///     stage "build" { run "dotnet build" }
+///     stage "test" { run "dotnet test --no-build" }
+/// }
+/// </code>
+/// </example>
 let inline command name = CommandBuilder name
+
+/// <summary>Builds the root command, parses <paramref name="args"/> against it, runs what they select, and
+/// returns the exit code.</summary>
+/// <remarks>
+/// It runs as it is constructed. <c>Command.root</c> builds the same command without running it, for a caller
+/// that invokes it repeatedly or reads the whole <c>RunResult</c>.
+/// </remarks>
+/// <example>
+/// <code lang="fsharp">
+/// [&lt;EntryPoint&gt;]
+/// let main argv =
+///     rootCommand argv {
+///         description "The repository's build"
+///         command "build" { build }
+///         command "test" { build; test }
+///     }
+/// </code>
+/// </example>
 let inline rootCommand (args: string array) = RootCommandBuilder args
 
 /// <summary>The root command over the running script's own arguments.</summary>
@@ -795,4 +863,14 @@ let inline rootCommand (args: string array) = RootCommandBuilder args
 /// <c>rootCommandOfScript { … }</c> is <c>rootCommand (Args.script ()) { … }</c>, with the arguments read as the
 /// command runs rather than when the module initialises.
 /// </remarks>
+/// <example>
+/// The last expression of a <c>build.fsx</c> run as <c>dotnet fsi build.fsx -- test --quick</c>:
+/// <code lang="fsharp">
+/// rootCommandOfScript {
+///     command "build" { build }
+///     command "test" { build; test }
+/// }
+/// |> exit
+/// </code>
+/// </example>
 let rootCommandOfScript = RootCommandBuilder Args.script

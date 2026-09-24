@@ -553,6 +553,22 @@ module ValueConditions =
     /// The absent case is an empty list, not an inactive stage requiring a name.
     /// </para>
     /// </remarks>
+    /// <example>
+    /// The push stage exists only when a key was given, and closes over the key itself:
+    /// <code lang="fsharp">
+    /// let apiKey = Input.optionMaybe&lt;string&gt; "--api-key"
+    ///
+    /// let publish = input {
+    ///     let! key = apiKey
+    ///     return pipeline "publish" {
+    ///         stage "pack" { run "dotnet pack -o bin" }
+    ///         whenSome key (fun key -> stage "push" {
+    ///             run (cmd $"dotnet nuget push bin/*.nupkg" |> Cmd.secretOption "--api-key" key)
+    ///         })
+    ///     }
+    /// }
+    /// </code>
+    /// </example>
     let whenSome (value: 'a option) (build: 'a -> StageContext): StageContext list =
         match value with
         | Some value -> [ build value ]

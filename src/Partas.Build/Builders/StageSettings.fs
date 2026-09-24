@@ -319,9 +319,21 @@ type StageSettingsBuilder() =
     /// <summary>Adds a step that runs a whole command line.</summary>
     /// <remarks>
     /// The line is split on whitespace, honouring <c>"</c> and <c>'</c>: convenient, but lossy for anything with
-    /// awkward quoting. Interpolate instead — <c>run $"dotnet build {project}"</c> — and each hole becomes exactly
-    /// one argument, whatever it contains.
+    /// awkward quoting. An interpolated string binds to this overload too, so its holes are flattened into the line
+    /// and split with it. Wrap it in <c>cmd</c> — <c>run (cmd $"dotnet build {project}")</c> — and each hole becomes
+    /// exactly one argument, whatever it contains.
     /// </remarks>
+    /// <example>
+    /// <code lang="fsharp">
+    /// let project = "src/My Lib/MyLib.fsproj"
+    ///
+    /// stage "build" {
+    ///     run "dotnet --info"                    // dotnet, --info
+    ///     run $"dotnet build {project}"          // dotnet, build, src/My, Lib/MyLib.fsproj
+    ///     run (cmd $"dotnet build {project}")    // dotnet, build, src/My Lib/MyLib.fsproj
+    /// }
+    /// </code>
+    /// </example>
     [<CustomOperation>]
     member inline _.run(state: ^State, command: string, ?cancellationToken: CancellationToken): ^State =
         StageMap.mapStage (fun ctx ->
@@ -332,6 +344,17 @@ type StageSettingsBuilder() =
 
     /// <summary>Adds a step that runs a prepared command.</summary>
     /// <remarks>Pair with <c>cmd</c> to keep interpolation holes intact: <c>run (cmd $"dotnet build {project}")</c>.</remarks>
+    /// <example>
+    /// A flag added only on CI, without duplicating the command line:
+    /// <code lang="fsharp">
+    /// stage "test" {
+    ///     run (
+    ///         cmd $"dotnet test -c {configuration}"
+    ///         |> Cmd.argIf ci [ "--logger"; "trx" ]
+    ///     )
+    /// }
+    /// </code>
+    /// </example>
     [<CustomOperation>]
     member inline _.run(state: ^State, command: Cmd, ?cancellationToken: CancellationToken): ^State =
         StageMap.mapStage (fun ctx ->
@@ -349,6 +372,14 @@ type StageSettingsBuilder() =
     /// F# applies it only while one overload is in play, so a mirrored pair would reject <c>runSensitive $"..."</c>.
     /// </para>
     /// </remarks>
+    /// <example>
+    /// <code lang="fsharp">
+    /// stage "push" {
+    ///     // Runs with the key; the log, --explain and the JSON run result show "--api-key ***".
+    ///     runSensitive $"dotnet nuget push bin/*.nupkg --api-key {apiKey}"
+    /// }
+    /// </code>
+    /// </example>
     [<CustomOperation>]
     member inline _.runSensitive(state: ^State, command: FormattableString, ?cancellationToken: CancellationToken): ^State =
         StageMap.mapStage (fun ctx ->
@@ -389,6 +420,13 @@ type StageSettingsBuilder() =
 
     /// <summary>Adds a step that runs a prepared command derived from the stage context.</summary>
     /// <remarks>Use this overload when the command is built dynamically. Pair with <c>cmd</c> to keep interpolation holes as single arguments.</remarks>
+    /// <example>
+    /// <code lang="fsharp">
+    /// stage "pack" {
+    ///     run (fun ctx -> cmd $"dotnet pack -o {ctx.Name}-out")
+    /// }
+    /// </code>
+    /// </example>
     [<CustomOperation>]
     member inline _.run(state: ^State, buildCmd: StageContext -> Cmd, ?cancellationToken: CancellationToken): ^State =
         StageMap.mapStage (fun ctx ->
@@ -487,6 +525,14 @@ type StageSettingsBuilder() =
 
     /// <summary>Adds a step that runs the command line derived from the stage context.</summary>
     /// <remarks>The command line string is split on whitespace, honouring quotes. Use <c>run (cmd $"...")</c> to preserve interpolation holes as single arguments.</remarks>
+    /// <example>
+    /// The string runs as a command; to print a message, use <c>echo</c>.
+    /// <code lang="fsharp">
+    /// stage "restore" {
+    ///     runLine (fun ctx -> $"dotnet restore {ctx.Name}.slnx")
+    /// }
+    /// </code>
+    /// </example>
     [<CustomOperation>]
     member inline _.runLine(state: ^State, step: StageContext -> string, ?cancellationToken: CancellationToken): ^State =
         StageMap.mapStage (fun ctx ->
@@ -540,6 +586,14 @@ type StageSettingsBuilder() =
             { ctx with Steps = ctx.Steps @ [ Step.StepFn(ValueNone, CmdRunner.stepOption buildCmd cancellationToken) ] }) state
     /// <summary>Adds a step with flexible signature support.</summary>
     /// <include file="../xmldoc/stage.xml" path="/stage/run/*"/>
+    /// <example>
+    /// <code lang="fsharp">
+    /// stage "check" {
+    ///     run (fun ctx -> if System.IO.File.Exists "global.json" then 0 else 1)
+    ///     run (fun ctx -> async { do! Async.Sleep 100 })
+    /// }
+    /// </code>
+    /// </example>
     [<CustomOperation>]
     member inline _.run(state: ^State, step): ^State =
         StageMap.mapStage (fun ctx ->

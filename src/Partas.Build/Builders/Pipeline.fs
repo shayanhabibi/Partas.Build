@@ -143,4 +143,20 @@ type PipelineBuilder(name: string) =
 /// </remarks>
 let internal pipelineOfStages (stages: StageContext seq): PipelineContext = finish null (addStages stages)
 
+/// <summary>Builds a named pipeline: stages run in order, under the settings the pipeline gives them.</summary>
+/// <remarks>
+/// Run it through a <c>command</c>, which registers the CLI inputs its stages declare, or directly with
+/// <c>PipelineContext.run</c> when it declares none.
+/// </remarks>
+/// <example>
+/// <code lang="fsharp">
+/// pipeline "ci" {
+///     workingDir __SOURCE_DIRECTORY__
+///     timeout 600
+///     stage "restore" { run "dotnet restore" }
+///     stage "build" { run "dotnet build --no-restore" }
+///     post [ stage "report" { echo "done" } ]
+/// }
+/// </code>
+/// </example>
 let inline pipeline name = PipelineBuilder(name)

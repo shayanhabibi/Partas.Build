@@ -226,6 +226,18 @@ module MachineOutput =
             writer.WriteEndObject())
 
     /// <summary>The <c>--json</c> flag.</summary>
+    /// <remarks>
+    /// Every command takes it. With <c>--explain</c>, the tree is printed as a JSON document and no condition with
+    /// a side effect is evaluated; on a run, the run result is printed as the last line of output, one line of
+    /// compact JSON, in place of the timing table.
+    /// </remarks>
+    /// <example>
+    /// <code lang="shell">
+    /// dotnet fsi build.fsx -- test --explain --json    # the stage tree, statically
+    /// dotnet fsi build.fsx -- test --json | tail -n 1  # the run result
+    /// dotnet fsi build.fsx -- test --schema            # the command, its options and subcommands
+    /// </code>
+    /// </example>
     let json: ActionInput<bool> =
         Input.option<bool> "--json"
         |> Input.description "Write JSON instead of text: the --explain tree, or the run result as the last line of output"

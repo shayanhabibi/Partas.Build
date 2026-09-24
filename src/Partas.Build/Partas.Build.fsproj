@@ -43,6 +43,8 @@
         <Compile Include="RunResult.fs" />
         <Compile Include="Builders\Command.fs" />
         <None Include="../../README.md" Pack="true" PackagePath="\" />
+        <!-- Instructions for coding agents, readable from the package cache without network access. -->
+        <None Include="../../docs/static/AGENTS-snippet.md" Pack="true" PackagePath="\" />
     </ItemGroup>
 
     <!--

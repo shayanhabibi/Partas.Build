@@ -1,8 +1,8 @@
 # PLAN-Integration
 
 Findings from a survey of how Partas.Build is used in practice, and the design that follows. Drafted
-2026-09-24. **Status: §3-§5.3 and §6 implemented, and rolled up on `claude/partas-build-patterns-jgrwr0-integration`
-(see the status line under each section, and §7); §4.4, §4.5 and §5.4 (§7 row 11) remain.**
+2026-09-24. **Status: every section implemented on `claude/partas-build-patterns-jgrwr0-integration` (see the status
+line under each section, and §7), except §4.5's warning for undescribed commands.**
 
 Companion to `PLAN-Discoverability.md`, which responded to `FEEDBACK-Xantham.md` (a report written against
 0.3.0). This document starts from the consumers' *code* instead of a written report, and adds a third axis the
@@ -256,6 +256,17 @@ weak table was tried first and lost the mark to inlining and to call-site eta-ex
 There are none in `src` (Task 15's audit was never done). Priority targets: the `run` overloads, `input { }`,
 `whenSome`, `Cmd.argWhenSome`/`argIf`, `stage`/`pipeline`/`command`. These are what an agent hovers or greps.
 
+**Status: implemented on `claude/partas-build-patterns-jgrwr0-integration`.** `<example>` blocks on the `run` overloads (a literal line, `Cmd`,
+`StageContext -> Cmd`, the flexible overload), `runLine`, `runSensitive`, `input`, `whenSome`, `cmd`,
+`Cmd.argIf`/`argWhenSome`, `stage`, `pipeline`, `command`, `rootCommand`, `rootCommandOfScript`, `Command.root`,
+`Command.invoke`, `RootCommandDefinition.Invoke`, `RunResult`, `RunResult.toJson` (the JSON shape),
+`MachineOutput.json` (the flags, as shell lines) and the `Baked.Stages` module and `expectoWith`. Every F# example
+was compiled verbatim in a scratch script against the built library; `Partas.Build`, `Partas.Build.Cmd` and
+`Partas.Build.Baked` build warning-free in Debug and Release and their XML files parse. Found on the way: the
+remark on `run (command: string)` said `run $"dotnet build {project}"` keeps each hole one argument. It does not —
+the interpolated string binds to the `string` overload and is re-split (`src/My Lib/x.fsproj` became two
+arguments in a spike) — and the remark and its example now say so, as `CmdHelpers.cmd`'s own remark already did.
+
 ### 4.5 Point agents at what exists
 
 Neither Xantham's `AGENTS.md` nor its `.claude/rules` mention `--help` or `--explain`, and Xantham gives no
@@ -267,6 +278,28 @@ command a `description`.
 - Promote the undescribed-command list printed under `--explain` to a warning on every run, or at least under
   `--ci`.
 - Check whether `llms-full.txt` survived the move from fsdocs to Nacara; it is not in `docs/static`.
+
+**Status: implemented on `claude/partas-build-patterns-jgrwr0-integration`, except the warning.** `docs/static/AGENTS-snippet.md` is a block for a
+consumer's `AGENTS.md`/`CLAUDE.md`: `--help` as the authority, `--explain` before running, `--explain --json` and
+`--schema`, the four exit codes, how to read the `--json` run result (last line; `failures[].step` matching the
+explain tree's `index`) and `--report`. It is linked from `llms.txt` and `README.md`, and packed into the
+`Partas.Build` package root (checked with `dotnet pack`), so an agent reads it from the package cache offline.
+`llms.txt` also names the flags and exit codes inline, and its dead `build/build-overview/` link is gone.
+Deviations and findings:
+
+- **The undescribed-command warning was not implemented.** It changes what every run prints — a library
+  behaviour change, outside a documentation pass. `--explain` still lists them, and the snippet tells agents so.
+- **`llms-full.txt` does not survive.** Building the site (`docs/docs.fsproj`, run with
+  `-p:FSharpCoreImplicitPackageVersion=10.1.300` because Nacara needs FSharp.Core 10.1 and the container's SDK
+  ships 10.0) writes no `llms-full.txt`; `output/llms.txt` is a byte-identical copy of `docs/static/llms.txt`, and
+  `AGENTS-snippet.md` lands at the site root. `Build/Program.fs`'s `llms` stage then prepends the header to that
+  copy, which already holds it, so the published body appears twice. Left for a follow-up: the stage is redundant
+  under Nacara and should go, but `Build/Program.fs` does not compile in the container that did this work.
+- **The site build fails on this branch**, before any of this change: `nacara/duplicate-route` for
+  `reference/…/consumertypes/stepindex/`, since int-usability's `ConsumerTypes` holds both `type StepIndex` and
+  `[<Measure>] type stepIndex`, which differ only in case. Adding `Partas.Build.ConsumerTypes` to `Site.fs`'s
+  `Exclude` did not help. Not fixed here (it is an API question); the build above removed the measure alias
+  temporarily to get through.
 
 ## 5. SageFs integration
 
@@ -434,6 +467,38 @@ Document the shape for an fsi-script build that is SageFs-friendly:
 - Tag this repo's process-spawning tests (the `cmd` suite, `CompilerProbe`) so SageFs live testing classifies
   them as Integration rather than timing them out at 5 s.
 
+**Status: implemented on `claude/partas-build-patterns-jgrwr0-integration`.** `docs/content/Build/hosting.md` ("Hosting a build in a long-lived
+session", linked from `CAPABILITIES.md`, `llms.txt` and `README.md`): the three-file split, `.SageFs/init.fsx`,
+calling `build` and reading the `RunResult`, mounting a tool script's `Command` with `#load` + `addCommand`,
+cancellation, and what a session keeps between calls. Every snippet ran in a scratch layout (`build.fsx` from
+`dotnet fsi`, the init script's text evaluated as SageFs evaluates it); the behaviours the page states were each
+observed there: a `Console.SetOut` capture, token and `Thread.Interrupt` cancellation (the `sleep` child gone, a
+blocking F# step running on for its full 8 s, an `async` step stopped at 2 s), exit 1 and "already running" for a
+second call reaching a shared pipeline value, including one held by an interrupted run's straggler. Deviations:
+
+- `init.fsx` binds `let build args = BuildDefs.root.Invoke(args, output = Console.Out)`, not
+  `Command.invoke args root`. Without a writer, a child process of a console-sink stage inherits the worker's real
+  stdout, and its lines never reach SageFs's per-eval `StringWriter` (observed); `Console.Out` read per call is
+  that writer.
+- `init.fsx` `#load`s `"build.defs.fsx"`, not `"../build.defs.fsx"`: SageFs reads the file and evaluates its text
+  (`SageFs.Core/StartupProfile.fs`), so paths resolve against the session's working directory.
+- `build.defs.fsx` opens with `module BuildDefs`; the implicit module of `build.defs.fsx` is `Build.defs`.
+- `CAPABILITIES.md` gained *Exit codes*, *Invoking a command from code* (`Command.root`, `invoke`, `Invoke`,
+  `RunResult`), `Input.sensitive`, Baked's `Common.quick`/`skipTests`/`watch`, `Dotnet.configOrRelease` and the
+  `Stages` prefabs; `README.md`'s "Did you look for this?" table gained four rows.
+
+Tagging: SageFs categorises an Expecto test by its full name alone — `CategoryDetection.categorize` in
+`SageFs.Core/Features/LiveTestingTypes.fs` is called with no labels and no source, and a name containing
+`integration` makes it Integration, run on demand. `|> testLabel "integration"` now ends the `cmd`, `operations`
+(`ExecutionTests.fs`) and `CompilerTests` lists — the lists about process behaviour, and the one that runs
+`dotnet build` per case (4-5 s each here). Their Expecto names gain an `integration` segment. Not tagged:
+`handlers` (one process test among some thirty timing tests, none near 5 s), the lists that start short `echo`
+processes incidentally, and `CompilerProbe` — its list is private and has no `[<Tests>]`, which SageFs's
+discovery requires (`PipelineProbe.tests` is a public getter it does find, but starts no process), and its
+assertions are about what compiles. Found on the way: the four `.fsx` pages under `docs/content/` no longer
+type-checked on this branch, since host added `Terminal.fs` to the compile order and not to their `#load` lists;
+they `#load` it now, and Baked's `Clean.fs`/`Stages.fs` too, and each runs clean under `dotnet fsi`.
+
 ### 5.5 Out of scope
 
 A SageFs plugin or MCP tool of our own: SageFs composes its providers statically and has no runtime extension
@@ -486,7 +551,7 @@ needs checking against the code.
 | 8 | Thread-interrupt bridge + no-orphan test (§5.3.4) — **done** | SageFs | medium |
 | 9 | Baked prefab stages (§3.1), `Build/Program.fs` rewritten on them as the acceptance test — **done** | usability | large |
 | 10 | Side-effect-free `--explain` (§4.3) — **done** | discoverability | medium |
-| 11 | XML `<example>`s, agent snippet, consumer pattern docs (§4.4, §4.5, §5.4) | discoverability | medium |
+| 11 | XML `<example>`s, agent snippet, consumer pattern docs (§4.4, §4.5, §5.4) — **done** | discoverability | medium |
 
 `Build/Program.fs` stays the acceptance test, as in `PLAN.md`: items 2, 3 and 9 are done when it compiles
 without `open Partas.Build.Internal` and without the hand-rolled rows of §2's first table.

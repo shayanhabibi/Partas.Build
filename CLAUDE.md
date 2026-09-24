@@ -263,6 +263,13 @@ Since Phase 7 the CLI is written against Partas.Build (`Build.fsproj` has a proj
 
 The four Expecto suites run `--sequenced`. Each drives real pipelines, and a pipeline writes to one process-wide console and holds a thread in `Async.RunSynchronously` for the length of every stage — run in parallel on a two-core runner, that yields a log whose lines belong to no test in particular, with enough blocked workers that the thread pool grows one thread at a time. `Baked.Stages.expecto` captures each suite's output when `--ci` is set, so a green CI run says nothing and a red one lifts the whole failure into the annotation; locally it stays live. `Tests.execute` also runs `tests/Partas.Build.CompilerProbe` twice, once per configuration, regardless of `--configuration`. Release catches an `inline` member that applies a `Build*` alias (`FS1118`), which a Debug build compiles clean.
 
+The `cmd`, `operations` and `CompilerTests` lists end in `|> testLabel "integration"`, so their tests' full names
+start with an `integration` segment (`integration.cmd.…` in Expecto's output; a `--filter`/`--filter-test-list` on
+them needs it, `--filter-test-case` does not).
+SageFs live testing classifies a test whose full name contains `integration` as Integration and runs it only on
+demand, instead of on every change under a five-second timeout; the rule is `CategoryDetection.categorize` in
+SageFs's `SageFs.Core/Features/LiveTestingTypes.fs`, which for Expecto reads the name alone.
+
 There is no Fake dependency: the clean is `Baked.Stages.clean`, over `System.IO`. Everything else is a `run` step.
 
 ### Versioning
@@ -287,3 +294,5 @@ a patch bump move it breaks anything not rebuilt in the same pass with `Could no
 - Public API goes in `[<AutoOpen>]` modules under `Partas.Build`; the model and engine stay in `Partas.Build.Internal`. A model type that appears in a public signature gets an abbreviation in `ConsumerTypes` (`Conductors.fs`), and a lookup a step needs gets a re-export in the public `StageContext` module.
 - Console output is Spectre.Console throughout, always through `Terminal.ansi ()` rather than the `AnsiConsole` static, with GitHub Actions `::error title=...::` fallbacks when `GITHUB_ENV` is present (see `printError` in both context modules).
 - The Nacara site (`docs/Site.fs`, `docs/docs.fsproj`) publishes every page under `docs/content/` and `docs/blog/`, plus the generated API reference, so internal working documents belong in `notes/` (as the `PLAN*.md` files do), not under `docs/`.
+- The `.fsx` pages under `docs/content/` `#load` the library's sources in `<Compile>` order: a file added to `Partas.Build.fsproj` or `Partas.Build.Baked.fsproj` goes into all four lists, or the pages stop type-checking. Check a page with `dotnet fsi <page>.fsx` from its own directory. `docs/static/` is copied to the site root verbatim: `llms.txt` and `AGENTS-snippet.md` (the block a consumer pastes into its `AGENTS.md`, also packed into the `Partas.Build` package root). Nacara generates no `llms-full.txt`.
+- XML docs carry `<example>` blocks on the entry points an agent hovers (`run`/`runLine`/`runSensitive`, `input`, `whenSome`, `Cmd.argIf`/`argWhenSome`/`cmd`, `stage`/`pipeline`/`command`/`rootCommand`/`rootCommandOfScript`, `Command.root`/`invoke`, `RootCommandDefinition.Invoke`, `RunResult`, `MachineOutput.json`, `Baked.Stages`). They are written to compile: an edit to one is checked by pasting it into a scratch script against the built library. Escape `<` as `&lt;` inside them; `GenerateDocumentationFile` is on and the build stays warning-free.

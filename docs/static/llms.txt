@@ -10,14 +10,20 @@
 - [Capabilities](https://shayanhabibi.github.io/Partas.Build/build/capabilities/): every operation and Input combinator, one line each
 - [Index](https://shayanhabibi.github.io/Partas.Build/build/): the layers, and a first pipeline
 - [Composition](https://shayanhabibi.github.io/Partas.Build/build/composition/): nesting stages, and reusing commands across files
+- [Hosting](https://shayanhabibi.github.io/Partas.Build/build/hosting/): running a build from a long-lived F# session (SageFs) through `Command.invoke`
 
 ## Ask the script rather than reading it
 
 Every command generates its own `--help` from the stages it runs, and the flags listed there are exactly the
 flags those stages bind. `<script> <command> --help` is the authority on what a command accepts.
+`<script> <command> --explain` prints what the command would run, and runs nothing; add `--json` for the tree as
+JSON. A run with `--json` ends in one line of JSON describing every stage and failure. Exit codes: `0` success,
+`1` a stage failed, `2` usage error (nothing ran), `130` cancelled.
+
+- [Agent instructions](https://shayanhabibi.github.io/Partas.Build/AGENTS-snippet.md): a block to paste into a
+  consumer repository's `AGENTS.md`/`CLAUDE.md` — `--help`, `--explain`, exit codes, and the JSON run result
 
 ## Optional
 
-- [Build overview](https://shayanhabibi.github.io/Partas.Build/build/build-overview/)
 - [CE operations](https://shayanhabibi.github.io/Partas.Build/build/computation-expression-operations/)
 - [API reference](https://shayanhabibi.github.io/Partas.Build/reference/)

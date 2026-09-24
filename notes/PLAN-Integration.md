@@ -132,7 +132,12 @@ console width. Add `--format json` (name open) on every command:
   subtree rooted at the command it is given to; `--report <path>` is on every command that runs pipelines.
   A command that already declares one of these names or aliases keeps its own option and goes without the
   library's (`reserve` in `Builders/Command.fs`): collision is resolved at construction, silently, rather than
-  by System.CommandLine rejecting a duplicate.
+  by System.CommandLine rejecting a duplicate. A stage that reads the library's own `MachineOutput.json` or
+  `MachineOutput.report` registers it through its pipeline's inputs; `reserve` then finds it taken and the command
+  declares it once.
+- Every step position in the JSON counts from zero: `index` in the explain document, `step` and `path` in the
+  run result, so a failure maps onto the explained step directly. The text form of `--explain` still prints an
+  unlabelled step as `step 1`.
 - The run result goes to stdout under `--json` *and* to a file under `--report` (§8 Q2): stdout as one line of
   compact JSON after the run, replacing the timing table, so a reader takes the last line; the file indented.
   Stage output is untouched, since capturing it is the stage's setting.

@@ -59,7 +59,8 @@ type ExplainedStage = {
     Steps: ExplainedStep list
 }
 
-/// <summary>A step as <c>--explain</c> describes it; <c>index</c> counts from one.</summary>
+/// <summary>A step as <c>--explain</c> describes it; <c>index</c> counts from zero, as a run result's <c>step</c> and
+/// <c>path</c> do.</summary>
 /// <remarks>A label is the step's log form, with every secret masked.</remarks>
 and [<RequireQualifiedAccess>] ExplainedStep =
     | Step of index: int * label: string voption
@@ -165,9 +166,9 @@ module Explain =
                 |> List.mapi (fun index step ->
                     match step with
                     | Step.StepOfStage subStage ->
-                        ExplainedStep.Stage(index + 1, explainStage mode { subStage with ParentContext = ValueSome(StageParent.Stage stage) })
-                    | Step.StepFn(label, _) -> ExplainedStep.Step(index + 1, label)
-                    | Step.Operation(label, _) -> ExplainedStep.Operation(index + 1, label))
+                        ExplainedStep.Stage(index, explainStage mode { subStage with ParentContext = ValueSome(StageParent.Stage stage) })
+                    | Step.StepFn(label, _) -> ExplainedStep.Step(index, label)
+                    | Step.Operation(label, _) -> ExplainedStep.Operation(index, label))
         }
 
     /// <summary>The tree of <paramref name="pipelines"/>, with each stage's conditions answered under
@@ -233,7 +234,7 @@ module Explain =
                     let text =
                         match label with
                         | ValueSome label -> $"$ %s{label}"
-                        | ValueNone -> $"step %i{index}"
+                        | ValueNone -> $"step %i{index + 1}"
                     lines.Add $"""%s{childPrefix}%s{if isLast then lastBranch else branch}%s{text}""")
 
         let renderStages (stages: ExplainedStage list) =

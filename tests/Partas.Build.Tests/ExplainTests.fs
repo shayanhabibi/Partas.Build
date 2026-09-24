@@ -214,7 +214,7 @@ let tests =
             let step = restore |> property "steps" |> items |> List.exactlyOne
             Expect.equal (step |> property "kind" |> text) "step" "a command step is a step"
             Expect.equal (step |> property "label" |> text) "dotnet restore Foo.slnx" "with its command line as its label"
-            Expect.equal ((step |> property "index").GetInt32()) 1 "indexed from one"
+            Expect.equal ((step |> property "index").GetInt32()) 0 "indexed from zero, as a run result's step is"
 
             let guarded = stageNamed "guarded" pipeline
             Expect.equal (guarded |> property "status" |> text) "skipped" "a failed pure condition is evaluated even statically"

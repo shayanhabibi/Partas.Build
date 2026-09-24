@@ -111,7 +111,7 @@ pages as the check.
 
 **Status: implemented on `claude/partas-build-patterns-jgrwr0-int-usability`.** Public aliases, not a move: an
 `[<AutoOpen>] module ConsumerTypes` at the end of `Conductors.fs` abbreviates `StageContext`, `PipelineContext`,
-`CommandSpec`, `StageParent`, `RuntimeContext`, `StepIndex`/`stepIndex` and the `Build*` aliases. Moving the
+`CommandSpec`, `StageParent`, `RuntimeContext`, `StepIndex`/`stepIndex` and every `Build*` alias (`BuildStageIsActive` and `BuildConditions` included). Moving the
 records would change their full names, a binary break for already-compiled consumers; an abbreviation erases to the
 same type, so code that opens `Internal` is unaffected. Compiler-established: record construction annotated as
 `CommandSpec`, `{ ctx with … }`, matching the struct DU `StageParent.Pipeline` and `Operation` over

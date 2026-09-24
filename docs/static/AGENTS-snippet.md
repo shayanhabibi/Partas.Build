@@ -28,8 +28,8 @@ The build is a command-line program. Ask it what it does instead of reading its 
 |---|---|---|
 | `0` | Success; also `--help`, `--version`, `--explain`, `--schema` | Nothing |
 | `1` | A stage failed, or the build raised an exception | Fix the code or the environment; read the run result for which step |
-| `2` | Usage error: unknown option, missing command, failed validation, or an unsatisfiable stage dependency. No stage ran | Fix the command line; check `<command> --help` |
-| `130` | Cancelled: the pipeline's own timeout expired, Ctrl+C, or the caller cancelled the run. A stage's timeout is a failure (`1`) | Rerun, or raise the timeout |
+| `2` | Usage error: unknown option, missing command, failed validation, or an unsatisfiable stage dependency (also under `--explain`). No stage ran | Fix the command line; check `<command> --help` |
+| `130` | Cancelled: the pipeline's own timeout expired, or the caller cancelled the run. A stage's timeout is a failure (`1`). Ctrl+C kills the process: the shell reports `130`, but no run result is written | Rerun, or raise the timeout |
 
 ## Reading the result of a run
 

@@ -62,6 +62,28 @@ let tests =
             Expect.sequenceEqual lines [ "ran inner" ] "writeLine should reach the stage's redirect"
         }
 
+        test "a step is built and matched through Step" {
+            let seen = ResizeArray<string>()
+
+            let step =
+                Step.StepFn(ValueSome "record", fun (ctx: StageContext) (index: StepIndex) -> async {
+                    seen.Add $"{ctx.Name}#{int index}"
+                    return Ok()
+                })
+
+            let manual = stage "manual" { run (fun (_: StageContext) -> ()) } |> StageContext.setSteps [ step ]
+            let labels = [ for step in manual.Steps -> match step with Step.StepFn(ValueSome label, _) -> label | _ -> "" ]
+            let conditions: StageCondition list = manual.Conditions
+            let first = 0<stepIndex>
+
+            let built = command "build" { pipeline "build" { quiet; manual } }
+
+            Expect.equal (invoke built "") 0 "the pipeline should succeed"
+            Expect.sequenceEqual labels [ "record" ] "the step's label reads back through Step"
+            Expect.isEmpty conditions "the stage declares no condition"
+            Expect.sequenceEqual seen [ $"manual#{int first}" ] "the step runs as the stage's first"
+        }
+
         test "a stage's parent is matched through StageParent" {
             let seen = ResizeArray<string>()
 

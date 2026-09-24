@@ -299,10 +299,12 @@ condition of your own so the JSON form leaves it unevaluated too.
 |---|---|---|
 | `0` | `Success` / `Succeeded` | Every pipeline succeeded, or the invocation printed help, a version, `--explain` or `--schema` |
 | `1` | `Failure` / `Failed` | A stage failed, or the invocation raised an exception |
-| `2` | `UsageError` / `UsageError` | The command line did not parse or validate, or the selected pipelines failed dependency validation. No stage ran |
-| `130` | `Cancelled` / `Cancelled` | The pipeline's own timeout expired, Ctrl+C, or the invocation's cancellation token fired |
+| `2` | `UsageError` / `UsageError` | The command line did not parse or validate, or the selected pipelines failed dependency validation, `--explain` included. No stage ran |
+| `130` | `Cancelled` / `Cancelled` | The pipeline's own timeout expired, or the invocation's cancellation token fired |
 
-A stage's own `timeout` is a failure of that stage (`1`), not a cancellation.
+A stage's own `timeout` is a failure of that stage (`1`), not a cancellation. Ctrl+C terminates the process by
+signal: it writes no run result, `--json` line or `--report` file, and the exit status is the shell's (`130` on
+Unix by convention).
 
 ## Invoking a command from code
 

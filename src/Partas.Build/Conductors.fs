@@ -676,8 +676,15 @@ open Output
 /// </remarks>
 [<AutoOpen>]
 module ConsumerTypes =
-    [<Measure>] type stepIndex = Internal.stepIndex
+    [<AutoOpen>]
+    module Measures =
+        /// <summary>The unit of measure of a <c>StepIndex</c>: <c>0&lt;stepIndex&gt;</c> is a stage's first step.</summary>
+        [<Measure>] type stepIndex = Internal.stepIndex
+
     type StepIndex = Internal.StepIndex
+    type Step = Internal.Step
+    type StageCondition = Internal.StageCondition
+    type StageIndex = Internal.StageIndex
     type StageContext = Internal.StageContext
     type PipelineContext = Internal.PipelineContext
     type CommandSpec = Internal.CommandSpec
@@ -685,6 +692,7 @@ module ConsumerTypes =
     type RuntimeContext = Internal.RuntimeContext
     type BuildStage = Internal.BuildStage
     type BuildStep = Internal.BuildStep
+    type BuildEnvInfo = Internal.BuildEnvInfo
     type BuildStageIsActive = Internal.BuildStageIsActive
     type BuildConditions = Internal.BuildConditions
     type BuildPipeline = Internal.BuildPipeline

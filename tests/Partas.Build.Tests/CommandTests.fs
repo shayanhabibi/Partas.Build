@@ -538,6 +538,55 @@ let invocation =
             Expect.isNonEmpty (output.ToString()) "the diagnostic reaches the given writer"
         }
 
+        test "a rejected dependency arrangement under --explain exits two and writes no run result" {
+            let source = Producer.define "compile" (InputSpec.ret ()) DependencySpec.empty (fun _ _ -> Operation.ret 42)
+            let root = Command.root {
+                pipeline "work" {
+                    Stage.consuming "use" (DependencySpec.require source) (fun (_: int) -> Operation.ret ())
+                    Producer.stage source
+                }
+            }
+            let path = Path.Combine(Path.GetTempPath(), $"partas-build-report-{Guid.NewGuid():N}", "result.json")
+            use output = new StringWriter()
+            use error = new StringWriter()
+
+            try
+                let result = root.Invoke([ "--explain"; "--json"; "--report"; path ], output = output, error = error)
+                Expect.equal result.ExitCode ExitCode.UsageError "dependency validation is a usage error under --explain too"
+                Expect.isFalse (output.ToString().Contains "formatVersion") "no run result reaches the output"
+                Expect.isNonEmpty (error.ToString()) "the diagnostic reaches the error writer"
+                Expect.isFalse (File.Exists path) "--report writes nothing under --explain"
+            finally
+                if Directory.Exists(Path.GetDirectoryName path) then Directory.Delete(Path.GetDirectoryName path, true)
+        }
+
+        test "an exception outside a pipeline failure still writes the run result" {
+            let path = Path.Combine(Path.GetTempPath(), $"partas-build-report-{Guid.NewGuid():N}", "result.json")
+            let inner: RunResult voption ref = ref ValueNone
+            let rootRef: RootCommandDefinition voption ref = ref ValueNone
+            let root = Command.root {
+                pipeline "reentrant" {
+                    quiet
+                    stage "again" {
+                        run (fun (_: StageContext) ->
+                            use nested = new StringWriter()
+                            inner.Value <- ValueSome(rootRef.Value.Value.Invoke([ "--report"; path ], output = nested, error = nested)))
+                    }
+                }
+            }
+            rootRef.Value <- ValueSome root
+            use output = new StringWriter()
+
+            try
+                Helpers.quietly (fun () -> root.Invoke([], output = output)) |> ignore
+
+                Expect.equal (inner.Value |> ValueOption.map _.ExitCode) (ValueSome ExitCode.Failure) "the refused reentrant invocation exits one"
+                let document = JsonDocument.Parse(File.ReadAllText path).RootElement
+                Expect.equal (document.GetProperty("outcome").GetString()) "failed" "the report records the failure"
+            finally
+                if Directory.Exists(Path.GetDirectoryName path) then Directory.Delete(Path.GetDirectoryName path, true)
+        }
+
         test "a cancelled invocation exits 130" {
             let root = Command.root {
                 pipeline "slow" {

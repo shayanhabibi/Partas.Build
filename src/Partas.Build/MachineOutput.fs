@@ -217,7 +217,7 @@ module MachineOutput =
     /// <c>Input.sensitive</c> is written as <c>"***"</c>. <c>runsPipelines</c> is <c>false</c> for a command
     /// that only dispatches to its subcommands.
     /// </remarks>
-    let schema (command: Command) =
+    let commandSchema (command: Command) =
         document true (fun writer ->
             writer.WriteStartObject()
             writer.WriteNumber("formatVersion", FormatVersion)
@@ -250,8 +250,8 @@ module MachineOutput =
         |> Input.description "Write the run result as JSON to this file"
         |> Input.helpName "path"
 
-    /// <summary>The <c>--schema</c> flag, which prints <c>schema</c> for the command it is given to, and exits.</summary>
-    let schemaOption: ActionInput<bool> =
+    /// <summary>The <c>--schema</c> flag, which prints <c>commandSchema</c> for the command it is given to, and exits.</summary>
+    let schema: ActionInput<bool> =
         Input.option<bool> "--schema"
         |> Input.description "Print this command, its options and its subcommands as JSON, and exit"
         |> Input.def false
@@ -259,7 +259,7 @@ module MachineOutput =
             option.Action <-
                 { new SynchronousCommandLineAction() with
                     member _.Invoke(parseResult: ParseResult) =
-                        parseResult.InvocationConfiguration.Output.WriteLine(schema parseResult.CommandResult.Command)
+                        parseResult.InvocationConfiguration.Output.WriteLine(commandSchema parseResult.CommandResult.Command)
                         0 })
 
     /// <summary>Whether <paramref name="input"/> is registered on the parsed command and given on the command line

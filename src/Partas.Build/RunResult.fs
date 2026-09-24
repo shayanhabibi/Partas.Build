@@ -14,7 +14,7 @@ module ExitCode =
     [<Literal>]
     let Success = 0
 
-    /// A stage failed.
+    /// A stage failed, or the invocation raised an exception.
     [<Literal>]
     let Failure = 1
 

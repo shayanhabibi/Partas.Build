@@ -172,6 +172,10 @@ opens only `Partas.Build`). The `StageContext` functions a step calls (`writeLin
 `open Partas.Build.Internal` is gone from `Build/Program.fs`, `docs/content/index.fsx` and
 `docs/content/Build/*.fsx`; the docs pages type-check under `dotnet fsi`. `Build/Program.fs` was compiled as a
 scratch copy with the `Repo` type provider stubbed (the provider does not load in the container that did the work).
+The final review pass found `Step` still reachable only through `Internal`, although `StageContext.addStep`,
+`addSteps`, `setSteps` and `StageContext.Steps` expose it: `ConsumerTypes` now also abbreviates `Step`,
+`StageCondition`, `StageIndex` and `BuildEnvInfo`, with a consumer-surface test that builds a `Step.StepFn`, matches
+`Steps` and writes `0<stepIndex>`.
 
 ## 4. Agent discoverability
 
@@ -295,11 +299,12 @@ Deviations and findings:
   `AGENTS-snippet.md` lands at the site root. `Build/Program.fs`'s `llms` stage then prepends the header to that
   copy, which already holds it, so the published body appears twice. Left for a follow-up: the stage is redundant
   under Nacara and should go, but `Build/Program.fs` does not compile in the container that did this work.
-- **The site build fails on this branch**, before any of this change: `nacara/duplicate-route` for
-  `reference/…/consumertypes/stepindex/`, since int-usability's `ConsumerTypes` holds both `type StepIndex` and
+- **The site build failed on this branch** with `nacara/duplicate-route` for
+  `reference/…/consumertypes/stepindex/`, since int-usability's `ConsumerTypes` held both `type StepIndex` and
   `[<Measure>] type stepIndex`, which differ only in case. Adding `Partas.Build.ConsumerTypes` to `Site.fs`'s
-  `Exclude` did not help. Not fixed here (it is an API question); the build above removed the measure alias
-  temporarily to get through.
+  `Exclude` did not help. **Fixed in the final review pass:** the measure moved into a nested
+  `[<AutoOpen>] module Measures` inside `ConsumerTypes`, so its page routes to `consumertypes/measures/stepindex/`
+  and `0<stepIndex>` still resolves with only `open Partas.Build`. The site builds unmodified (107 pages).
 
 ## 5. SageFs integration
 
@@ -567,6 +572,12 @@ others branch from). Integration decisions:
 - `--json` with an `output` writer given to `Invoke`: host routes the run's console lines to that writer as
   well, so the run result is its *last* line rather than its only one — the contract §4.1 already states for
   stdout. The json tests read the last line accordingly.
+- Final review pass: under `--explain` a failed dependency validation prints its diagnostic and exits `2`
+  without a run result (it used to print a RunResult document under `--json` and write `--report`); an exception
+  other than a pipeline failure or cancellation (the reentrancy guard's) writes the run result as `failed`
+  before propagating to System.CommandLine's handler; the `--schema` input is `MachineOutput.schema`, beside
+  `json` and `report`, and the renderer `MachineOutput.commandSchema`. The exit-code tables no longer attribute
+  `130` to Ctrl+C: no signal handler is installed, so Ctrl+C terminates the process without a run result.
 - `Build/Program.fs` is baked-stages' prefab rewrite with api-traps' `when'` skip reasons. It was compiled from a
   scratch copy with `Repo` stubbed (the type provider cannot load in the container), and `test --explain` and
   `publish --explain --json` were run against the stub.

@@ -125,9 +125,16 @@ let private reportResult (output: TextWriter) (parseResult: ParseResult) (exitCo
 
     exitCode
 
+/// <summary>
 /// Reads each pipeline out of the parse result and runs it, in declaration order. Producer work is placed into
 /// the pipelines that run, after the whole invocation validates and never on the way to <c>--explain</c>.
-/// The runner has already reported the failure by the time it raises, so this only maps it to an exit code.
+/// </summary>
+/// <remarks>
+/// A pipeline failure or cancellation maps to its exit code; the runner has already printed it. Any other
+/// exception writes the run result as a failure, then propagates to System.CommandLine's exception handler.
+/// Under <c>--explain</c>, a failed dependency validation prints its message to the error writer and exits
+/// <c>UsageError</c> without a run result.
+/// </remarks>
 let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseResult) =
     // Parse results invoked straight through System.CommandLine get a state of their own, so that `--json` and
     // `--report` see the pipelines they ran.
@@ -138,12 +145,14 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
 
     let configuration = parseResult.InvocationConfiguration
     let asJson = MachineOutput.isSet MachineOutput.json parseResult
+    let explaining = MachineOutput.isSet Explain.option parseResult
     let pipelines = spec.Pipelines |> List.map (fun pipeline -> pipeline.Read parseResult)
     match DependencyPlan.validate pipelines with
     | Error message ->
         configuration.Error.WriteLine message
-        reportResult configuration.Output parseResult ExitCode.UsageError []
-    | Ok _ when MachineOutput.isSet Explain.option parseResult -> explain configuration.Output asJson command pipelines
+        if explaining then ExitCode.UsageError
+        else reportResult configuration.Output parseResult ExitCode.UsageError []
+    | Ok _ when explaining -> explain configuration.Output asJson command pipelines
     | Ok plan ->
         let exitCode =
             try
@@ -157,6 +166,9 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
             with
             | :? PipelineFailedException -> ExitCode.Failure
             | :? PipelineCancelledException -> ExitCode.Cancelled
+            | _ ->
+                reportResult configuration.Output parseResult ExitCode.Failure state.Pipelines |> ignore
+                reraise ()
 
         reportResult configuration.Output parseResult exitCode state.Pipelines
 
@@ -192,7 +204,7 @@ let private applyTo (command: Command) (spec: CommandSpec) =
         command.SetAction (Func<ParseResult, int>(invoke command spec))
 
     reserve command MachineOutput.json
-    reserve command MachineOutput.schemaOption
+    reserve command MachineOutput.schema
 
     command
 

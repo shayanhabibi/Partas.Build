@@ -15,7 +15,6 @@ open Fake.Core.Context
 open Fake.IO
 open Fake.IO.Globbing.Operators
 open Partas.Build
-open Partas.Build.Internal
 open Partas.TypeProvider.BuildHelper
 
 let execContext = FakeExecutionContext.Create false "build.fsx" []
@@ -34,11 +33,6 @@ type Repo =
     """>
 
 let private root = Repo.FileSystem.``.``.ToString()
-
-let formatFiles =
-    !! "**/*.fs"
-    -- "**/obj/**/*.*"
-    -- "**/AssemblyInfo.fs"
 
 module Options =
     let quick =
@@ -181,6 +175,13 @@ module Tests =
             projects
         }
     }
+
+    /// <summary>The arguments every Expecto suite takes after <c>--</c>; <c>--summary</c> only under <c>--ci</c>.</summary>
+    let private expectoArgs (ci: bool) (command: Cmd) =
+        command
+        |> Cmd.argIf ci [ "--summary" ]
+        |> Cmd.args [ "--colours"; "256"; "--sequenced" ]
+
     let execute = input {
         let! skipTests = Options.skipTests
         and! config = Options.config
@@ -194,11 +195,11 @@ module Tests =
                 Repo.Project.``Partas.Build.Tests``.Path
                 Repo.Project.``Partas.ExternalAnnotations.Tests``.Path
             ] do stage $"test {project}" {
-                run (Cmd.ofString $"""dotnet run --project {project} --no-build -c {config} -- {if ci then "--summary" else null} --colours 256 --sequenced""")
+                run (cmd $"dotnet run --project {project} --no-build -c {config} --" |> expectoArgs ci)
             }
             // Runs in both configurations regardless of `--configuration`: Release is what catches FS1118.
             for probeConfig in [ "Debug"; "Release" ] do stage $"compiler probe ({probeConfig})" {
-                run (Cmd.ofString $"""dotnet run --project {Repo.Project.``Partas.Build.CompilerProbe``.Path} -c {probeConfig} -- {if ci then "--summary" else null} --colours 256 --sequenced""")
+                run (cmd $"dotnet run --project {Repo.Project.``Partas.Build.CompilerProbe``.Path} -c {probeConfig} --" |> expectoArgs ci)
             }
         }
     }

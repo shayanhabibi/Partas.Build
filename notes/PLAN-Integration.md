@@ -1,7 +1,7 @@
 # PLAN-Integration
 
 Findings from a survey of how Partas.Build is used in practice, and the design that follows. Drafted
-2026-09-24. **Status: proposal — nothing here is implemented.**
+2026-09-24. **Status: proposal; §3.3, §3.2's `printfn` item and §7 rows 1-2 are implemented (see each section).**
 
 Companion to `PLAN-Discoverability.md`, which responded to `FEEDBACK-Xantham.md` (a report written against
 0.3.0). This document starts from the consumers' *code* instead of a written report, and adds a third axis the
@@ -99,7 +99,8 @@ one prefab field.
   (`Builders/Inputs.fs:61,64`). Consumers mix them. Keep one of each, `[<Obsolete>]` the other.
 - **`when' bool` carries no reason.** Add `when' (reason: string, cond: bool)` or a `whenNotFlag` for the
   `when' (not quick)` idiom, so `--explain` names the flag that skipped the stage.
-- **`printfn` in Baked**: replace with `StageContext.writeLine`.
+- **`printfn` in Baked**: replace with `StageContext.writeLine`. **Status: implemented on `claude/partas-build-patterns-jgrwr0-int-usability`**
+  (`bumpImpl`; the only `printfn` in Baked), with a test in `tests/Partas.Build.Tests/BakedTests.fs`.
 
 ### 3.3 Finish Task 14b
 
@@ -107,6 +108,19 @@ one prefab field.
 6 of `PLAN-Discoverability.md` (no consumer signature needs `Internal`) is unmet. Move the types, or add public
 aliases under `Partas.Build`, then remove `open Partas.Build.Internal` from `Build/Program.fs` and the docs
 pages as the check.
+
+**Status: implemented on `claude/partas-build-patterns-jgrwr0-int-usability`.** Public aliases, not a move: an
+`[<AutoOpen>] module ConsumerTypes` at the end of `Conductors.fs` abbreviates `StageContext`, `PipelineContext`,
+`CommandSpec`, `StageParent`, `RuntimeContext`, `StepIndex`/`stepIndex` and the `Build*` aliases. Moving the
+records would change their full names, a binary break for already-compiled consumers; an abbreviation erases to the
+same type, so code that opens `Internal` is unaffected. Compiler-established: record construction annotated as
+`CommandSpec`, `{ ctx with … }`, matching the struct DU `StageParent.Pipeline` and `Operation` over
+`RuntimeContext` all work through the abbreviations (`tests/Partas.Build.Tests/ConsumerSurfaceTests.fs`, which
+opens only `Partas.Build`). The `StageContext` functions a step calls (`writeLine`, `getOutput`, `getVerbosity`,
+`getNamePath`) lived only in `Internal`'s module; the public `Partas.Build.StageContext` module re-exports them.
+`open Partas.Build.Internal` is gone from `Build/Program.fs`, `docs/content/index.fsx` and
+`docs/content/Build/*.fsx`; the docs pages type-check under `dotnet fsi`. `Build/Program.fs` was compiled as a
+scratch copy with the `Repo` type provider stubbed (the provider does not load in the container that did the work).
 
 ## 4. Agent discoverability
 
@@ -269,12 +283,17 @@ Recorded so they are not lost; each belongs to its own repository.
   intended form.
 - `PLAN-Execution.md`'s header still reads "implementation not started".
 
+**Status: all four implemented on `claude/partas-build-patterns-jgrwr0-int-usability`.** `Program.fs` builds the Expecto arguments through
+`cmd $"… --" |> Cmd.argIf ci [ "--summary" ] |> Cmd.args [ … ]`. `PLAN-Execution-Tasks.md`'s own "Planning
+only" status line and its unchecked T4/T5 boxes are equally stale and were left alone: whether each box is done
+needs checking against the code.
+
 ## 7. Order of work
 
 | # | Item | Axis | Size |
 |---|---|---|---|
-| 1 | `.mcp.json`, `printfn` in Baked, `Cmd.argIf` in `Program.fs` | hygiene | trivial |
-| 2 | Task 14b: no consumer needs `Internal` | usability | medium |
+| 1 | `.mcp.json`, `printfn` in Baked, `Cmd.argIf` in `Program.fs` — **done** | hygiene | trivial |
+| 2 | Task 14b: no consumer needs `Internal` — **done** | usability | medium |
 | 3 | `run (fun _ -> string)` rename/obsolete; `desc`/`input` duplicates | usability | small |
 | 4 | Exit codes (§4.2) | discoverability | small |
 | 5 | `Command.invoke` + `RunResult` (§5.3.1) | SageFs, discoverability | medium |

@@ -83,6 +83,10 @@ writes the indented form to a file. Both are written for every outcome the comma
 dependency validation included, but not for a System.CommandLine parse error. JSON is written with
 `Utf8JsonWriter` by hand, not reflection serialization: every document carries `formatVersion`
 (`MachineOutput.FormatVersion`). `System.Text.Json` is a package reference on `netstandard2.0` only.
+`Input.sensitive` marks an option or argument as carrying a secret, recorded against the `Symbol` in a
+`ConditionalWeakTable` in `Inputs.fs` (System.CommandLine has no property bag); `--schema` writes a marked
+symbol's present default as `"***"` alongside `"sensitive": true`. `Baked.NuGet.apiKey` is marked, since its
+default is read from `NUGET_API_KEY`. Text `--help` still prints the default.
 
 `Failures.fs` holds what a scope reports about itself, apart from what it prints. A `ScopeReport` carries three
 fields: `Outcome` (the scope's own `StageOutcome`), `Propagates` (whether that failure fails the scope

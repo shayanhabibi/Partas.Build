@@ -703,6 +703,39 @@ let machineOutputTests =
             Expect.equal ((subDocument |> property "command" |> property "name").GetString()) "build" "a subcommand's schema starts at the subcommand"
         }
 
+        test "--schema masks the default of a sensitive option" {
+            let key = Input.option<string> "--key" |> Input.def "SEKRIT-123" |> Input.sensitive
+            let token = Input.optionMaybe<string> "--token" |> Input.sensitive
+            let plain = Input.option<string> "--plain" |> Input.def "visible"
+
+            let built = command "publish" {
+                input {
+                    let! key = key
+                    and! token = token
+                    and! plain = plain
+                    return stage "push" { run (fun (_: StageContext) -> ignore (key, token, plain)) }
+                }
+            }
+
+            use output = new StringWriter()
+            built.Parse("--schema").Invoke(InvocationConfiguration(Output = output)) |> ignore
+            let text = output.ToString()
+            Expect.isFalse (text.Contains "SEKRIT-123") "the secret is absent from the document"
+
+            let options = JsonDocument.Parse(text).RootElement |> property "command" |> property "options" |> items
+            let keyOption = options |> named "--key"
+            Expect.isTrue ((keyOption |> property "sensitive").GetBoolean()) "the option is reported sensitive"
+            Expect.isTrue ((keyOption |> property "hasDefault").GetBoolean()) "it still reports a default"
+            Expect.equal ((keyOption |> property "default").GetString()) "***" "written masked"
+
+            let tokenOption = options |> named "--token"
+            Expect.equal ((tokenOption |> property "default").ValueKind) JsonValueKind.Null "an absent default stays null"
+
+            let plainOption = options |> named "--plain"
+            Expect.isFalse ((plainOption |> property "sensitive").GetBoolean()) "an unmarked option is not sensitive"
+            Expect.equal ((plainOption |> property "default").GetString()) "visible" "and its default is written"
+        }
+
         test "a command that declares --json keeps its own option" {
             let seen = ResizeArray<string>()
             let json = Input.option<string> "--json" |> Input.def ""

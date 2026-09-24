@@ -12,6 +12,7 @@ let apiKey =
         Input.desc "NuGet API key"
         >> Input.helpName "APIKEY"
         >> Input.arity Arity.ExactlyOne
+        >> Input.sensitive
         >> Input.def (
                 try
                 let result = System.Environment.GetEnvironmentVariable "NUGET_API_KEY"

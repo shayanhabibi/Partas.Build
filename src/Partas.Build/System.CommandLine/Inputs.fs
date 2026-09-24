@@ -436,6 +436,30 @@ module Input =
             )
     let mapFromMany<'T> choices action: ActionInput<'T list> = mapFromManyWith StringComparer.Ordinal choices action
 
+    let private sensitiveSymbols = System.Runtime.CompilerServices.ConditionalWeakTable<Symbol, obj>()
+
+    let private markSensitive (symbol: Symbol) =
+        lock sensitiveSymbols (fun () ->
+            match sensitiveSymbols.TryGetValue symbol with
+            | true, _ -> ()
+            | false, _ -> sensitiveSymbols.Add(symbol, obj ()))
+
+    /// <summary>Marks an option or argument as carrying a secret.</summary>
+    /// <remarks>
+    /// <c>--schema</c> writes the default of a marked symbol as <c>"***"</c> and reports it <c>"sensitive": true</c>.
+    /// Text <c>--help</c> still prints the default.
+    /// </remarks>
+    let sensitive (input: ActionInput<'T>) =
+        input
+        |> editOption (fun o -> markSensitive o)
+        |> editArgument (fun a -> markSensitive a)
+
+    /// Whether <paramref name="symbol"/> is marked by <c>sensitive</c>.
+    let isSensitive (symbol: Symbol) =
+        match sensitiveSymbols.TryGetValue symbol with
+        | true, _ -> true
+        | false, _ -> false
+
     /// Hides an option or argument from the help output.
     let hidden (input: ActionInput<'T>) =
         input

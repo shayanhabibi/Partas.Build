@@ -35,6 +35,10 @@ let private renamed: BuildStage = fun (ctx: StageContext) -> { ctx with Name = c
 
 let private withDescription: BuildCommand = fun (spec: CommandSpec) -> { spec with Description = ValueSome "described" }
 
+let private whenNamed (name: string) : BuildStageIsActive = fun (ctx: StageContext) -> ctx.Name = name
+
+let private withNamed: BuildConditions = fun conditions -> conditions @ [ whenNamed "gated" ]
+
 let private invoke (built: Command) (commandLine: string) = built.Parse(commandLine).Invoke()
 
 [<Tests>]
@@ -105,5 +109,15 @@ let tests =
 
             let pipelineSpec: InputSpec<PipelineContext> = pipeline "p" { writing "compile" }
             Expect.isNonEmpty pipelineSpec.Inputs "the pipeline should declare the stage's --quick"
+        }
+
+        test "a condition typed as BuildStageIsActive composes into whenAll" {
+            let gated = stage "gated" { whenAll { whenNamed "gated" }; echo "gated" }
+            let other = stage "other" { whenAll { whenNamed "gated" }; echo "other" }
+            Expect.isTrue (gated.IsActive gated) "the named condition should hold for its stage"
+            Expect.isFalse (other.IsActive other) "the named condition should fail for another stage"
+
+            let conditions = withNamed []
+            Expect.equal conditions.Length 1 "a BuildConditions should apply to a condition list"
         }
     ]

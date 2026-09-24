@@ -676,6 +676,8 @@ module ConsumerTypes =
     type RuntimeContext = Internal.RuntimeContext
     type BuildStage = Internal.BuildStage
     type BuildStep = Internal.BuildStep
+    type BuildStageIsActive = Internal.BuildStageIsActive
+    type BuildConditions = Internal.BuildConditions
     type BuildPipeline = Internal.BuildPipeline
     type BuildCommand = Internal.BuildCommand
 

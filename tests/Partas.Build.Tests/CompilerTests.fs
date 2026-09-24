@@ -57,3 +57,5 @@ let tests =
         mustNotCompile "UnsupportedSettingState" "FS0001"
         mustNotCompile "UnsupportedPipelineState" "FS0001"
     ]
+    // SageFs live testing classifies a test whose full name contains "integration" as Integration, run on demand.
+    |> testLabel "integration"

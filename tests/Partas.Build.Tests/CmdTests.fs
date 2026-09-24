@@ -294,3 +294,5 @@ let tests =
             Expect.equal (sleepsAlive ()) before "the caller's token should kill the whole tree, as the timeout does"
         }
     ]
+    // SageFs live testing classifies a test whose full name contains "integration" as Integration, run on demand.
+    |> testLabel "integration"

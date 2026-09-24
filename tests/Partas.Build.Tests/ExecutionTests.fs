@@ -390,3 +390,5 @@ let operations =
             Expect.stringContains (Explain.render [ unlabelled ]) "step 1" "an unlabelled operation is described by its index"
         }
     ]
+    // SageFs live testing classifies a test whose full name contains "integration" as Integration, run on demand.
+    |> testLabel "integration"

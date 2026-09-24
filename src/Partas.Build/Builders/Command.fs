@@ -65,10 +65,10 @@ let private register (command: Command) (input: ActionInput) =
     | Context | Injection _ -> ()
 
 /// Prints the tree the command's pipelines resolve to under <paramref name="parseResult"/>, then the invocation
-/// paths still missing a description. Materialising a pipeline runs its stage builders, never its steps.
-let private explain (output: TextWriter) (command: Command) (pipelines: PipelineContext list) =
-    pipelines
-    |> Explain.ofPipelines command
+/// paths still missing a description: as JSON, evaluated statically, under <c>--json</c>. Materialising a pipeline
+/// runs its stage builders, never its steps.
+let private explain (output: TextWriter) (asJson: bool) (command: Command) (pipelines: PipelineContext list) =
+    if asJson then Explain.toJson ExplainMode.Static command pipelines else Explain.ofPipelines command pipelines
     |> output.WriteLine
 
     ExitCode.Success
@@ -82,58 +82,85 @@ type private InvocationState(cancellationToken: CancellationToken) =
     member _.Pipelines = lock pipelines (fun () -> List.ofSeq pipelines)
 
 /// The invocation state of each parse result an invocation is running. A parse result invoked directly through
-/// System.CommandLine has none, and runs uncancellable with its pipeline runs unrecorded.
+/// System.CommandLine has none, and runs uncancellable.
 let private invocations = ConditionalWeakTable<ParseResult, InvocationState>()
 
-/// <summary>Runs <paramref name="pipeline"/> and prints what each of its stages took.</summary>
+/// <summary>Runs <paramref name="pipeline"/>, records it, and prints what each of its stages took.</summary>
 /// <remarks>
 /// A run that failed prints the table too, with the stage that failed in it. A quiet pipeline prints none, and
-/// so does a run of a single stage, whose wall time is the pipeline's own.
+/// so does a run of a single stage, whose wall time is the pipeline's own, and a run under <c>--json</c>, whose
+/// result carries the timings.
 /// </remarks>
-let private runReportingTimings (output: TextWriter) (state: InvocationState voption) (pipeline: PipelineContext) =
-    let cancellationToken = state |> ValueOption.map _.CancellationToken |> ValueOption.defaultValue CancellationToken.None
+let private runReportingTimings (output: TextWriter) (asJson: bool) (state: InvocationState) (pipeline: PipelineContext) =
     try
-        PipelineContext.runWith cancellationToken pipeline
+        PipelineContext.runWith state.CancellationToken pipeline
     finally
         let timings = StageTimings.ordered pipeline.Timings
-        state |> ValueOption.iter (fun state ->
-            state.Record { Name = pipeline.Name; Reports = ScopeReports.stages pipeline.Reports; Timings = timings })
+        state.Record { Name = pipeline.Name; Reports = ScopeReports.stages pipeline.Reports; Timings = timings }
 
         let verbosity = defaultValueArg pipeline.Verbosity Verbosity.Default
 
         match timings with
         | [] | [ _ ] -> ()
-        | _ when verbosity.IsQuiet -> ()
+        | _ when verbosity.IsQuiet || asJson -> ()
         | timings -> Summary.render timings |> output.WriteLine
+
+/// Writes the result of a command action: to the output as one line under <c>--json</c>, and indented to the file
+/// <c>--report</c> names.
+let private reportResult (output: TextWriter) (parseResult: ParseResult) (exitCode: int) (runs: PipelineRun list) =
+    let result = { ExitCode = exitCode; Outcome = RunOutcome.ofExitCode exitCode; Pipelines = runs }
+
+    if MachineOutput.isSet MachineOutput.json parseResult then
+        output.WriteLine(RunResult.toJson false result)
+
+    match MachineOutput.tryValue MachineOutput.report parseResult with
+    | Some path when not (String.IsNullOrWhiteSpace path) ->
+        let path = Path.GetFullPath path
+        let directory = Path.GetDirectoryName path
+        if not (String.IsNullOrEmpty directory) then Directory.CreateDirectory directory |> ignore
+        File.WriteAllText(path, RunResult.toJson true result)
+    | _ -> ()
+
+    exitCode
 
 /// Reads each pipeline out of the parse result and runs it, in declaration order. Producer work is placed into
 /// the pipelines that run, after the whole invocation validates and never on the way to <c>--explain</c>.
 /// The runner has already reported the failure by the time it raises, so this only maps it to an exit code.
 let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseResult) =
+    // Parse results invoked straight through System.CommandLine get a state of their own, so that `--json` and
+    // `--report` see the pipelines they ran.
     let state =
         match invocations.TryGetValue parseResult with
-        | true, state -> ValueSome state
-        | false, _ -> ValueNone
+        | true, state -> state
+        | false, _ -> InvocationState CancellationToken.None
 
     let configuration = parseResult.InvocationConfiguration
+    let asJson = MachineOutput.isSet MachineOutput.json parseResult
     let pipelines = spec.Pipelines |> List.map (fun pipeline -> pipeline.Read parseResult)
     match DependencyPlan.validate pipelines with
     | Error message ->
         configuration.Error.WriteLine message
-        ExitCode.UsageError
-    | Ok _ when Explain.option.GetValue parseResult -> explain configuration.Output command pipelines
+        reportResult configuration.Output parseResult ExitCode.UsageError []
+    | Ok _ when MachineOutput.isSet Explain.option parseResult -> explain configuration.Output asJson command pipelines
     | Ok plan ->
-        try
-            for pipeline in ExecutionSchedule.schedule parseResult plan pipelines do
-                match state with
-                | ValueSome state when state.CancellationToken.IsCancellationRequested ->
-                    raise (PipelineCancelledException "Cancelled by the invocation")
-                | _ -> runReportingTimings configuration.Output state pipeline
+        let exitCode =
+            try
+                for pipeline in ExecutionSchedule.schedule parseResult plan pipelines do
+                    if state.CancellationToken.IsCancellationRequested then
+                        raise (PipelineCancelledException "Cancelled by the invocation")
 
-            ExitCode.Success
-        with
-        | :? PipelineFailedException -> ExitCode.Failure
-        | :? PipelineCancelledException -> ExitCode.Cancelled
+                    runReportingTimings configuration.Output asJson state pipeline
+
+                ExitCode.Success
+            with
+            | :? PipelineFailedException -> ExitCode.Failure
+            | :? PipelineCancelledException -> ExitCode.Cancelled
+
+        reportResult configuration.Output parseResult exitCode state.Pipelines
+
+/// Registers an option the library adds to every command, unless the command declares its name or an alias itself.
+let private reserve (command: Command) (input: ActionInput) =
+    if not (MachineOutput.isTaken command input) then register command input
 
 /// Applies a finished spec to a command, registering the options its pipelines declared.
 let private applyTo (command: Command) (spec: CommandSpec) =
@@ -156,10 +183,14 @@ let private applyTo (command: Command) (spec: CommandSpec) =
     // lets System.CommandLine report the missing subcommand and print help, rather than succeeding silently,
     // so its `--explain` carries its own rendering — the subcommands it dispatches to.
     if spec.Pipelines.IsEmpty then
-        register command Explain.groupingOption
+        reserve command Explain.groupingOption
     else
-        register command Explain.option
+        reserve command Explain.option
+        reserve command MachineOutput.report
         command.SetAction (Func<ParseResult, int>(invoke command spec))
+
+    reserve command MachineOutput.json
+    reserve command MachineOutput.schemaOption
 
     command
 

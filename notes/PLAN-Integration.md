@@ -139,6 +139,35 @@ console width. Add `--format json` (name open) on every command:
 - **`--schema`** (or a hidden `describe` command): the command tree with every option's name, aliases, type,
   default, choices and description. System.CommandLine has this information; it is only rendered as help.
 
+**Status: implemented on claude/partas-build-patterns-jgrwr0-json.** `MachineOutput.fs`, `Explain.toJson`,
+`RunResult.toJson`. Decisions and deviations:
+
+- The flag is `--json` (§8 Q1), a plain `bool`, on every command; `--schema` is on every command and prints the
+  subtree rooted at the command it is given to; `--report <path>` is on every command that runs pipelines.
+  A command that already declares one of these names or aliases keeps its own option and goes without the
+  library's (`reserve` in `Builders/Command.fs`): collision is resolved at construction, silently, rather than
+  by System.CommandLine rejecting a duplicate. A stage that reads the library's own `MachineOutput.json` or
+  `MachineOutput.report` registers it through its pipeline's inputs; `reserve` then finds it taken and the command
+  declares it once.
+- Every step position in the JSON counts from zero: `index` in the explain document, `step` and `path` in the
+  run result, so a failure maps onto the explained step directly. The text form of `--explain` still prints an
+  unlabelled step as `step 1`.
+- The run result goes to stdout under `--json` *and* to a file under `--report` (§8 Q2): stdout as one line of
+  compact JSON after the run, replacing the timing table, so a reader takes the last line; the file indented.
+  Stage output is untouched, since capturing it is the stage's setting.
+- Every document carries `formatVersion: 1`. JSON is written with `Utf8JsonWriter` directly rather than by
+  reflection over the F# records, which do not serialize `voption`/DUs usefully. `System.Text.Json` is a package
+  reference (8.0.5) on `netstandard2.0` only; `net8.0`/`net10.0` use the shared framework's.
+- `choices` is what System.CommandLine offers for completion: `acceptOnlyFromAmong`, `mapFromAmong`,
+  `addCompletions` and enums all appear there; booleans list none. A default whose factory reads its parse is
+  reported absent.
+- A default can be a secret (`Baked.NuGet.apiKey` defaults to `NUGET_API_KEY`). `Input.sensitive` marks the
+  option; `--schema` then writes `"sensitive": true` and a present default as `"***"` (`null` stays `null`, so a
+  consumer can still tell a secret is configured). Masking is opt-in: a default is a plain value, and nothing on
+  it says where it came from. Text `--help` still prints the default, as it did before this branch.
+- Not covered: a System.CommandLine parse error (unknown option, missing subcommand) happens before any command
+  action, so it writes no JSON — the exit code (2) is the machine-readable part.
+
 ### 4.2 Exit codes
 
 Today a parse/validation error and a stage failure both exit 1 (`Command.fs:93-110`). Proposed: `0` success,
@@ -158,6 +187,18 @@ Rendering evaluates every `IsActive`: `whenBranch` starts `git`, and `whenStage`
 twice, per the handoff's deferred findings. There is also no exception guard. Proposed: a static mode (default
 under `--format json`) that reports a structured condition as `unevaluated: whenBranch "main"` instead of
 running it, and a guard that renders a failed condition as its exception message.
+
+**Status: implemented on claude/partas-build-patterns-jgrwr0-json.** `ExplainMode.Evaluated | Static`;
+`--explain` (text) stays evaluated, `--explain --json` is static; `Explain.renderWith`/`toJson` take the mode.
+The double evaluation was confirmed — `status` called `IsActive`, then `skipReason` re-ran each reasoned
+condition of a skipped stage, so a failing `when' stage` ran its condition stage twice — and is fixed: explain
+walks `StageContext.Conditions` itself, each condition at most once, short-circuiting as `IsActive` does. That
+changes one edge: the skip reason is now the *first* failing condition's (possibly none), where it used to be the
+first failing condition that carried a reason. A throwing condition renders `condition failed: <message>`
+(JSON `status: "error"`). Side-effecting conditions are recognised by a marker type, `EffectfulCondition`, made
+through the public `Conditions.effectful description condition` so consumers can mark their own; a closure-keyed
+weak table was tried first and lost the mark to inlining and to call-site eta-expansion (see CLAUDE.md).
+`Conditions.whenBranches` now takes `#seq<string>` for the same reason — source-compatible, binary-breaking.
 
 ### 4.4 XML `<example>`s
 
@@ -323,11 +364,11 @@ needs checking against the code.
 | 3 | `run (fun _ -> string)` rename/obsolete; `desc`/`input` duplicates | usability | small |
 | 4 | Exit codes (§4.2) | discoverability | small |
 | 5 | `Command.invoke` + `RunResult` (§5.3.1) | SageFs, discoverability | medium |
-| 6 | JSON for `--explain`, the run result, `--schema` (§4.1) — serializes 5's result | discoverability | medium |
+| 6 | JSON for `--explain`, the run result, `--schema` (§4.1) — serializes 5's result — **done** | discoverability | medium |
 | 7 | Console hygiene, argv capture, env at run time (§5.3.2-5.3.5) — after the Spectre spike | SageFs | medium |
 | 8 | Thread-interrupt bridge + no-orphan test (§5.3.4) | SageFs | medium |
 | 9 | Baked prefab stages (§3.1), `Build/Program.fs` rewritten on them as the acceptance test | usability | large |
-| 10 | Side-effect-free `--explain` (§4.3) | discoverability | medium |
+| 10 | Side-effect-free `--explain` (§4.3) — **done** | discoverability | medium |
 | 11 | XML `<example>`s, agent snippet, consumer pattern docs (§4.4, §4.5, §5.4) | discoverability | medium |
 
 `Build/Program.fs` stays the acceptance test, as in `PLAN.md`: items 2, 3 and 9 are done when it compiles
@@ -337,8 +378,12 @@ without `open Partas.Build.Internal` and without the hand-rolled rows of §2's f
 
 1. JSON flag naming: `--format json` on every command, or `--json`? Does it collide with a consumer's own option
    (System.CommandLine rejects duplicate aliases at construction)?
+   **Decided:** `--json`. `--format` is a likely name for a consumer's own code-formatting option; a bare flag
+   also needs no value parsing. A command that declares either name keeps its own and goes without the library's.
 2. Should §4.1's run result go to stdout or only to `--report <path>`? Stdout is simpler for agents but mixes with
    step output that is not captured.
+   **Decided:** both. `--json` puts it on stdout as the last line, one line of compact JSON; `--report <path>`
+   writes it, indented, to a file, with or without `--json`.
 3. Prefab stages as functions or records (§3.1, W12).
 4. Does `Command.invoke` take the `RootCommandBuilder` result, the `CommandSpec`, or both — and does it live in
    `Partas.Build` or a separate `Partas.Build.Hosting` namespace?

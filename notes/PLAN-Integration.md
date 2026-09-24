@@ -193,7 +193,7 @@ From SageFs's source (`SageFs.Core/AppState.fs`, `Features/LiveTestingExecutors.
 |---|---|---|
 | `rootCommandOfScript` is a module-level value calling `Args.script ()` | `Command.fs:599` | argv read once at module initialisation, and it is the host's argv |
 | `Console.InputEncoding`/`OutputEncoding` set on every run | `Conductors.Runners.fs:629-630` | process-global mutation per eval; setting `InputEncoding` can throw without an attached console on Windows |
-| Spectre `AnsiConsole` global | `Conductors.fs:396,504,534-549` | **unverified**: the singleton may bind to the `Console.Out` current at first use, i.e. the first eval's `StringWriter`, and write into a dead writer thereafter. Spike before designing around it. |
+| Spectre `AnsiConsole` global | `Conductors.fs:396,504,534-549` | **confirmed** (§8 Q5): the singleton binds to the `Console.Out` current at first use, i.e. the first eval's `StringWriter`, and writes into a dead writer thereafter. |
 | Environment snapshot in `PipelineContext.create` | `Conductors.fs:420` | a pipeline value bound at load time keeps the environment as it was then |
 | Mutable `Timings`/`Reports`/`Producers` on the pipeline value, cleared per run | `Conductors.Runners.fs:631-635` | two concurrent runs of the same value race |
 | Cancellation only through `CancellationToken` | `Process.fs` (`CmdRunner`) | `cancel_eval`'s `Thread.Interrupt` reaches no token: child process trees are orphaned |
@@ -234,20 +234,70 @@ From SageFs's source (`SageFs.Core/AppState.fs`, `Features/LiveTestingExecutors.
 2. **`rootCommandOfScript` stops capturing argv at module initialisation**: a function, or a builder whose
    `Run` reads `Args.script ()` when invoked.
 
+   **Status: implemented on claude/partas-build-patterns-jgrwr0-host.** `RootCommandBuilder`'s primary constructor takes `unit -> string array`,
+   called once per `Run`; `new(args: string array)` keeps `rootCommand argv { … }`, and `rootCommandOfScript`
+   is `RootCommandBuilder Args.script`, still a value, so `rootCommandOfScript { … }` is unchanged. `rootCommand`
+   gained a `string array` annotation: with two constructors, the unannotated inline `RootCommandBuilder args`
+   is `FS0041`.
+
 3. **Console hygiene**: set the encodings only when output is not redirected and only once per process; build
    the Spectre console per run from the current `Console.Out` (or the `output` passed to `invoke`), if §5.2's
    spike confirms the singleton problem.
+
+   **Status: implemented on claude/partas-build-patterns-jgrwr0-host.** The spike confirmed the hazard (§8 Q5). `Terminal.fs` is now the only route to
+   the console. Deviations:
+
+   - Not a console *per run* but one per `Console.Out`: `Terminal.ansi ()` rebinds `AnsiConsole.Console` to the
+     current `Console.Out` whenever `Console.Out` changed since its last call, which covers a writer swapped
+     between runs and one swapped mid-run. It keeps a console something else assigned to `AnsiConsole.Console`
+     since the last call (a user's, or the tests' `capturingOut`). Residual gap: when the first call the
+     library ever makes finds a static console created earlier under a different `Console.Out` (another
+     library used `AnsiConsole` in a previous SageFs eval), it keeps that console until `Console.Out` next
+     changes.
+   - `invoke`'s `output`, when given, is an `AsyncLocal` run writer (`Terminal.withOutput`): the pipeline's own
+     lines, `Console`-sink step lines, and — by forcing redirection in `CmdRunner.outputPolicy` — a
+     `Console`-sink child process's output go there, as plain text.
+   - Found by the spike: without a terminal (SageFs's worker, a CI container) Spectre reports width `-1` and
+     `MarkupLine` renders nothing at all, while tables and rules throw "Console width must be greater than
+     zero". The library's consoles fall back to 80 columns (`Terminal.FallbackWidth`), and `Summary.render`
+     sizes to `Terminal.width ()`.
+   - `ensureUtf8` sets each encoding at most once per process, only for a stream that is not redirected, and
+     swallows a failure. Setting `OutputEncoding` does not replace a `Console.Out` installed by `SetOut`.
 
 4. **Bridge `Thread.Interrupt` to cancellation**: `invoke` runs the pipeline on a worker and waits; if the
    waiting thread receives `ThreadInterruptedException`, it cancels the run's `CancellationTokenSource`, which
    reuses the existing process-tree kill (registration-based, per CLAUDE.md), then rethrows. Test: interrupt a
    thread running a `sleep` stage and assert no surviving process, mirroring the existing `cmd` test.
 
+   **Status: implemented on claude/partas-build-patterns-jgrwr0-host.** `RootCommandDefinition.Invoke` runs parse-and-invoke on a `LongRunning`
+   task; the calling thread waits. On `ThreadInterruptedException` it cancels a `CancellationTokenSource`
+   linked from the caller's `cancellationToken` (the one the invocation state carries), waits up to five
+   seconds for the run to wind down, and rethrows; `Invoke` then returns no `RunResult`. The cmd test tracks the
+   sleep processes it started by id and ignores zombies: in this container nothing reaps an orphaned grandchild,
+   so a killed `sleep` lingers `<defunct>` and the existing count-based no-survivor tests fail here on the base
+   branch too.
+
 5. **Environment read at run time**: `PipelineContext.run` refreshes the ambient environment it starts from,
    keeping the pipeline's own `envVars` on top.
 
+   **Status: implemented on claude/partas-build-patterns-jgrwr0-host.** `PipelineContext.create` now starts `EnvVars` empty — the variables the
+   pipeline sets — and `runWith` layers them over the environment read as the run starts. `applyDefaults`'
+   per-key rule becomes "a default key applies where the pipeline did not set that key", which also closes the
+   old gap where a pipeline setting a key to its ambient value was indistinguishable from not setting it.
+   Outside a run, `StageContext.tryGetEnvVar` (the `Partas.Build` one) falls back to the process environment
+   and `PipelineContext.printError` checks it for `GITHUB_ENV`, since the pipeline's map no longer holds it.
+
 6. **A reentrancy guard**: a run of a pipeline value already running either fails fast or runs against a copy
    of the mutable collections.
+
+   **Status: implemented on claude/partas-build-patterns-jgrwr0-host.** Fail fast: `runWith` raises `InvalidOperationException` naming the pipeline,
+   before clearing anything, when the same value (identified by the `ScopeReports` its record copies share) is
+   already running. `PipelineContext.withRunState` gives a copy fresh collections that runs alongside. The
+   command path does not isolate automatically: tests and callers read `pipeline.Reports` off the value a
+   command ran, and `ExecutionSchedule.schedule` closes over `pipeline.Producers`, so a copy would have to be
+   taken before scheduling and would hide the run from those readers. Two concurrent invocations reaching the
+   same pipeline value therefore fail the second (System.CommandLine's exception handler, exit 1); an
+   input-aware pipeline builds a fresh value per invocation and is unaffected.
 
 ### 5.4 Consumer-side pattern (docs, not library code)
 
@@ -330,3 +380,9 @@ without `open Partas.Build.Internal` and without the hand-rolled rows of §2's f
    namespace, and none of it needs `open Partas.Build.Internal`.
 5. Is the Spectre singleton hazard (§5.2) real? Spike: create `AnsiConsole` under one `Console.SetOut`, swap,
    write again, and see where the text lands.
+   **Answered: yes.** Spectre.Console 0.57.2, net10.0: with `Console.SetOut a`, `AnsiConsole.MarkupLine "first"`,
+   then `Console.SetOut b`, `AnsiConsole.MarkupLine "second"` and `Console.WriteLine "plain"`, `a` held
+   `first\nsecond\n` and `b` held only `plain\n` — the static console stays on the writer current at its first
+   use. The same spike showed that with no terminal attached, every Spectre console reports width `-1` and
+   renders `MarkupLine` as nothing, the real stdout included; under a pseudo-terminal it is 80. Addressed in
+   §5.3.3.

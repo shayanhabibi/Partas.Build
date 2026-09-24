@@ -46,7 +46,7 @@ module Conditions =
             proc.WaitForExit()
             Seq.contains branch branches
         with ex ->
-            AnsiConsole.MarkupLineInterpolated $"[red]Run git to get branch info failed: {ex.Message}[/]"
+            Terminal.ansi().MarkupLineInterpolated $"[red]Run git to get branch info failed: {ex.Message}[/]"
             false
 
     let whenBranch (branch: string) = whenBranches [ branch ]

@@ -565,11 +565,40 @@ type CommandBuilder(name: string) =
 
     member this.Run(stages: CommandStages): Command = this.Run(addPipeline (pipelineOfCommandStages stages))
 
+/// <summary>How long an interrupted invocation waits for its run to wind down before the interrupt propagates.</summary>
+let private interruptGracePeriod = TimeSpan.FromSeconds 5.
+
+/// <summary>Runs <paramref name="fn"/> on a thread of its own, the calling thread waiting for its result.</summary>
+/// <remarks>
+/// A <see cref="T:System.Threading.ThreadInterruptedException"/> reaching the waiting thread cancels
+/// <paramref name="cts"/>, waits up to <c>interruptGracePeriod</c> for <paramref name="fn"/> to return, and
+/// propagates to the caller. An exception raised by <paramref name="fn"/> propagates as itself.
+/// </remarks>
+let private runInterruptibly (cts: CancellationTokenSource) (fn: unit -> 'T) : 'T =
+    let worker =
+        Tasks.Task.Factory.StartNew(
+            Func<'T> fn, CancellationToken.None, Tasks.TaskCreationOptions.LongRunning, Tasks.TaskScheduler.Default)
+
+    try
+        worker.Wait()
+    with
+    | :? ThreadInterruptedException ->
+        cts.Cancel()
+        (try worker.Wait interruptGracePeriod |> ignore with _ -> ())
+        reraise ()
+    | :? AggregateException as ex when ex.InnerExceptions.Count = 1 ->
+        Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw()
+
+    cts.Dispose()
+    worker.Result
+
 /// <summary>A root command, built and ready to parse and run any number of argument lists.</summary>
 /// <remarks>
 /// Built by <c>Command.root { … }</c>, which takes every operation <c>rootCommand</c> takes. Parsing and running
 /// happen only in <c>Invoke</c>, never at construction, so the value can be bound once in a long-lived host
-/// and invoked repeatedly, one invocation after another. Concurrent invocations of one value are unsupported.
+/// and invoked repeatedly. A pipeline value runs one run at a time: an invocation reaching a pipeline value that
+/// a concurrent invocation is running fails with an <see cref="T:System.InvalidOperationException"/>, reported
+/// as System.CommandLine reports an exception.
 /// </remarks>
 [<Sealed>]
 type RootCommandDefinition
@@ -583,23 +612,30 @@ type RootCommandDefinition
     /// <param name="output">
     /// Receives help, <c>--version</c>, <c>--explain</c> and the timing summary, and — unless
     /// <paramref name="error"/> is given — parse and validation errors. Defaults to the
-    /// <c>invocationConfiguration</c> the root was built with, else the console. Stage output continues to
-    /// follow each stage's own output setting.
+    /// <c>invocationConfiguration</c> the root was built with, else the console. When given, it also receives
+    /// everything the run writes to the console, as plain text: the pipeline's own lines, and the output of every
+    /// stage whose output setting is the console, child processes included.
     /// </param>
     /// <param name="error">Receives parse and validation errors.</param>
     /// <param name="cancellationToken">
     /// Cancels the running pipeline as its own <c>timeout</c> would, killing the process tree of any step
     /// running, and prevents the remaining pipelines from starting. The result is then <c>Cancelled</c>.
     /// </param>
+    /// <remarks>
+    /// The invocation runs on a thread of its own while the calling thread waits. <c>Thread.Interrupt</c> on the
+    /// calling thread cancels the run as <paramref name="cancellationToken"/> would, then raises
+    /// <see cref="T:System.Threading.ThreadInterruptedException"/> from <c>Invoke</c>.
+    /// </remarks>
     member _.Invoke(args: string seq, ?output: TextWriter, ?error: TextWriter, ?cancellationToken: CancellationToken): RunResult =
         let args = Array.ofSeq args
+        let cts = CancellationTokenSource.CreateLinkedTokenSource(defaultArg cancellationToken CancellationToken.None)
 
         let parseResult =
             match parserConfiguration with
             | ValueSome config -> command.Parse(args, config)
             | ValueNone -> command.Parse args
 
-        let state = InvocationState(defaultArg cancellationToken CancellationToken.None)
+        let state = InvocationState cts.Token
         invocations.Add(parseResult, state)
 
         let configuration =
@@ -619,13 +655,19 @@ type RootCommandDefinition
                 error |> Option.iter (fun error -> configuration.Error <- error)
                 ValueSome configuration
 
-        let exitCode =
+        let invokeParsed () =
             try
                 match configuration with
                 | ValueSome config -> parseResult.Invoke config
                 | ValueNone -> parseResult.Invoke()
             finally
                 invocations.Remove parseResult |> ignore
+
+        let exitCode =
+            runInterruptibly cts (fun () ->
+                match output with
+                | Some writer -> Terminal.withOutput writer invokeParsed
+                | None -> invokeParsed ())
 
         let exitCode =
             match parseResult.Action with
@@ -683,10 +725,13 @@ type RootCommandDefinitionBuilder() =
 
 /// <summary>Builds the root command and runs it against <c>args</c>, returning the process exit code.</summary>
 /// <remarks>The exit code is <c>ExitCode</c>'s: <c>Command.root { … }</c> with <c>Command.invoke args</c> is the same run returning the whole <c>RunResult</c>.</remarks>
-type RootCommandBuilder(args: string array) =
+/// <param name="readArgs">Called once per <c>Run</c>, as the command runs.</param>
+type RootCommandBuilder(readArgs: unit -> string array) =
     inherit RootCommandBuilderBase()
 
-    member this.Run(build: BuildCommand): int = this.Define(build).Invoke(args).ExitCode
+    new(args: string array) = RootCommandBuilder(fun () -> args)
+
+    member this.Run(build: BuildCommand): int = this.Define(build).Invoke(readArgs ()).ExitCode
     member this.Run(stages: CommandStages): int = this.Run(addPipeline (pipelineOfCommandStages stages))
 
 module Command =
@@ -708,8 +753,11 @@ module Command =
     let invoke (args: string seq) (root: RootCommandDefinition) : RunResult = root.Invoke args
 
 let inline command name = CommandBuilder name
-let inline rootCommand args = RootCommandBuilder args
+let inline rootCommand (args: string array) = RootCommandBuilder args
 
 /// <summary>The root command over the running script's own arguments.</summary>
-/// <remarks><c>rootCommandOfScript { … }</c> is <c>rootCommand (Args.script ()) { … }</c>.</remarks>
-let rootCommandOfScript = RootCommandBuilder(Args.script ())
+/// <remarks>
+/// <c>rootCommandOfScript { … }</c> is <c>rootCommand (Args.script ()) { … }</c>, with the arguments read as the
+/// command runs rather than when the module initialises.
+/// </remarks>
+let rootCommandOfScript = RootCommandBuilder Args.script

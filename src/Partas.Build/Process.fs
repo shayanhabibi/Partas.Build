@@ -32,7 +32,8 @@ module CmdRunner =
     /// <summary>Where a streamed step's lines go, given the stage's output settings.</summary>
     /// <remarks>
     /// Redirection costs the child's colours, so it is only worth it when the output has to be prefixed —
-    /// or when the stage has said it goes somewhere that is not the console, which cannot be done without it —
+    /// or when the stage has said it goes somewhere that is not the console, or the console is a run writer set by
+    /// <c>Terminal.withOutput</c>, neither of which an inherited stream reaches —
     /// or when a step buffer is in play, since buffering a line is impossible without first receiving it here.
     /// <c>noStdRedirectForStep</c> is the explicit opt out and wins over all three: it makes capture impossible, by
     /// design.
@@ -40,7 +41,7 @@ module CmdRunner =
     let outputPolicy (ctx: StageContext) (escapedPrefix: string) =
         let toConsole =
             match StageContext.getOutput ctx with
-            | ValueNone | ValueSome StageOutput.Console -> true
+            | ValueNone | ValueSome StageOutput.Console -> (Terminal.runWriter ()).IsNone
             | _ -> false
 
         let noPrefix = String.IsNullOrEmpty escapedPrefix

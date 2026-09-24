@@ -47,7 +47,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Architecture notes
 
-Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Environment.fs` → `Timing.fs` → `Producer.fs` → `Failures.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/PipelineSettings.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `RunResult.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
+Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Terminal.fs` → `Environment.fs` → `Timing.fs` → `Producer.fs` → `Failures.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/PipelineSettings.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `RunResult.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
 
 `Explain.fs` renders the resolved stage tree `--explain` prints, as text only, independent of the console and
 any stage sink — a stage that silences or captures its output is still described in full. It compiles before
@@ -139,7 +139,32 @@ System.CommandLine has none, runs uncancellable, and still gets 2 for a failed d
 action returns it) but 1 for a parse error (System.CommandLine's own). The token reaches the engine through
 `PipelineContext.runWith`, which links it into the pipeline's own timeout source. `output` replaces the
 invocation configuration's `Output`/`Error`, which is where help, parse errors, `--explain`, the timing summary
-and the dependency diagnostic go; stage output still goes to Spectre's ambient console.
+and the dependency diagnostic go, and becomes the run writer (`Terminal.withOutput`, below) for everything the
+run sends to the console. `Invoke` runs the parse-and-invoke on a `LongRunning` task and waits on it: a
+`ThreadInterruptedException` on the waiting thread (SageFs's `cancel_eval` is `Thread.Interrupt`) cancels the
+invocation's own linked `CancellationTokenSource` — reaching the registration-based process-tree kill through
+the same token chain as `cancellationToken` — waits up to five seconds for the run to wind down, and rethrows.
+`rootCommandOfScript` is `RootCommandBuilder Args.script`: the builder's primary constructor takes a
+`unit -> string array` read once per `Run`, so argv is read when the command runs, never at module
+initialisation; `rootCommand` is annotated `string array` to keep the array constructor's overload unambiguous.
+
+`Terminal.fs` (`Partas.Build.Internal.Terminal`) is the only route to the console. Spectre's static
+`AnsiConsole` binds to the `Console.Out` current at its first use and keeps writing there after a host swaps
+`Console.Out` (spike in `PLAN-Integration.md` §8 Q5), so the library never calls `AnsiConsole.*` directly:
+`Terminal.ansi ()` answers `AnsiConsole.Console`, rebinding it to the current `Console.Out` when `Console.Out`
+changed since the last call and nothing else replaced `AnsiConsole.Console` meanwhile (an explicit assignment,
+as the tests' `capturingOut` makes, is kept). Under `Terminal.withOutput writer` — an `AsyncLocal`, so it flows
+into the thread-pool work the run starts — `ansi ()` is a plain (no ANSI, no colour) console over `writer`,
+`Terminal.out ()` (where a `Console`-sink step line goes) is `writer`, and `CmdRunner.outputPolicy` redirects a
+`Console`-sink child, which would otherwise inherit the real stdout. A console whose writer has no terminal
+reports width `-1` and renders nothing, so `ansi`/`plain` give it `FallbackWidth` (80). `Terminal.ensureUtf8`
+sets the console encodings at most once per process, skips a redirected stream, and swallows a failure.
+
+`PipelineContext.create` starts `EnvVars` empty: it holds the variables the pipeline sets. `runWith` layers
+them over `PipelineContext.ambientEnvironment ()` read as the run starts, so a variable set after the pipeline
+value was built is visible to its steps. `runWith` also refuses a second concurrent run of one pipeline value
+(identity: the `ScopeReports` a value and its record copies share) with an `InvalidOperationException` before
+touching anything; `PipelineContext.withRunState` gives a copy collections of its own that runs independently.
 
 `src/Partas.Build.Cmd` (`Program.fs`, `Execution.fs`) is the process layer, defining `Cmd` and compiling before `Partas.Build`.
 
@@ -174,7 +199,7 @@ a `voption` setting transfers only when the pipeline left it `ValueNone`; `PostS
 declared none; `AcceptableExitCodes` only while the pipeline is still on `set [0]`; the hooks and `Verify` only
 while they are still the `noStageHook`/`alwaysVerify` values `create` installed, so those are named
 module-level bindings rather than inline `ignore` — reference equality is the test; and `EnvVars` per key,
-since a pipeline's map starts as the whole ambient environment. `NoPrefixForStep`/`NoStdRedirectForStep` are
+a default key applying wherever the pipeline did not set that key itself. `NoPrefixForStep`/`NoStdRedirectForStep` are
 plain bools with no unset state, so a pipeline setting one to the value it already had is indistinguishable
 from not setting it at all — the single known gap.
 
@@ -217,5 +242,5 @@ a patch bump move it breaks anything not rebuilt in the same pass with `Could no
 - `.editorconfig` sets Stroustrup style, `max_line_length=150`, `fsharp_space_before_uppercase_invocation=true`. No fantomas tool is installed (`.config/dotnet-tools.json` declares no tools at all) and there is no `format`/`lint` command — match surrounding style manually.
 - Prefer `voption`/`ValueOption` and `[<Struct>]` DUs in the library: a departure from the ported Fun.Build code.
 - Public API goes in `[<AutoOpen>]` modules under `Partas.Build`; the model and engine stay in `Partas.Build.Internal`.
-- Console output is Spectre.Console throughout, with GitHub Actions `::error title=...::` fallbacks when `GITHUB_ENV` is present (see `printError` in both context modules).
+- Console output is Spectre.Console throughout, always through `Terminal.ansi ()` rather than the `AnsiConsole` static, with GitHub Actions `::error title=...::` fallbacks when `GITHUB_ENV` is present (see `printError` in both context modules).
 - The Nacara site (`docs/Site.fs`, `docs/docs.fsproj`) publishes every page under `docs/content/` and `docs/blog/`, plus the generated API reference, so internal working documents belong in `notes/` (as the `PLAN*.md` files do), not under `docs/`.

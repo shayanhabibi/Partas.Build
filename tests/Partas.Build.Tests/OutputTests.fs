@@ -237,3 +237,69 @@ let tests =
             Expect.isTrue (OutputCapture.isEmpty capture) "the child wrote straight to the console"
         }
     ]
+
+[<Tests>]
+let terminal =
+    testList "terminal" [
+        test "the library's console follows Console.Out after it changes" {
+            let original = System.Console.Out
+            let originalAnsi = AnsiConsole.Console
+            use first = new StringWriter()
+            use second = new StringWriter()
+
+            try
+                Terminal.ansi () |> ignore
+                System.Console.SetOut first
+                Terminal.ansi().WriteLine "to-the-first"
+                System.Console.SetOut second
+                Terminal.ansi().WriteLine "to-the-second"
+            finally
+                System.Console.SetOut original
+                AnsiConsole.Console <- originalAnsi
+
+            Expect.stringContains (first.ToString()) "to-the-first" "the first write lands in the writer current at the time"
+            Expect.isFalse ((first.ToString()).Contains "to-the-second") "the second write leaves the first writer alone"
+            Expect.stringContains (second.ToString()) "to-the-second" "and lands in the writer current at the time"
+        }
+
+        test "a console assigned to AnsiConsole.Console is kept" {
+            let originalAnsi = AnsiConsole.Console
+            use recorded = new StringWriter()
+
+            try
+                Terminal.ansi () |> ignore
+                AnsiConsole.Console <- Terminal.plain recorded
+                Terminal.ansi().WriteLine "assigned"
+            finally
+                AnsiConsole.Console <- originalAnsi
+
+            Expect.stringContains (recorded.ToString()) "assigned" "an explicit assignment wins over Console.Out"
+        }
+
+        test "a console over a writer without a terminal renders at the fallback width" {
+            use writer = new StringWriter()
+            let console = Terminal.plain writer
+            console.Write(Rule "rule")
+
+            Expect.isGreaterThan console.Profile.Width 0 "the console has a positive width"
+            Expect.stringContains (writer.ToString()) "rule" "and renders what it is given"
+        }
+
+        test "withOutput sends console lines to its writer, across threads" {
+            use writer = new StringWriter()
+            let ctx = StageContext.create "routed"
+
+            Terminal.withOutput writer (fun () ->
+                System.Threading.Tasks.Task.Run(fun () -> StageContext.writeLine ctx StdStream.Out "from-another-thread").Wait()
+                Terminal.ansi().WriteLine "from-spectre")
+
+            Expect.stringContains (writer.ToString()) "from-another-thread" "a line written on another thread reaches the run writer"
+            Expect.stringContains (writer.ToString()) "from-spectre" "so does Spectre output"
+            Expect.isTrue (Terminal.runWriter ()).IsNone "the setting ends with the function"
+        }
+
+        test "ensureUtf8 never throws, however often it is called" {
+            Terminal.ensureUtf8 ()
+            Terminal.ensureUtf8 ()
+        }
+    ]

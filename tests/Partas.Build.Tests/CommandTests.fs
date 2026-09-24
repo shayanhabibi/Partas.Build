@@ -197,9 +197,9 @@ let tests =
             // RootCommandBuilder keeps args in a private field with no public accessor; comparing that field
             // is the only way to assert the delegation without running against the test host's own argv,
             // which the task notes warn against relying on.
-            let argsField = typeof<RootCommandBuilder>.GetField("args", BindingFlags.NonPublic ||| BindingFlags.Instance)
-            let captured = argsField.GetValue(rootCommandOfScript) :?> string array
-            Expect.equal captured (Args.script ()) "rootCommandOfScript captures Args.script ()"
+            let argsField = typeof<RootCommandBuilder>.GetField("readArgs", BindingFlags.NonPublic ||| BindingFlags.Instance)
+            let readArgs = argsField.GetValue(rootCommandOfScript) :?> (unit -> string array)
+            Expect.equal (readArgs ()) (Args.script ()) "rootCommandOfScript reads Args.script ()"
         }
 
         test "Args.take takes everything after the first separator" {
@@ -566,6 +566,78 @@ let invocation =
             Expect.equal result.ExitCode ExitCode.Cancelled "a cancelled token exits 130"
             Expect.isEmpty seen "no stage ran"
             Expect.isEmpty result.Pipelines "no pipeline started"
+        }
+
+        test "an invocation's output receives what the run writes to the console, as plain text" {
+            let root = Command.root {
+                pipeline "routed" {
+                    stage "child" { run (Cmd.ofList "dotnet" [ "--version" ]) }
+                    stage "line" { run (fun (ctx: StageContext) -> StageContext.writeLine ctx StdStream.Out "from-a-step") }
+                }
+            }
+            use output = new StringWriter()
+
+            let result, console = Helpers.capturingOut (fun () -> root.Invoke([], output = output))
+            let written = output.ToString()
+
+            Expect.equal result.ExitCode ExitCode.Success "the run passes"
+            Expect.stringContains written "from-a-step" "a step's console line reaches the given writer"
+            Expect.stringContains written "PIPELINE routed is finished" "the pipeline's own lines reach it too"
+            Expect.isTrue
+                (Text.RegularExpressions.Regex.IsMatch(written, @"(?m)^\d+\.\d+\.\d+"))
+                $"a child process's output reaches it; got:\n{written}"
+            Expect.isFalse (written.Contains "\u001b") "the writer receives plain text"
+            Expect.isFalse (console.Contains "from-a-step") "the console receives none of it"
+        }
+
+        test "a root command builder over a function reads its arguments as it runs" {
+            let reads = ref 0
+            let builder = RootCommandBuilder(fun () -> reads.Value <- reads.Value + 1; [| "--no-such-option" |])
+            Expect.equal reads.Value 0 "constructing the builder reads nothing"
+
+            use output = new StringWriter()
+            let exitCode =
+                builder {
+                    invocationConfiguration (InvocationConfiguration(Output = output, Error = output))
+                    stage "one" { run noop }
+                }
+
+            Expect.equal reads.Value 1 "running the command reads the arguments once"
+            Expect.equal exitCode ExitCode.UsageError "and parses what the function answered"
+        }
+
+        test "an invocation refused a running pipeline records and prints nothing of the run holding it" {
+            use started = new Threading.ManualResetEventSlim false
+            use release = new Threading.ManualResetEventSlim false
+            let root = Command.root {
+                pipeline "shared" {
+                    stage "stage-alpha" {
+                        run (fun (_: StageContext) ->
+                            started.Set()
+                            release.Wait(TimeSpan.FromSeconds 30.) |> ignore)
+                    }
+                    stage "stage-beta" { run noop }
+                }
+            }
+            use firstOutput = new StringWriter()
+            use secondOutput = new StringWriter()
+            let first = Threading.Tasks.Task.Run(fun () -> root.Invoke([], output = firstOutput))
+
+            try
+                Expect.isTrue (started.Wait(TimeSpan.FromSeconds 30.)) "the first invocation reaches its stage"
+                let second = root.Invoke([], output = secondOutput)
+
+                Expect.notEqual second.ExitCode ExitCode.Success "the refused invocation fails"
+                Expect.isEmpty second.Pipelines "the refused invocation records no pipeline run"
+                Expect.isFalse
+                    (secondOutput.ToString().Contains "stage-alpha")
+                    $"the refused invocation prints nothing of the other run; got:\n{secondOutput}"
+            finally
+                release.Set()
+
+            Expect.isTrue (first.Wait(TimeSpan.FromSeconds 30.)) "the first invocation finishes"
+            Expect.equal first.Result.ExitCode ExitCode.Success "the first invocation is undisturbed"
+            Expect.equal [ for timing in first.Result.Timings -> timing.Name ] [ "stage-alpha"; "stage-beta" ] "and records its own run"
         }
 
         test "help and --explain write to the given output and exit zero" {

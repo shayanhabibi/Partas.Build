@@ -237,3 +237,107 @@ let tests =
             Expect.isTrue (OutputCapture.isEmpty capture) "the child wrote straight to the console"
         }
     ]
+
+[<Tests>]
+let terminal =
+    testList "terminal" [
+        test "the library's console follows Console.Out after it changes" {
+            let original = System.Console.Out
+            let originalAnsi = AnsiConsole.Console
+            use first = new StringWriter()
+            use second = new StringWriter()
+
+            try
+                Terminal.ansi () |> ignore
+                System.Console.SetOut first
+                Terminal.ansi().WriteLine "to-the-first"
+                System.Console.SetOut second
+                Terminal.ansi().WriteLine "to-the-second"
+            finally
+                System.Console.SetOut original
+                AnsiConsole.Console <- originalAnsi
+
+            Expect.stringContains (first.ToString()) "to-the-first" "the first write lands in the writer current at the time"
+            Expect.isFalse ((first.ToString()).Contains "to-the-second") "the second write leaves the first writer alone"
+            Expect.stringContains (second.ToString()) "to-the-second" "and lands in the writer current at the time"
+        }
+
+        test "a Console.Out that becomes current again gets its first console back" {
+            let original = System.Console.Out
+            let originalAnsi = AnsiConsole.Console
+            use host = new StringWriter()
+            use hostRecorded = new StringWriter()
+            use swapped = new StringWriter()
+
+            try
+                System.Console.SetOut host
+                // SetOut wraps a writer on every call; a host restores the wrapper it read from Console.Out.
+                let hostOut = System.Console.Out
+                AnsiConsole.Console <- Terminal.plain hostRecorded
+                Terminal.ansi () |> ignore
+                System.Console.SetOut swapped
+                Terminal.ansi().WriteLine "to-the-swapped"
+                System.Console.SetOut hostOut
+                Terminal.ansi().WriteLine "back-to-the-host"
+            finally
+                System.Console.SetOut original
+                AnsiConsole.Console <- originalAnsi
+
+            Expect.stringContains (swapped.ToString()) "to-the-swapped" "the swapped writer receives the write made while it is current"
+            Expect.stringContains (hostRecorded.ToString()) "back-to-the-host" "the restored writer gets the console it was first seen with"
+            Expect.equal (host.ToString()) "" "the restored writer's own text is untouched"
+        }
+
+        test "a console assigned to AnsiConsole.Console is kept" {
+            let originalAnsi = AnsiConsole.Console
+            use recorded = new StringWriter()
+
+            try
+                Terminal.ansi () |> ignore
+                AnsiConsole.Console <- Terminal.plain recorded
+                Terminal.ansi().WriteLine "assigned"
+            finally
+                AnsiConsole.Console <- originalAnsi
+
+            Expect.stringContains (recorded.ToString()) "assigned" "an explicit assignment wins over Console.Out"
+        }
+
+        test "a console over a writer without a terminal renders at the fallback width" {
+            use writer = new StringWriter()
+            let console = Terminal.plain writer
+            console.Write(Rule "rule")
+
+            Expect.isGreaterThan console.Profile.Width 0 "the console has a positive width"
+            Expect.stringContains (writer.ToString()) "rule" "and renders what it is given"
+        }
+
+        test "withOutput sends console lines to its writer, across threads" {
+            use writer = new StringWriter()
+            let ctx = StageContext.create "routed"
+
+            Terminal.withOutput writer (fun () ->
+                System.Threading.Tasks.Task.Run(fun () -> StageContext.writeLine ctx StdStream.Out "from-another-thread").Wait()
+                Terminal.ansi().WriteLine "from-spectre")
+
+            Expect.stringContains (writer.ToString()) "from-another-thread" "a line written on another thread reaches the run writer"
+            Expect.stringContains (writer.ToString()) "from-spectre" "so does Spectre output"
+            Expect.isTrue (Terminal.runWriter ()).IsNone "the setting ends with the function"
+        }
+
+        test "withOutput serialises concurrent writes to its writer" {
+            use writer = new StringWriter()
+            let ctx = StageContext.create "concurrent"
+            let count = 4000
+
+            Terminal.withOutput writer (fun () ->
+                System.Threading.Tasks.Parallel.For(0, count, fun i -> StageContext.writeLine ctx StdStream.Out $"line-%05d{i}") |> ignore)
+
+            let lines = writer.ToString().Split('\n', System.StringSplitOptions.RemoveEmptyEntries) |> Array.map _.TrimEnd('\r')
+            Expect.equal (Set.ofArray lines).Count count "every line arrives whole, once"
+        }
+
+        test "ensureUtf8 never throws, however often it is called" {
+            Terminal.ensureUtf8 ()
+            Terminal.ensureUtf8 ()
+        }
+    ]

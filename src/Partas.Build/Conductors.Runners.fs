@@ -369,7 +369,7 @@ module StageContext =
                                 $"{escapedPrefix} raised an exception."
                                 |> Markup.red
                                 |> printn
-                                AnsiConsole.WriteException ex
+                                Terminal.ansi().WriteException ex
                                 // The exception is evidence of the attempt; whether it also reaches the
                                 // enclosing scope is `ContinueStageOnFailure`'s to say.
                                 evidence
@@ -424,7 +424,7 @@ module StageContext =
                             $"{buildCurrentStepPrefix stage |> Markup.escape}> stage's step failed."
                             |> Markup.red
                             |> printn
-                            AnsiConsole.WriteException ex
+                            Terminal.ansi().WriteException ex
 
                     // Which token fired decides this, and only the runner holds them: `cts` is the budget this
                     // stage was given and each `StepBudget.expiry` the budget it gave one of its steps, so an
@@ -598,7 +598,23 @@ module StageContext =
         return isSuccess
     }
 module PipelineContext =
-    open System.Text
+    /// The pipelines running, keyed by the <c>ScopeReports</c> a pipeline value and its copies share.
+    module internal Running =
+        let private running = System.Runtime.CompilerServices.ConditionalWeakTable<ScopeReports, obj>()
+
+        let enter (pipeline: PipelineContext) : IDisposable =
+            lock running (fun () ->
+                match running.TryGetValue pipeline.Reports with
+                | true, _ ->
+                    let name = if String.IsNullOrEmpty pipeline.Name then "(unnamed)" else pipeline.Name
+                    raise (
+                        InvalidOperationException(
+                            $"Pipeline '%s{name}' is already running. A pipeline value runs one run at a time; "
+                            + "run a copy from PipelineContext.withRunState to run it concurrently."))
+                | false, _ -> running.Add(pipeline.Reports, null))
+
+            { new IDisposable with
+                member _.Dispose() = lock running (fun () -> running.Remove pipeline.Reports |> ignore) }
 
     let runStagesWithFailFast (ctx: PipelineContext) (failFast: bool) (cancelToken: CancellationToken) (stages: StageContext seq) =
         let stages =
@@ -618,19 +634,10 @@ module PipelineContext =
 
     let runStages (ctx: PipelineContext) (cancelToken: CancellationToken) (stages: StageContext seq) = runStagesWithFailFast ctx false cancelToken stages
 
-    /// <summary>
-    /// Runs every stage of <paramref name="this"/> under <paramref name="cancellationToken"/>, and raises on
-    /// failure or cancellation.
-    /// </summary>
-    /// <remarks>
-    /// A cancellation of <paramref name="cancellationToken"/> acts as the pipeline's own <c>timeout</c> does: the
-    /// stages observe a cancellation, a process started by a step is killed with its tree, and the run raises
-    /// <see cref="T:Partas.Build.ErrorHandling.PipelineCancelledException"/>. Skips <c>DependencyPlan.validate</c>,
-    /// as <c>run</c> does.
-    /// </remarks>
-    let runWith (cancellationToken: CancellationToken) (this: PipelineContext) =
-        Console.InputEncoding <- Encoding.UTF8
-        Console.OutputEncoding <- Encoding.UTF8
+    /// <summary>Runs <paramref name="this"/> as <c>runWith</c> does, the caller holding <c>Running.enter</c> for it.</summary>
+    let internal runEntered (cancellationToken: CancellationToken) (this: PipelineContext) =
+        Terminal.ensureUtf8 ()
+        let this = { this with EnvVars = Map.foldBack Map.add this.EnvVars (PipelineContext.ambientEnvironment ()) }
         StageTimings.clear this.Timings
         ScopeReports.clear this.Reports
         // Execution state is invocation-local: a second run of the same pipeline value executes its
@@ -755,6 +762,25 @@ module PipelineContext =
             match ScopeReports.propagated this.Reports with
             | failure :: _ -> raise (PipelineFailedException(message, FailureCause.toException failure.Cause))
             | [] -> raise (PipelineFailedException message)
+
+    /// <summary>
+    /// Runs every stage of <paramref name="this"/> under <paramref name="cancellationToken"/>, and raises on
+    /// failure or cancellation.
+    /// </summary>
+    /// <remarks>
+    /// A cancellation of <paramref name="cancellationToken"/> acts as the pipeline's own <c>timeout</c> does: the
+    /// stages observe a cancellation, a process started by a step is killed with its tree, and the run raises
+    /// <see cref="T:Partas.Build.ErrorHandling.PipelineCancelledException"/>. Skips <c>DependencyPlan.validate</c>,
+    /// as <c>run</c> does.
+    /// <para>The stages read the process environment as it is when the run starts, with the pipeline's own
+    /// <c>EnvVars</c> over it.</para>
+    /// <para>A pipeline value runs one run at a time: starting a second while the first is running raises
+    /// <see cref="T:System.InvalidOperationException"/> before anything runs. A copy from
+    /// <c>PipelineContext.withRunState</c> runs independently.</para>
+    /// </remarks>
+    let runWith (cancellationToken: CancellationToken) (this: PipelineContext) =
+        use _running = Running.enter this
+        runEntered cancellationToken this
 
     /// <summary>Runs every stage of <paramref name="this"/> and raises on failure or cancellation.</summary>
     /// <remarks>

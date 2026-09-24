@@ -569,8 +569,7 @@ type CommandBuilder(name: string) =
 /// <remarks>
 /// Built by <c>Command.root { … }</c>, which takes every operation <c>rootCommand</c> takes. Parsing and running
 /// happen only in <c>Invoke</c>, never at construction, so the value can be bound once in a long-lived host
-/// and invoked repeatedly. Invocations of one value run one at a time: a pipeline value holds the collectors of
-/// its current run.
+/// and invoked repeatedly, one invocation after another. Concurrent invocations of one value are unsupported.
 /// </remarks>
 [<Sealed>]
 type RootCommandDefinition

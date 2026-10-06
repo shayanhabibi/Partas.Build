@@ -26,6 +26,23 @@ command runs, but only where that pipeline left the setting alone, regardless of
 one to the value `PipelineContext.create` already gives it is indistinguishable from leaving it untouched — the
 command default overwrites it either way.
 
+## GitHub Actions reporting
+
+With `GITHUB_ACTIONS=true`, each active top-level stage opens a collapsible log group and closes it even if
+the stage fails or is cancelled. Nested stages and parallel work share that group, so concurrent branches do
+not open overlapping groups. Quiet pipelines emit no group framing. Stage output captures and redirects
+continue to control step output; workflow group commands go directly to the runner's console.
+
+Invoking a `command` or `rootCommand` also appends a Markdown stage timing report to `GITHUB_STEP_SUMMARY`
+after each pipeline, including failures and quiet runs. It lists every recorded stage in tree order with
+its outcome and elapsed time; skipped stages show no duration. Names and failure details are escaped for
+Markdown. Single-stage runs are included, and multiple pipelines append rather than replacing earlier
+content. An unavailable summary file or a report that would exceed GitHub's 1 MiB per-step limit prints a
+diagnostic without changing the pipeline result. A direct `PipelineContext.run` call groups its logs but
+does not write a summary.
+
+Both features are automatic in GitHub Actions and leave local console reporting unchanged.
+
 ## Timeouts
 
 Three names. Meaning shifts with the builder they sit on.

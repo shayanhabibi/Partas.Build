@@ -2,7 +2,10 @@ namespace Partas.Build
 
 open System
 open System.IO
+open System.Net
+open System.Text
 open Spectre.Console
+open Partas.Build.Internal
 
 /// <summary>What a finished run spent, stage by stage.</summary>
 /// <remarks>
@@ -107,3 +110,47 @@ module Summary =
         console.Profile.Width <- width
         console.Write (table width timings)
         writer.ToString().TrimEnd()
+
+    /// Text kept in a single Markdown table cell, without interpreting names or failures as markup.
+    let private markdownCell (text: string) =
+        let text = WebUtility.HtmlEncode text
+        let escaped =
+            [ "\\"; "|"; "`"; "*"; "_"; "["; "]" ]
+            |> List.fold (fun (text: string) character -> text.Replace(character, "\\" + character)) text
+        escaped.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "<br>")
+
+    /// The complete stage tree as Markdown, independent of console width and verbosity.
+    let renderMarkdown (pipelineName: string) (timings: StageTiming list) =
+        let rows = [
+            $"### {markdownCell pipelineName} — {title}"
+            ""
+            "| Stage | Time | Outcome |"
+            "| --- | ---: | --- |"
+            for timing in timings do
+                let indent = String.replicate timing.Depth "&nbsp;&nbsp;"
+                $"| {indent}{markdownCell timing.Name} | {elapsed timing} | {markdownCell (outcome timing)} |"
+            ""
+        ]
+        String.concat "\n" rows + "\n"
+
+    /// Appends this pipeline's report without replacing summaries from other pipelines or actions.
+    /// A reporting failure must not hide the pipeline's original exception or change its result.
+    let internal appendGitHub (pipeline: PipelineContext) (timings: StageTiming list) =
+        if GitHubActions.isEnabled pipeline.EnvVars && not timings.IsEmpty then
+            match Map.tryFind "GITHUB_STEP_SUMMARY" pipeline.EnvVars with
+            | Some path when not (String.IsNullOrWhiteSpace path) ->
+                try
+                    let text = "\n\n" + renderMarkdown pipeline.Name timings
+                    let encoding = UTF8Encoding(false)
+                    let existingLength = if File.Exists path then FileInfo(path).Length else 0L
+                    // GitHub rejects the whole step summary above 1 MiB, including earlier appends.
+                    if existingLength + int64 (encoding.GetByteCount text) <= 1024L * 1024L then
+                        File.AppendAllText(path, text, encoding)
+                    else
+                        Console.Error.WriteLine "Could not write GitHub job summary: the step summary would exceed 1 MiB."
+                with
+                | :? IOException as error -> Console.Error.WriteLine $"Could not write GitHub job summary: {error.Message}"
+                | :? UnauthorizedAccessException as error -> Console.Error.WriteLine $"Could not write GitHub job summary: {error.Message}"
+                | :? ArgumentException as error -> Console.Error.WriteLine $"Could not write GitHub job summary: {error.Message}"
+                | :? NotSupportedException as error -> Console.Error.WriteLine $"Could not write GitHub job summary: {error.Message}"
+            | _ -> ()

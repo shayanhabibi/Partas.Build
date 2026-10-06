@@ -192,6 +192,8 @@ module StageContext =
 
         let stageSw = Stopwatch.StartNew()
 
+        use group = GitHubActions.stageGroup stage index isActive
+
         pipeline
         |> Internal.checkBeforeHooks stage
 

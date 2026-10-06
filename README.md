@@ -179,6 +179,20 @@ producer or a step. See *Migrating work out of `InputSpec.Read`* in
 before/after, and the same file's *Producers and dependencies* and *Failure handlers* sections for the full
 operation list, scope-retry ownership, and remaining limitations.
 
+## GitHub Actions reporting
+
+When `GITHUB_ACTIONS=true`, active top-level stages automatically appear as collapsible log groups. Nested
+stages and parallel branches stay inside their enclosing group's log; parallel execution is preserved.
+`quiet` disables group framing.
+
+Commands also append a Markdown stage summary to `GITHUB_STEP_SUMMARY`, with each recorded stage's outcome,
+duration and failure message. Summaries include nested and skipped stages, single-stage pipelines, and quiet
+or failed runs. Each pipeline appends its own report. Summary write failures, including reaching GitHub's
+1 MiB per-step limit, print a diagnostic without changing the build's exit code.
+
+These features use the runner environment automatically; no workflow YAML changes are needed. Calling
+`PipelineContext.run` directly provides log groups; automatic summaries are part of command invocation.
+
 ## Motivation
 
 I hate CI/CD and CLI plumbing, but it saves me the headache of returning to old projects later.

@@ -81,8 +81,11 @@ let private runReportingTimings (pipeline: PipelineContext) =
         PipelineContext.run pipeline
     finally
         let verbosity = defaultValueArg pipeline.Verbosity Verbosity.Default
+        let timings = StageTimings.ordered pipeline.Timings
 
-        match StageTimings.ordered pipeline.Timings with
+        Summary.appendGitHub pipeline timings
+
+        match timings with
         | [] | [ _ ] -> ()
         | _ when verbosity.IsQuiet -> ()
         | timings -> Summary.render timings |> Console.Out.WriteLine

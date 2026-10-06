@@ -23,6 +23,7 @@
         <Compile Include="Producer.fs" />
         <Compile Include="Failures.fs" />
         <Compile Include="Conductors.fs" />
+        <Compile Include="GitHubActions.fs" />
         <Compile Include="Conductors.Runners.fs" />
         <Compile Include="Process.fs" />
         <Compile Include="Operations.fs" />

@@ -384,18 +384,11 @@ module StageContext =
     /// captured failure lifts — loses everything after its first line unless it arrives encoded.
     /// </remarks>
     let encodeWorkflowData (msg: string) =
-        msg.Replace("%", "%25").Replace("\r", "%0D").Replace("\n", "%0A")
+        WorkflowCommands.encodeData msg
 
     let printError (stage: StageContext) (msg: string) =
-        match tryGetEnvVar stage "GITHUB_ENV" with
-        | ValueSome _ ->
-            getNamePath stage
-            |> _.Replace(",", "_")
-            |> (+) "[STAGE] "
-            |> fun title -> $"::error title={title}::{encodeWorkflowData msg}"
-            |> AnsiConsole.WriteLine
-        | _ ->
-            AnsiConsole.MarkupLineInterpolated $"""[red]Error: {msg}[/]"""
+        { Annotation.error msg with Title = ValueSome ("[STAGE] " + getNamePath stage) }
+        |> WorkflowCommands.writeAnnotation (buildEnvVars stage)
 
     let isAcceptableExitCode (stage: StageContext) exitCode =
         Set.contains exitCode stage.AcceptableExitCodes
@@ -495,15 +488,8 @@ module PipelineContext =
         }
 
     let printError (ctx: PipelineContext) (msg: string) =
-        if
-            ctx.EnvVars
-            |> Map.containsKey "GITHUB_ENV"
-        then
-            (ctx.Name.Replace(",", "_"), StageContext.encodeWorkflowData msg)
-            ||> sprintf "::error title=[PIPELINE] %s::%s"
-            |> AnsiConsole.WriteLine
-        else
-            AnsiConsole.MarkupLineInterpolated $"[red]Error: {msg}[/]"
+        { Annotation.error msg with Title = ValueSome ("[PIPELINE] " + ctx.Name) }
+        |> WorkflowCommands.writeAnnotation ctx.EnvVars
 
 module CommandSpec =
     let create (name: string) = {

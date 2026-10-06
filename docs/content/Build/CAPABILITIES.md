@@ -43,6 +43,39 @@ does not write a summary.
 
 Both features are automatic in GitHub Actions and leave local console reporting unchanged.
 
+### Structured annotations
+
+`annotate` turns an `Annotation` into a deferred `Operation<unit>`, used through `runOperation` or composed
+with other operations. `Annotation.notice message`, `Annotation.warning message` and `Annotation.error message`
+create diagnostics without metadata. Add `Title`, `File`, `Line`, `EndLine`, `Column` and `EndColumn` through
+a record update; these fields take `ValueSome` when present. Use repository-relative file paths and one-based
+line/column numbers. `EndLine` requires `Line`, columns require `Line`, and `EndColumn` requires `Column`.
+Columns describe ranges within one line; omit them for multiline ranges. Nonpositive positions, reversed
+ranges or unsupported field combinations raise an argument error when the operation runs.
+
+```fsharp
+stage "check configuration" {
+    runOperation (annotate {
+        Annotation.warning "Use the new option name." with
+            Title = ValueSome "Deprecated option"
+            File = ValueSome "build.fsx"
+            Line = ValueSome 12
+            Column = ValueSome 5
+            EndColumn = ValueSome 18
+    })
+}
+```
+
+In GitHub Actions these become runner annotations. Locally they print the level, metadata and literal message.
+The stage's inherited `GITHUB_ACTIONS` setting selects the format; a stage can override it. Annotations always
+go to the diagnostic console, independently of captures, redirects and `quiet`. Constructing an operation or
+running `--explain` emits nothing. An error annotation alone does not fail a stage: return a failure or raise
+an exception when execution should fail. Compiler logs are not automatically parsed for source locations.
+
+The runner's own stage and pipeline errors use the same protocol writer. Titles and messages are escaped
+separately, and commands bypass console wrapping so long diagnostics remain one physical protocol line.
+Protocol I/O failures do not change the stage result.
+
 ## Timeouts
 
 Three names. Meaning shifts with the builder they sit on.

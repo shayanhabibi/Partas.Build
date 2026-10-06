@@ -193,6 +193,27 @@ or failed runs. Each pipeline appends its own report. Summary write failures, in
 These features use the runner environment automatically; no workflow YAML changes are needed. Calling
 `PipelineContext.run` directly provides log groups; automatic summaries are part of command invocation.
 
+Build scripts can also emit structured notices, warnings and errors with an optional source location:
+
+```fsharp
+stage "validate" {
+    runOperation (annotate {
+        Annotation.warning "This setting is deprecated." with
+            Title = ValueSome "Configuration warning"
+            File = ValueSome "build.fsx"
+            Line = ValueSome 12
+            Column = ValueSome 5
+    })
+}
+```
+
+Use `Annotation.notice`, `Annotation.warning` or `Annotation.error`; each creates a record whose optional
+fields can be supplied as above. `EndLine` and `EndColumn` describe a range and require their corresponding
+start positions. Source positions are one-based; columns require `Line` and apply only within one line.
+Annotations bypass output captures and quiet logging. Outside GitHub Actions,
+they print readable diagnostics with the same metadata. An error annotation reports a problem; fail the
+step separately when it should stop the build. Compiler output is not automatically parsed into annotations.
+
 ## Motivation
 
 I hate CI/CD and CLI plumbing, but it saves me the headache of returning to old projects later.

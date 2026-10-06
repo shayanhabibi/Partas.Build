@@ -83,8 +83,6 @@ let private runReportingTimings (pipeline: PipelineContext) =
         let verbosity = defaultValueArg pipeline.Verbosity Verbosity.Default
         let timings = StageTimings.ordered pipeline.Timings
 
-        Summary.appendGitHub pipeline timings
-
         match timings with
         | [] | [ _ ] -> ()
         | _ when verbosity.IsQuiet -> ()
@@ -101,14 +99,30 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
         1
     | Ok _ when Explain.option.GetValue parseResult -> explain command pipelines
     | Ok plan ->
-        try
-            for pipeline in ExecutionSchedule.schedule parseResult plan pipelines do
-                runReportingTimings pipeline
+        let scheduled = ExecutionSchedule.schedule parseResult plan pipelines
+        let result =
+            try
+                for pipeline in scheduled do
+                    runReportingTimings pipeline
 
-            0
-        with
-        | :? PipelineFailedException -> 1
-        | :? PipelineCancelledException -> 130
+                0
+            with
+            | :? PipelineFailedException -> 1
+            | :? PipelineCancelledException -> 130
+
+        // Write a consolidated GitHub job summary after all pipelines finish, even on failure.
+        let envVars =
+            scheduled
+            |> List.tryPick (fun p -> if Map.tryFind "GITHUB_ACTIONS" p.EnvVars |> Option.exists (fun v -> v = "true") then Some p.EnvVars else None)
+            |> Option.defaultValue Map.empty
+        let allTimings =
+            scheduled
+            |> List.choose (fun p ->
+                let timings = StageTimings.ordered p.Timings
+                if timings.IsEmpty then None else Some (p.Name, timings))
+        Summary.appendGitHub envVars allTimings
+
+        result
 
 /// Applies a finished spec to a command, registering the options its pipelines declared.
 let private applyTo (command: Command) (spec: CommandSpec) =

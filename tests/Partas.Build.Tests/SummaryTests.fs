@@ -76,6 +76,7 @@ let tests =
                 let text = File.ReadAllText path
                 Expect.equal exitCode 1 "reporting preserves the build failure"
                 Expect.stringStarts text "Earlier step content\n" "summary appends rather than replacing other content"
+                Expect.stringContains text "build" "the pipeline name appears"
                 Expect.stringContains text "compile\\|&lt;target&gt;" "names cannot break the Markdown table"
                 Expect.stringContains text "skipped" "the skipped stage is recorded"
                 Expect.stringContains text "first<br>second\\|&lt;bad&gt;" "failure details remain in one safe table cell"
@@ -224,7 +225,7 @@ let tests =
                 Expect.isFalse (captured.Contains "::group::") "captures contain no runner protocol"
                 let summary = File.ReadAllText path
                 Expect.isTrue (summary.IndexOf "parent" < summary.IndexOf "child") "the parent precedes its nested stage"
-                Expect.stringContains summary "&nbsp;&nbsp;child" "the child keeps its tree depth"
+                Expect.stringContains summary "  child" "the child keeps its tree depth"
             finally File.Delete path
         }
 

@@ -256,6 +256,19 @@ Flags belong to the commands whose stages read them: `--quick` skips restores
 and the clean, `--skip-tests` skips the suites, `--configuration` picks the
 configuration. None of them is registered by hand — see *Adding a step*.
 
+## Repository CI
+
+Pull requests and pushes to `master` run the full build and test gate on Linux and Windows, plus the
+documentation build. CI installs the SDK selected by `global.json` and .NET 8 for the tools targeting it,
+caches NuGet packages, and retains build/test logs for seven days. Stage groups, summaries and diagnostics
+come from the same build CLI used locally.
+
+After all checks pass, master runs publish packages using `NUGET_KEY` and deploy documentation to the
+`github-pages` environment. Pull requests never publish or deploy. If `NUGET_KEY` is absent, publishing is
+skipped with a notice. Manual runs validate any selected branch; only `master` can publish or deploy.
+New commits cancel superseded PR runs while active master publications finish. GitHub Actions are pinned
+to commit SHAs and maintained by weekly grouped Dependabot updates.
+
 ## Versioning
 
 Versions live in the project files, not in a notes file or on the command line:

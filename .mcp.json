@@ -1,10 +1,1 @@
-{
-  "mcpServers": {
-    "fslangmcp": {
-      "type": "stdio",
-      "command": "fslangmcp",
-      "args": ["--project", "Partas.Testing.slnx"],
-      "env": {}
-    }
-  }
-}
+{"mcpServers":{"fslangmcp":{"type":"stdio","command":"fslangmcp","args":["--project","Partas.Testing.slnx"],"env":{}},"sagefs":{"type":"stdio","command":"sagefs","args":["mcp"],"env":{}}}}

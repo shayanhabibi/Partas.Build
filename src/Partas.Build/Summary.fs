@@ -120,7 +120,7 @@ module Summary =
         escaped.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "<br>")
 
     /// One consolidated Markdown table for all pipelines, independent of console width and verbosity.
-    let renderMarkdown (pipelines: (string * StageTiming list) list) =
+    let internal renderMarkdownPipelines (pipelines: (string * StageTiming list) list) =
         let rows = [
             "## Stage timings"
             ""
@@ -132,12 +132,16 @@ module Summary =
                         if timing.Depth = 0 then
                             $"**{markdownCell pipelineName}** / {markdownCell timing.Name}"
                         else
-                            let spaces = String.replicate (timing.Depth * 2) " "
+                            let spaces = String.replicate timing.Depth "&nbsp;&nbsp;"
                             $"{spaces}{markdownCell timing.Name}"
                     $"| {indent} | {elapsed timing} | {markdownCell (outcome timing)} |"
             ""
         ]
         String.concat "\n" rows + "\n"
+
+    /// The complete stage tree as Markdown, independent of console width and verbosity.
+    let renderMarkdown (pipelineName: string) (timings: StageTiming list) =
+        renderMarkdownPipelines [ pipelineName, timings ]
 
     /// Appends the consolidated report for all pipelines without replacing earlier summary content.
     /// A reporting failure must not hide the pipeline's original exception or change its result.
@@ -148,7 +152,7 @@ module Summary =
                 match Map.tryFind "GITHUB_STEP_SUMMARY" envVars with
                 | Some path when not (String.IsNullOrWhiteSpace path) ->
                     try
-                        let text = "\n\n" + renderMarkdown pipelines
+                        let text = "\n\n" + renderMarkdownPipelines pipelines
                         let encoding = UTF8Encoding(false)
                         let existingLength = if File.Exists path then FileInfo(path).Length else 0L
                         // GitHub rejects the whole step summary above 1 MiB, including earlier appends.

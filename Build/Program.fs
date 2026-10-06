@@ -187,7 +187,10 @@ module Tests =
         and! ci = Baked.Common.isCI
         return stage "test" {
             when' (not skipTests)
-            outputTo (if ci then StageOutput.Captured(OutputCapture.create()) else StageOutput.Console)
+            // Expecto reports assertions on stdout; keep them visible in CI and uploaded logs.
+            outputTo StageOutput.Console
+            // Commands exercised by tests must not append fixture reports to the real job summary.
+            envVars [ "GITHUB_STEP_SUMMARY", "" ]
             for project in [
                 Repo.Project.``Partas.Build.Cmd.NetStandard.Tests``.Path
                 Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Path

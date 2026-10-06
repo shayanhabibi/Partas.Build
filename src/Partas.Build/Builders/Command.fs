@@ -100,9 +100,11 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
     | Ok _ when Explain.option.GetValue parseResult -> explain command pipelines
     | Ok plan ->
         let scheduled = ExecutionSchedule.schedule parseResult plan pipelines
-        let result =
+        let executed = ResizeArray<PipelineContext>()
+        try
             try
                 for pipeline in scheduled do
+                    executed.Add pipeline
                     runReportingTimings pipeline
 
                 0
@@ -110,19 +112,19 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
             | :? PipelineFailedException -> 1
             | :? PipelineCancelledException -> 130
 
-        // Write a consolidated GitHub job summary after all pipelines finish, even on failure.
-        let envVars =
-            scheduled
-            |> List.tryPick (fun p -> if Map.tryFind "GITHUB_ACTIONS" p.EnvVars |> Option.exists (fun v -> v = "true") then Some p.EnvVars else None)
-            |> Option.defaultValue Map.empty
-        let allTimings =
-            scheduled
-            |> List.choose (fun p ->
-                let timings = StageTimings.ordered p.Timings
-                if timings.IsEmpty then None else Some (p.Name, timings))
-        Summary.appendGitHub envVars allTimings
-
-        result
+        finally
+            // Consolidate only pipelines that ran, respecting each pipeline's reporting destination.
+            executed
+            |> Seq.filter (fun pipeline -> GitHubActions.isEnabled pipeline.EnvVars)
+            |> Seq.groupBy (fun pipeline -> Map.tryFind "GITHUB_STEP_SUMMARY" pipeline.EnvVars)
+            |> Seq.iter (fun (_, pipelines) ->
+                let pipelines = Seq.toList pipelines
+                let allTimings =
+                    pipelines
+                    |> List.choose (fun pipeline ->
+                        let timings = StageTimings.ordered pipeline.Timings
+                        if timings.IsEmpty then None else Some (pipeline.Name, timings))
+                Summary.appendGitHub pipelines.Head.EnvVars allTimings)
 
 /// Applies a finished spec to a command, registering the options its pipelines declared.
 let private applyTo (command: Command) (spec: CommandSpec) =

@@ -58,6 +58,67 @@ let private indexOf (rows: Row list) (name: string) =
 [<Tests>]
 let tests =
     testList "summary" [
+        test "the public Markdown renderer retains its pipeline-name argument" {
+            let timing = { Name = "compile"; Depth = 0; Elapsed = TimeSpan.FromSeconds 1.; Outcome = StageOutcome.Succeeded }
+            let text = Summary.renderMarkdown "build" [ timing ]
+            Expect.stringContains text "build" "the public renderer names the pipeline"
+            Expect.stringContains text "compile" "the public renderer includes its stages"
+        }
+
+        test "a repeated command does not report old timings from an unstarted pipeline" {
+            let path = Path.GetTempFileName()
+            let mutable fail = false
+            try
+                let built = command "ci" {
+                    pipeline "one" {
+                        envVars [ "GITHUB_ACTIONS", "true"; "GITHUB_STEP_SUMMARY", path ]
+                        stage "first" { run (fun (_: StageContext) -> if fail then failwith "stop") }
+                    }
+                    pipeline "two" {
+                        envVars [ "GITHUB_ACTIONS", "true"; "GITHUB_STEP_SUMMARY", path ]
+                        stage "second" { () }
+                    }
+                }
+                Expect.equal (quietly (fun () -> built.Parse("").Invoke())) 0 "the first run reaches both pipelines"
+                File.WriteAllText(path, "")
+                fail <- true
+                Expect.equal (quietly (fun () -> built.Parse("").Invoke())) 1 "the second run stops in the first pipeline"
+                let text = File.ReadAllText path
+                Expect.stringContains text "first" "the failed run is reported"
+                Expect.isFalse (text.Contains "second") "unstarted pipelines do not leak timings from earlier runs"
+            finally File.Delete path
+        }
+
+        test "consolidated summaries respect each pipeline's CI flag and destination" {
+            let first = Path.GetTempFileName()
+            let second = Path.GetTempFileName()
+            try
+                let built = command "ci" {
+                    pipeline "one" {
+                        envVars [ "GITHUB_ACTIONS", "TRUE"; "GITHUB_STEP_SUMMARY", first ]
+                        stage "first" { () }
+                    }
+                    pipeline "local" {
+                        envVars [ "GITHUB_ACTIONS", "false"; "GITHUB_STEP_SUMMARY", first ]
+                        stage "private-local" { () }
+                    }
+                    pipeline "two" {
+                        envVars [ "GITHUB_ACTIONS", "true"; "GITHUB_STEP_SUMMARY", second ]
+                        stage "second" { () }
+                    }
+                }
+                Expect.equal (quietly (fun () -> built.Parse("").Invoke())) 0 "all pipelines succeed"
+                let one = File.ReadAllText first
+                let two = File.ReadAllText second
+                Expect.stringContains one "first" "case-insensitive CI detection is retained"
+                Expect.isFalse (one.Contains "private-local" || one.Contains "second") "only eligible pipelines for this destination appear"
+                Expect.stringContains two "second" "a different destination gets its own summary"
+                Expect.isFalse (two.Contains "first" || two.Contains "private-local") "summaries do not cross destinations"
+            finally
+                File.Delete first
+                File.Delete second
+        }
+
         test "GitHub summary appends outcomes on failure even when the console is quiet" {
             let path = Path.GetTempFileName()
             try
@@ -225,7 +286,7 @@ let tests =
                 Expect.isFalse (captured.Contains "::group::") "captures contain no runner protocol"
                 let summary = File.ReadAllText path
                 Expect.isTrue (summary.IndexOf "parent" < summary.IndexOf "child") "the parent precedes its nested stage"
-                Expect.stringContains summary "  child" "the child keeps its tree depth"
+                Expect.stringContains summary "&nbsp;&nbsp;child" "the rendered child keeps its tree depth"
             finally File.Delete path
         }
 

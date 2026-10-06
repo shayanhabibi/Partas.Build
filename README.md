@@ -259,7 +259,7 @@ configuration. None of them is registered by hand — see *Adding a step*.
 ## Repository CI
 
 Pull requests and pushes to `master` run the full build and test gate on Linux and Windows, plus the
-documentation build. CI installs the SDK selected by `global.json` and .NET 8 for the tools targeting it,
+documentation build. CI installs the SDK selected by `global.json`,
 caches NuGet packages, and retains build/test logs for seven days. Stage groups, summaries and diagnostics
 come from the same build CLI used locally.
 

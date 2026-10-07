@@ -128,8 +128,9 @@ let tests =
         }
 
         test "a streamed command hands over each line and retains no text" {
-            let received = ResizeArray<string * string>()
-            let policy = OutputPolicy.Lines((fun line -> received.Add ("out", line)), (fun line -> received.Add ("err", line)))
+            // stdout and stderr callbacks can run concurrently.
+            let received = Collections.Concurrent.ConcurrentQueue<string * string>()
+            let policy = OutputPolicy.Lines((fun line -> received.Enqueue ("out", line)), (fun line -> received.Enqueue ("err", line)))
             let exitCode = wait (ProcessExecutor.stream (startInfo [ "text"; "0" ]) policy CancellationToken.None ignore)
 
             Expect.equal exitCode 0 "the exit code is all a streamed command reports"

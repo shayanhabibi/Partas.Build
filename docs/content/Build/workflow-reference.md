@@ -1,72 +1,11 @@
-(**
 ---
-title: Partas.Build
-order: 0
+title: Workflow reference
+description: Detailed examples of stages, inputs, execution settings, and Baked.
+category: Build
+order: 20
 ---
-*)
-(*** hide ***)
-// #load-ed rather than #r-ed: the guide type-checks against the code as written, not the last build, and no
-// #r-ed assembly holds a file lock — one held open by the site watcher (`dotnet run --project Build.fsproj --
-// docs --watch`) breaks a rebuild of the library on Windows.
-// Keep this list in the same order as the <Compile> items in Partas.Build.fsproj.
-#r "nuget: FSharp.Control.AsyncSeq, 4.15.0"
-#r "nuget: FsToolkit.ErrorHandling, 5.2.0"
-#r "nuget: System.CommandLine, 2.0.11"
-#r "nuget: Spectre.Console, 0.57.2"
 
-#load "../../src/Partas.Build.Cmd/Execution.fs"
-#load "../../src/Partas.Build.Cmd/Program.fs"
-#load "../../src/Partas.Build/System.CommandLine/Aliases.fs"
-#load "../../src/Partas.Build/System.CommandLine/Inputs.fs"
-#load "../../src/Partas.Build/Exceptions.fs"
-#load "../../src/Partas.Build/Output.fs"
-#load "../../src/Partas.Build/Terminal.fs"
-#load "../../src/Partas.Build/Annotations.fs"
-#load "../../src/Partas.Build/Environment.fs"
-#load "../../src/Partas.Build/Timing.fs"
-#load "../../src/Partas.Build/Producer.fs"
-#load "../../src/Partas.Build/Failures.fs"
-#load "../../src/Partas.Build/Conductors.fs"
-#load "../../src/Partas.Build/GitHubActions.fs"
-#load "../../src/Partas.Build/Conductors.Runners.fs"
-#load "../../src/Partas.Build/Process.fs"
-#load "../../src/Partas.Build/Operations.fs"
-#load "../../src/Partas.Build/Dependencies.fs"
-#load "../../src/Partas.Build/DependencyPlan.fs"
-#load "../../src/Partas.Build/ExecutionState.fs"
-#load "../../src/Partas.Build/Builders/StageSettings.fs"
-#load "../../src/Partas.Build/Builders/Stage.fs"
-#load "../../src/Partas.Build/Builders/Conditions.fs"
-#load "../../src/Partas.Build/Builders/PipelineSettings.fs"
-#load "../../src/Partas.Build/Builders/Pipeline.fs"
-#load "../../src/Partas.Build/Builders/Inputs.fs"
-#load "../../src/Partas.Build/AiEnvironment.fs"
-#load "../../src/Partas.Build/MachineOutput.fs"
-#load "../../src/Partas.Build/Explain.fs"
-#load "../../src/Partas.Build/Summary.fs"
-#load "../../src/Partas.Build/RunResult.fs"
-#load "../../src/Partas.Build/Builders/Command.fs"
-#load "../../src/Partas.Build.Baked/Program.fs"
-#load "../../src/Partas.Build.Baked/Common.fs"
-#load "../../src/Partas.Build.Baked/NuGet.fs"
-#load "../../src/Partas.Build.Baked/Dotnet.fs"
-#load "../../src/Partas.Build.Baked/SemVer.fs"
-#load "../../src/Partas.Build.Baked/Clean.fs"
-#load "../../src/Partas.Build.Baked/Stages.fs"
-
-open Partas.Build
-
-(**
-
-
-<img src="/Partas.Build/img/sun-ztu.jpeg" width="50%" />
-
-Command line and build pipelines in F#. Composable, hints of elderberry, thick in tannins, a glorious vintage.
-
-A pipeline DSL based on [Fun.Build](https://github.com/slaveOftime/Fun.Build), scaffolded over
-[FSharp.SystemCommandLine](https://github.com/jordanmarr/FSharp.SystemCommandLine), for no-nonsense CLIs. CLI
-inputs are declared where used and lifted into the command line help of the commands that run them, with
-automatic validation and help.
+Detailed examples complement the [task-focused guides](index.md).
 
 ## Layers
 
@@ -81,7 +20,9 @@ automatic validation and help.
 | Hosted root | `Command.root { }` | `RootCommandDefinition` — runs on each `Command.invoke args` |
 
 ## A first pipeline
-*)
+
+```fsharp
+open Partas.Build
 
 let hello =
     pipeline "hello" {
@@ -92,8 +33,7 @@ let hello =
             run "dotnet --version"
         }
     }
-
-(**
+```
 
 `step` -> `stage` -> `stage` -> ... -> `pipeline` -> `command` -> `rootCommand`. Nothing runs until the root
 command does.
@@ -101,8 +41,8 @@ command does.
 ## Steps
 
 A step is anything yielded inside a `stage`. `run` is heavily overloaded; three overloads matter:
-*)
 
+```fsharp
 let steps =
     stage "steps" {
         // a whole command line, split on whitespace honouring quotes
@@ -114,77 +54,77 @@ let steps =
         // an F# function; also Async<_>, Task<_>, StageContext -> _ and Result-returning variants
         run (fun (ctx: StageContext) -> printfn "%s" ctx.Name)
     }
+```
 
-(**
 ### Interpolation: use `cmd`
 
 `run $"..."` binds the **`string`** overload, which flattens the holes and re-splits the result on whitespace.
 A path containing a space becomes two arguments. Route interpolation through `cmd` instead: it keeps each hole
 as exactly one argument and lets the platform do the escaping:
-*)
 
-                                   // v------- will break if directly passed verbatim
+```fsharp
+// v------- will break if directly passed verbatim
 let project = "src/My Project/My Project.fsproj"
 
 let interpolated =
     stage "build" {
         run (cmd $"dotnet build {project}")   // one argument, space and all
     }
+```
 
-(**
 `runSensitive` takes a `FormattableString` directly, needs no `cmd`, and masks every hole as `***` in the log
 while passing the real value to the process:
-*)
 
+```fsharp
 let password = "drowssap"
 
 let login =
     stage "login" {
         runSensitive $"docker login -u me -p {password}"
     }
+```
 
-(**
 It masks *every* hole. Build a `Cmd` by hand when only one argument is secret. `Secrets` is a set of argument
 indices:
-*)
 
+```fsharp
 let pushArgs = [ "nuget"; "push"; "bin/x.nupkg"; "--api-key"; password ]
 
 let push =
     stage "push" {
         run { Cmd.ofList "dotnet" pushArgs with Secrets = Set.singleton 4 }
     }
+```
 
-(**
 *New in >0.2.2*: wrap sensitive strings with `Cmd.secret` or `Cmd.sensitive`. Every command runner picks them
 up and quotes any string containing spaces.
-*)
 
+```fsharp
 let pushSecret =
     stage "push" {
         run $"dotnet nuget push bin/x.nupkg --api-key {Cmd.secret password}"
     }
+```
 
-(**
 ## Conditions
 
 `when'` and its friends set whether a stage runs. They **conjoin**. A second condition narrows the first
 rather than replacing it:
-*)
 
+```fsharp
 let conditional =
     stage "release only" {
         whenBranch "master"
         whenNot { envVar "CI" }   // master AND not CI
         run "dotnet pack"
     }
+```
 
-(**
 `whenAll`, `whenAny` and `whenNot` are CEs that combine leaf conditions (`branch`, `branches`, `envVar`,
 `platformWindows`, `platformLinux`, `platformOSX`, and a literal `when'`). An empty `whenAll { }` is active,
 the identity of `forall`. An empty `whenAny { }` is not.
-*)
 
+```fsharp
 let combined =
     stage "publish" {
         whenAny {
@@ -193,8 +133,8 @@ let combined =
         }
         run "dotnet nuget push"
     }
+```
 
-(**
 `when'` also accepts a whole `StageContext`. It runs for real, side effects and console output included, and
 its success is the answer.
 
@@ -205,8 +145,8 @@ argument, `when' (not quick) "--quick is set"`, and `--explain` prints `(skipped
 
 A stage that needs a CLI flag binds it in an `input` CE. It is then lifted into any command that asks for it,
 with no further wiring:
-*)
 
+```fsharp
 module Options =
     let quick =
         Input.option<bool> "--quick"
@@ -228,11 +168,11 @@ let restore =
             run "dotnet restore"
         }
     }
+```
 
-(**
 Bind several sources with `and!`, never with nested `let!`:
-*)
 
+```fsharp
 let build =
     input {
         let! quick = Options.quick
@@ -243,8 +183,8 @@ let build =
             run (cmd $"dotnet build -c {config}")
         }
     }
+```
 
-(**
 The CE rejects a second `let!`; bind every source in one `let! … and! …` block. Binding this way is what lifts
 flags into the command line help without first evaluating pipelines.
 
@@ -256,8 +196,7 @@ which tracks inputs and unions them by reference.
 `--quick` and `--configuration` appear under `build --help` without being named anywhere but the
 stages that read them:
 
-*)
-
+```fsharp
 let buildCommand =
     command "build" {
         description "Restores and builds the solution"
@@ -268,23 +207,23 @@ let buildCommand =
             build
         }
     }
+```
 
-(**
 Flags sit on the commands whose stages read them, not on the root. `addInput` covers the remainder: flags no
 pipeline asks for that a root command still wants to expose.
 
 ## Wiring the root
 
 `rootCommand` parses and invokes immediately, returning the process exit code. It belongs in `main`:
-*)
 
+```fsharp
 let main argv =
     rootCommand argv {
         description "My build"
         addCommands [ buildCommand ]
     }
+```
 
-(**
 A command with no pipelines is a grouping node: it gets no action, so System.CommandLine reports the missing
 subcommand and prints help instead of succeeding silently.
 
@@ -299,8 +238,8 @@ subcommand, a producer arrangement dependency validation rejects — and `130` t
 session, a test — builds the root once with `Command.root`, which takes every `rootCommand` operation and runs
 nothing, then invokes it as often as it likes. `Command.invoke` answers a `RunResult`: the exit code, its
 `RunOutcome`, and each pipeline run's `ScopeReport`s and `StageTiming`s.
-*)
 
+```fsharp
 let root =
     Command.root {
         description "My build"
@@ -311,8 +250,8 @@ let buildQuick () =
     let result = root |> Command.invoke [ "build"; "--quick"; "true" ]
     printfn "%d failure(s)" result.Failures.Length
     result.ExitCode
+```
 
-(**
 `root.Invoke(args, output = writer, cancellationToken = token)` sends help, `--explain`, the timing summary and
 parse errors to `writer` instead of the console, and cancels the running pipeline — its processes with it —
 when `token` fires.
@@ -322,8 +261,8 @@ when `token` fires.
 ### Stages nest
 
 A stage can be yielded inside another stage, arbitrarily deep, with no separate grouping concept:
-*)
 
+```fsharp
 let nested =
     stage "outer" {
         run "dotnet --version"
@@ -333,14 +272,14 @@ let nested =
             run "dotnet --info"
         }
     }
+```
 
-(**
 ### Settings inherit
 
 Settings resolve outward: stage, then parent stage, then pipeline. A pipeline-level `workingDir` or `envVars`
 defaults every stage that does not override it:
-*)
 
+```fsharp
 let inherited =
     pipeline "inherited" {
         workingDir __SOURCE_DIRECTORY__
@@ -353,14 +292,14 @@ let inherited =
             run "dotnet --version"
         }
     }
+```
 
-(**
 ### Stages are values
 
 A stage is an ordinary value, so reuse is ordinary F#. Return them from functions, put them in lists, iterate
 over them:
-*)
 
+```fsharp
 let testProject (name: string) =
     stage $"test {name}" { run (cmd $"dotnet test {name}") }
 
@@ -369,10 +308,10 @@ let testAll =
         for proj in [ "A.fsproj"; "B.fsproj" ] do
             testProject proj
     }
+```
 
-(**
 The same works one layer up: a `pipeline` is a value, and a `command` can run several in declaration order.
-[Composing reusable blocks](composition.fsx) covers nesting, lists of blocks, and stages that carry their own
+[Composing reusable blocks](composition.md) covers nesting, lists of blocks, and stages that carry their own
 inputs.
 
 ### Nameless Pipelines
@@ -381,8 +320,7 @@ A short CLI command often runs a single pipeline named the same as the command. 
 this: it inherits its description and name from the command it is defined within, essentially `pipeline null
 { }`.
 
-*)
-
+```fsharp
 let namelessPipe =
     command "build" {
         description "Build projects"
@@ -392,10 +330,8 @@ let namelessPipe =
             }
         }
     }
+```
 
-
-
-(**
 ### Command-level defaults
 
 A `command` also takes the pipeline settings: `workingDir`, `envVars`, `timeout`, `timeoutForStage`,
@@ -403,8 +339,8 @@ A `command` also takes the pipeline settings: `workingDir`, `envVars`, `timeout`
 `noPrefixForStep`, `noStdRedirectForStep`, `runBeforeEachStage`, `runAfterEachStage`, `post`, `verbosity`,
 `verbose` and `quiet`. Set on the command, these are **defaults for every pipeline the command runs**, saving
 repetition across pipelines:
-*)
 
+```fsharp
 let ciCommand =
     command "ci" {
         workingDir __SOURCE_DIRECTORY__
@@ -417,8 +353,8 @@ let ciCommand =
             stage "test" { run "dotnet test" }
         }
     }
+```
 
-(**
 A default never overwrites a pipeline's own setting: the pipeline wins regardless of write order. A default
 written *below* the pipelines still applies, because defaults are folded in once the whole command is built,
 not as each pipeline is yielded.
@@ -452,8 +388,7 @@ overload resolves to the same `int voption`:
 | `parallel'`, `parallel' true` | `ValueSome -1` | unbounded |
 | `parallel' 0`, `parallel' -1` | `ValueSome n`, `n < 1` | unbounded |
 
-*)
-
+```fsharp
 let fanOut =
     stage "fan out" {
         parallel' 2
@@ -461,48 +396,48 @@ let fanOut =
         run "dotnet build B.fsproj"
         run "dotnet build C.fsproj"
     }
+```
 
-(**
 The bound is exact: a stage set to `2` never has a third step in flight.
 
 To choose a mode at runtime, return the choice from a single condition rather than writing two operations:
-*)
 
+```fsharp
 let adaptive =
     stage "fan out" {
         parallel' (fun (_: StageContext) -> if System.Environment.ProcessorCount > 4 then ValueSome 4 else ValueNone)
         run "dotnet build A.fsproj"
         run "dotnet build B.fsproj"
     }
+```
 
-(**
 ### Settings overwrite, conditions conjoin
 
 The two halves of the stage CE compose differently. Mixing them up is the most common surprise. `parallel'`,
 `workingDir`, `timeout` and the rest are **settings**: the last one written wins and an earlier one leaves no
 trace.
-*)
 
+```fsharp
 let lastWins =
     stage "settings" {
         parallel' 4
         parallel' false   // sequential; the 4 is gone, not combined with
         run "dotnet build"
     }
+```
 
-(**
 `when'`, `whenBranch`, `whenWindows` and the rest are **conditions**: each narrows the stage to the logical AND
 of everything declared so far, so a second condition can only make the stage run less often.
-*)
 
+```fsharp
 let narrows =
     stage "conditions" {
         whenBranch "master"
         whenWindows       // master AND Windows, not Windows instead of master
         run "dotnet pack"
     }
+```
 
-(**
 To widen a condition, write **one** `whenAny { }` containing both alternatives: a second operation would
 narrow instead. To switch parallel modes, write **one** condition function returning the mode: a second
 operation would discard the first.
@@ -518,8 +453,8 @@ A timeout cancels the stage and kills the whole process tree it started, grandch
 ### Post stages
 
 `post` stages run after the main stages whether or not the pipeline succeeded: the place for teardown.
-*)
 
+```fsharp
 let withTeardown =
     pipeline "integration" {
         stage "up" { run "docker compose up -d" }
@@ -527,8 +462,8 @@ let withTeardown =
 
         post [ stage "down" { run "docker compose down" } ]
     }
+```
 
-(**
 ### Failure control
 
 - `continueStepsOnFailure` keeps a stage going after a failed step.
@@ -555,8 +490,8 @@ any other setting:
 | `outputTo sink` | any of the above as a `StageOutput` value, for when the choice is made at run time |
 
 The common case is a test run: silent when it passes, and its own output as the reason when it does not.
-*)
 
+```fsharp
 let quietTests =
     pipeline "test" {
         stage "test" {
@@ -564,8 +499,8 @@ let quietTests =
             run "dotnet test"
         }
     }
+```
 
-(**
 `captureOutput` lifts stderr into the step's error, or everything written if there was none. A failing stage
 still says why, on the console and in the GitHub Actions annotation.
 
@@ -613,9 +548,8 @@ positional equivalent.
 
 `BuildOption.map`, `.mapOpt` and `.mapArg` apply an `Input.*` combinator to both forms or to one. Both forms
 are `ActionInput` values, so they bind in an `input` CE exactly as a hand-rolled option does:
-*)
 
-
+```fsharp
 let packaging =
     input {
         let! config = Baked.Dotnet.config.option
@@ -628,8 +562,8 @@ let packaging =
             run (cmd $"dotnet pack -c {config}")
         }
     }
+```
 
-(**
 ### Versioning a project file
 
 `Baked.SemVer.Version` is semantic-version arithmetic over the `Bump` DU. `Baked.SemVer.Version.IO` applies it
@@ -711,10 +645,9 @@ first away. To widen a condition, put the alternatives in one `whenAny { }`.
 converts a `string` when a single overload is in play. It has no `InputSpec` form: bind the value outside the
 stage and use `runSensitive $"…"` inside it as normal.
 
-<img src="/Partas.Build/img/the-glass.jpeg" width="400"/>
+
 
 ## API reference
 
 The [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) is generated from the XML
 documentation on each custom operation.
-*)

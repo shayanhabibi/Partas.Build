@@ -1,80 +1,25 @@
-(**
 ---
-title: Composing reusable blocks
+title: Composition reference
+description: Detailed patterns for reusable blocks and composition across files.
 category: Build
-order: 3
+order: 21
 ---
-*)
-(*** hide ***)
-// The sources are #load-ed rather than #r-ing a built DLL, for two reasons: the guide then type-checks against
-// the code as written instead of against the last build, and nothing holds a file lock — a #r-ed assembly stays
-// loaded for the lifetime of the site watcher (`dotnet run --project Build.fsproj -- docs --watch`), which on
-// Windows makes rebuilding the library fail.
-// Keep this list in the same order as the <Compile> items in Partas.Build.fsproj.
-#r "nuget: FSharp.Control.AsyncSeq, 4.15.0"
-#r "nuget: FsToolkit.ErrorHandling, 5.2.0"
-#r "nuget: System.CommandLine, 2.0.11"
-#r "nuget: Spectre.Console, 0.57.2"
 
-
-#load "../../../src/Partas.Build.Cmd/Execution.fs"
-#load "../../../src/Partas.Build.Cmd/Program.fs"
-#load "../../../src/Partas.Build/System.CommandLine/Aliases.fs"
-#load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
-#load "../../../src/Partas.Build/Exceptions.fs"
-#load "../../../src/Partas.Build/Output.fs"
-#load "../../../src/Partas.Build/Terminal.fs"
-#load "../../../src/Partas.Build/Annotations.fs"
-#load "../../../src/Partas.Build/Environment.fs"
-#load "../../../src/Partas.Build/Timing.fs"
-#load "../../../src/Partas.Build/Producer.fs"
-#load "../../../src/Partas.Build/Failures.fs"
-#load "../../../src/Partas.Build/Conductors.fs"
-#load "../../../src/Partas.Build/GitHubActions.fs"
-#load "../../../src/Partas.Build/Conductors.Runners.fs"
-#load "../../../src/Partas.Build/Process.fs"
-#load "../../../src/Partas.Build/Operations.fs"
-#load "../../../src/Partas.Build/Dependencies.fs"
-#load "../../../src/Partas.Build/DependencyPlan.fs"
-#load "../../../src/Partas.Build/ExecutionState.fs"
-#load "../../../src/Partas.Build/Builders/StageSettings.fs"
-#load "../../../src/Partas.Build/Builders/Stage.fs"
-#load "../../../src/Partas.Build/Builders/Conditions.fs"
-#load "../../../src/Partas.Build/Builders/PipelineSettings.fs"
-#load "../../../src/Partas.Build/Builders/Pipeline.fs"
-#load "../../../src/Partas.Build/Builders/Inputs.fs"
-#load "../../../src/Partas.Build/AiEnvironment.fs"
-#load "../../../src/Partas.Build/MachineOutput.fs"
-#load "../../../src/Partas.Build/Explain.fs"
-#load "../../../src/Partas.Build/Summary.fs"
-#load "../../../src/Partas.Build/RunResult.fs"
-#load "../../../src/Partas.Build/Builders/Command.fs"
-#load "../../../src/Partas.Build.Baked/Program.fs"
-#load "../../../src/Partas.Build.Baked/Common.fs"
-#load "../../../src/Partas.Build.Baked/NuGet.fs"
-#load "../../../src/Partas.Build.Baked/Dotnet.fs"
-#load "../../../src/Partas.Build.Baked/SemVer.fs"
-#load "../../../src/Partas.Build.Baked/Clean.fs"
-#load "../../../src/Partas.Build.Baked/Stages.fs"
-
-
-open Partas.Build
-
-(**
 # Composing reusable blocks
 
-[The guide](index.fsx) introduces one stage at a time. This page builds a library of reusable *blocks* —
+[The guide](index.md) introduces one stage at a time. This page builds a library of reusable *blocks* —
 stages that carry their own CLI inputs — and assembles them into pipelines and commands.
 
-Every snippet compiles when the docs build, except the two file listings under *Composition across files*,
-which are separate scripts.
+The file listings under *Composition across files* are separate scripts. Snippets marked with compiler diagnostics show unsupported syntax.
 
 ## The shape of a block
 
 A block is a function returning a stage. It returns a plain `StageContext` when it needs no CLI flag, or an
 `InputSpec<StageContext>` from an `input { }` CE when it does. Both are ordinary values and both are
 yieldable anywhere a stage is.
-*)
+
+```fsharp
+open Partas.Build
 
 module Options =
     let config =
@@ -116,14 +61,14 @@ module Blocks =
             run (cmd $"dotnet build {project} -c {config} -v {level}")
         }
     }
+```
 
-(**
 ## Yielding blocks
 
 A pipeline takes blocks in declaration order and unions the options they declare, whether a block is a bare
 stage or a spec:
-*)
 
+```fsharp
 let one =
     pipeline "one project" {
         workingDir __SOURCE_DIRECTORY__
@@ -132,16 +77,16 @@ let one =
         Blocks.restore "MyLib.fsproj"
         Blocks.build "MyLib.fsproj"
     }
+```
 
-(**
 `one` is an `InputSpec<PipelineContext>` declaring `--quick`, `--configuration` and `--verbose` exactly once,
 contributed by `build` and `restore`.
 
 ## Loops and lists
 
 A `for` loop and a yielded list both work; they differ only in where the collection comes from:
-*)
 
+```fsharp
 let projects = [ "MyLib.fsproj"; "MyLib.Tool.fsproj"; "MyLib.Tests.fsproj" ]
 
 let looped =
@@ -155,8 +100,8 @@ let listed =
         [ Blocks.restore "MyLib.fsproj"
           Blocks.build "MyLib.fsproj" ]
     }
+```
 
-(**
 Both forms union the inputs of every element: `looped` still declares `--configuration` and `--verbose` once
 across three stages.
 
@@ -177,8 +122,8 @@ A stage nested inside another stage is one step of its parent, so blocks group w
 an input declared at any depth surfaces on the command running the pipeline.
 
 Here the innermost stage, three levels down, is the only thing that names `--configuration`:
-*)
 
+```fsharp
 let deep =
     command "ci" {
         description "Restore, build and test"
@@ -204,27 +149,27 @@ let deep =
             }
         }
     }
+```
 
-(**
 `ci --help` lists `--quick`, `--configuration` and `--verbose`; the stages that read them registered them.
 
 A setting placed *after* a nested block still applies to the enclosing stage, so ordering is free:
-*)
 
+```fsharp
 let settingsAfter =
     stage "compile" {
         Blocks.build "MyLib.fsproj"
         timeout 300
         whenNot { envVar "SKIP_BUILD" }
     }
+```
 
-(**
 ## Blocks that take blocks
 
 A block is a value, so a block factory can take other blocks as arguments — the usual way to build a house
 style: a wrapper adding retries, timing, teardown or a condition to whatever it receives.
-*)
 
+```fsharp
 /// Wraps stages in a named group with a shared timeout, and a teardown that always runs.
 let group name (seconds: int) (stages: StageContext seq) =
     stage name {
@@ -238,12 +183,12 @@ let grouped =
     pipeline "grouped" {
         group "prepare" 60 [ Blocks.clean "MyLib.fsproj" ]
     }
+```
 
-(**
 When the wrapped stages carry inputs, the wrapper takes an `InputSpec` list and returns an `InputSpec`, joined
 through the `input` CE:
-*)
 
+```fsharp
 let inputGroup name (seconds: int) (blocks: InputSpec<StageContext> list) = input {
     let! stages = InputSpec.sequence blocks
 
@@ -257,16 +202,16 @@ let inputGrouped =
     pipeline "release" {
         inputGroup "compile" 600 [ Blocks.restore "MyLib.fsproj"; Blocks.build "MyLib.fsproj" ]
     }
+```
 
-(**
 `InputSpec.sequence` turns a list of specs into one spec of a list, unioning the inputs. `InputSpec.traverse fn
 items` does the same over a mapping. These are the two functions to reach for when writing this kind of wrapper.
 
 ## Adding an input of the wrapper's own
 
 A wrapper can bind flags the wrapped blocks know nothing about, alongside the sequenced blocks:
-*)
 
+```fsharp
 let skipTests = Input.option<bool> "--skip-tests" |> Input.description "Build the tests but do not run them"
 
 let testGroup (blocks: InputSpec<StageContext> list) = input {
@@ -288,8 +233,8 @@ let tested =
             testGroup [ Blocks.restore "MyLib.fsproj"; Blocks.build "MyLib.fsproj" ]
         }
     }
+```
 
-(**
 `test --help` now lists `--skip-tests` next to the three the blocks declared.
 
 ## What does not compose: a block returning a block's spec
@@ -314,8 +259,8 @@ option set that cannot be registered.
 **Binding is a layer boundary**: one layer binds, the layers above harvest. When two blocks share a body but
 differ in where a value comes from, pass the *source* in as an `InputSpec` instead of passing a read value out
 as one. The shared body keeps one `let!`/`and!` group; callers vary only the spec they hand over:
-*)
 
+```fsharp
 module Sources =
     /// The bump kind as a positional argument — `bump minor`.
     let bumpArgument = Input.argument<string> "bump" |> Input.def "patch"
@@ -339,18 +284,18 @@ let bumpFromArgument project =
 let bumpFromOption project =
     let source = InputSpec.ofInput Sources.bumpOption |> InputSpec.map (Option.defaultValue "patch")
     bumpBlock source project
+```
 
-(**
 `InputSpec.ofInput` lifts a bare `ActionInput` into a spec; `InputSpec.map` adapts its value, so a source can
 be defaulted or reshaped before being handed over. Both commands below declare `--configuration`; one declares
 the argument, the other declares `--bump`:
-*)
 
+```fsharp
 let bumping =
     [ command "bump" { bumpFromArgument "MyLib.fsproj" }
       command "release" { bumpFromOption "MyLib.fsproj" } ]
+```
 
-(**
 The same rule covers a helper needing no source of its own: give it the already-read values as plain
 arguments and let the caller bind. An `input { }` nested inside a `return` is always the error.
 
@@ -358,8 +303,8 @@ arguments and let the caller bind. An `input { }` nested inside a `return` is al
 
 A command needs no explicit `pipeline`. Stages yielded straight into it become one implicit pipeline that
 takes the command's name and description:
-*)
 
+```fsharp
 let flat =
     command "build" {
         description "Build the solution"
@@ -367,8 +312,8 @@ let flat =
         Blocks.restore "MyLib.sln"
         Blocks.build "MyLib.sln"
     }
+```
 
-(**
 Consecutive stages share that one pipeline, its settings, its run and its `whenStage` cross-references. A
 command can also mix implicit and explicit pipelines; declaration order is preserved.
 
@@ -377,14 +322,14 @@ command can also mix implicit and explicit pipelines; declaration order is prese
 A command also takes the pipeline settings themselves — `workingDir`, `envVars`, the timeouts, the output
 operations, the hooks, `post`, `verbosity` — and hands them to every pipeline it runs, including the implicit
 one. They are defaults: a pipeline that sets the same thing keeps its own value. See
-[command-level defaults](index.fsx#command-level-defaults).
+[command-level defaults](workflow-reference.md#command-level-defaults).
 
 ## Conditional assembly
 
 An `if` with no `else` is fine around a whole stage or block; the untaken branch contributes nothing. Custom
 operations are the exception, since F# forbids those under an `if`.
-*)
 
+```fsharp
 let includeDocs = System.Environment.GetEnvironmentVariable "DOCS" = "1"
 
 let conditional =
@@ -394,12 +339,12 @@ let conditional =
         if includeDocs then
             stage "docs" { run "dotnet run --project docs/docs.fsproj -- build" }
     }
+```
 
-(**
 Bind and branch inside the `input` CE for a condition known only after parsing; it is ordinary F# with no
 such restriction:
-*)
 
+```fsharp
 let maybeClean = input {
     let! quick = Options.quick
 
@@ -407,13 +352,13 @@ let maybeClean = input {
         if quick then stage "skip clean" { echo "skipping clean" }
         else Blocks.clean "MyLib.fsproj"
 }
+```
 
-(**
 ## Putting it together
 
 A small, complete build assembled entirely from blocks:
-*)
 
+```fsharp
 let mainCommand argv =
     rootCommand argv {
         description "MyLib build"
@@ -449,8 +394,8 @@ let mainCommand argv =
             }
         ]
     }
+```
 
-(**
 Each command lists only the flags its own stages read: `build` gets `--configuration` and `--verbose`, `test`
 adds `--skip-tests` and `--quick`, `release` gets what its blocks declare.
 
@@ -544,6 +489,5 @@ lists them because they exist, and one process resolves packages once.
 
 ## Reference
 
-- [Guide](index.fsx) — steps, conditions, inputs, output, timeouts, `Baked`.
+- [Guide](index.md) — steps, conditions, inputs, output, timeouts, `Baked`.
 - [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) — every custom operation, from its XML documentation.
-*)

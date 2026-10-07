@@ -48,6 +48,10 @@ module Options =
     let skipTests =
         Input.option<bool> "--skip-tests"
         |> Input.desc "Skips running tests"
+    let nugetSource =
+        Input.option<string> "--nuget-source"
+        |> Input.def "https://api.nuget.org/v3/index.json"
+        |> Input.desc "NuGet feed URL for authenticated publishing"
     let watch =
         Input.option<bool> "--watch"
         |> Input.desc "Runs the operation in watch mode."
@@ -146,6 +150,7 @@ module ProjectManagement =
     }
     let publish (project: InputSpec<string>) = input {
         let! key = Baked.NuGet.apiKey.option
+        and! source = Options.nugetSource
         and! project = project
         return stage $"publish {project}" {
             stage "local publish" {
@@ -155,9 +160,9 @@ module ProjectManagement =
             }
             whenSome key (fun key ->
                 stage "nuget publish" {
-                    echo "Publishing to nuget.org"
+                    echo $"Publishing to {source}"
                     runSensitive
-                        $"dotnet nuget push {project} --source https://api.nuget.org/v3/index.json --api-key {key} --skip-duplicate"
+                        $"dotnet nuget push {project} --source {source} --api-key {key} --skip-duplicate"
                 })
         }
     }

@@ -1,5 +1,29 @@
 # Partas.Build
 
+## ⚠️ IMPORTANT: NEW RELEASES ARE ON A TEMPORARY NUGET FEED ⚠️
+
+> [!WARNING]
+> **Use the Cloudsmith feed below for new releases of Partas.Build and its companion packages.**
+> I currently cannot access the old nuget.org account and am waiting for NuGet support to transfer
+> package ownership to my new account. While that transfer is pending, new releases are published
+> to **Cloudsmith temporarily**, under the existing package IDs. Older releases remain on nuget.org.
+>
+> **Feed:** <https://nuget.cloudsmith.io/shayanhabibi/shayanhabibi-partas-build/v3/index.json>
+>
+> Public restores require **no account or API key**. Once ownership is restored, publishing will
+> return to nuget.org and this notice will be updated.
+
+Add the temporary source alongside nuget.org so dependencies can still be restored:
+
+```shell
+dotnet nuget add source https://nuget.cloudsmith.io/shayanhabibi/shayanhabibi-partas-build/v3/index.json --name partas-build-temporary
+```
+
+For shared projects and CI, add that URL to the repository's `NuGet.Config` as well. If your
+configuration uses package source mapping, map the Partas package IDs to this source.
+
+Package hosting is provided by [Cloudsmith](https://cloudsmith.com).
+
 An F# build-pipeline DSL: a stage declares the CLI options it reads, and a command derives its
 `System.CommandLine` option set from the stages it runs. Options, validation, and help text generate from the
 pipeline definition instead of by hand. Runs from a `.fsx` script or a build project.
@@ -263,9 +287,11 @@ documentation build. CI installs the SDK selected by `global.json`,
 caches NuGet packages, and retains build/test logs for seven days. Stage groups, summaries and diagnostics
 come from the same build CLI used locally.
 
-After all checks pass, master runs publish packages using `NUGET_KEY` and deploy documentation to the
-`github-pages` environment. Pull requests never publish or deploy. If `NUGET_KEY` is absent, publishing is
-skipped with a notice. Manual runs validate any selected branch; only `master` can publish or deploy.
+After all checks pass, master runs publish packages to the temporary Cloudsmith feed using
+`CLOUDSMITH_API_KEY` and deploy documentation to the `github-pages` environment. Pull requests never
+publish or deploy. A missing publishing secret fails the publish job. Manual runs validate any selected
+branch; only `master` can publish or deploy. The CLI accepts `publish --nuget-source URL` for an alternate
+feed; its default remains nuget.org, with the `local` fallback when no key is supplied.
 New commits cancel superseded PR runs while active master publications finish. GitHub Actions are pinned
 to commit SHAs and maintained by weekly grouped Dependabot updates.
 

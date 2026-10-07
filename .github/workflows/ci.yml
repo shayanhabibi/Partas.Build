@@ -98,7 +98,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Publish NuGet packages
+    name: Publish NuGet packages to Cloudsmith
     if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     needs: [build, build-docs]
     runs-on: ubuntu-24.04
@@ -123,13 +123,13 @@ jobs:
 
       - name: Publish
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_KEY }}
+          NUGET_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:NUGET_API_KEY)) {
-            Write-Output '::notice::NuGet publishing skipped because NUGET_KEY is not configured.'
-            exit 0
+            Write-Output '::error::Cloudsmith publishing requires CLOUDSMITH_API_KEY.'
+            exit 1
           }
-          dotnet run --project Build.fsproj -- publish --quick --skip-tests --nuget-key "$env:NUGET_API_KEY"
+          dotnet run --project Build.fsproj -- publish --quick --skip-tests --nuget-source "https://nuget.cloudsmith.io/shayanhabibi/shayanhabibi-partas-build/v3/index.json"
           exit $LASTEXITCODE
 
   deploy:

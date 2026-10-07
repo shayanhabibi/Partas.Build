@@ -9,7 +9,7 @@
         <Title>Partas.Build</Title>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <!-- Owned by `dotnet run bump`; CI packs whatever this says. -->
-        <Version>0.6.5</Version>
+        <Version>0.7.0</Version>
         <AssemblyVersion>0.0.0.0</AssemblyVersion>
     </PropertyGroup>
 
@@ -18,11 +18,13 @@
         <Compile Include="System.CommandLine\Inputs.fs" />
         <Compile Include="Exceptions.fs" />
         <Compile Include="Output.fs" />
+        <Compile Include="Annotations.fs" />
         <Compile Include="Environment.fs" />
         <Compile Include="Timing.fs" />
         <Compile Include="Producer.fs" />
         <Compile Include="Failures.fs" />
         <Compile Include="Conductors.fs" />
+        <Compile Include="GitHubActions.fs" />
         <Compile Include="Conductors.Runners.fs" />
         <Compile Include="Process.fs" />
         <Compile Include="Operations.fs" />

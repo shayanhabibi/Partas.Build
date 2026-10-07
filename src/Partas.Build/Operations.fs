@@ -119,6 +119,15 @@ module Operation =
 /// <summary>Commands as operations: deferred, stage-configured, and explicit about their failure policy.</summary>
 [<AutoOpen>]
 module Operations =
+    /// Emits a structured diagnostic when the stage runs, independently of its output sink or verbosity.
+    /// In GitHub Actions this creates an annotation; locally it prints a readable diagnostic.
+    /// An error annotation does not fail the operation. Use the stage's failure policy to fail execution.
+    let annotate (annotation: Annotation) : Operation<unit> = {
+        Execute = fun context -> async {
+            WorkflowCommands.writeAnnotation (StageContext.buildEnvVars context.Stage) annotation
+        }
+    }
+
     /// <summary>The start info the executing stage gives a command: its working directory and environment,
     /// resolved by walking <c>ParentContext</c> upward.</summary>
     let private startInfo (context: RuntimeContext) (command: Cmd) = CmdRunner.toStartInfo context.Stage command

@@ -22,10 +22,10 @@
         <!-- Bump the F# SDK's implicit FSharp.Core reference to the highest
              version anything here asks for: Partas.GitNet 3.0.0 wants
              >= 10.0.102 and the Partas.Build project reference brings
-             10.1.400, and without this NU1605 reports the downgrade.
+             10.1.401, and without this NU1605 reports the downgrade.
              `Update` modifies the existing implicit reference instead of
              adding a duplicate (which would trigger NU1504). -->
-        <PackageReference Update="FSharp.Core" Version="10.1.400"/>
+        <PackageReference Update="FSharp.Core" Version="10.1.401"/>
         <PackageReference Include="Fake.Core.Target" Version="6.1.4"/>
         <PackageReference Include="Fake.Core.UserInput" Version="6.1.4"/>
         <PackageReference Include="Fake.DotNet.Cli" Version="6.1.4"/>

@@ -26,6 +26,56 @@ command runs, but only where that pipeline left the setting alone, regardless of
 one to the value `PipelineContext.create` already gives it is indistinguishable from leaving it untouched — the
 command default overwrites it either way.
 
+## GitHub Actions reporting
+
+With `GITHUB_ACTIONS=true`, each active top-level stage opens a collapsible log group and closes it even if
+the stage fails or is cancelled. Nested stages and parallel work share that group, so concurrent branches do
+not open overlapping groups. Quiet pipelines emit no group framing. Stage output captures and redirects
+continue to control step output; workflow group commands go directly to the runner's console.
+
+Invoking a `command` or `rootCommand` also appends a Markdown stage timing report to `GITHUB_STEP_SUMMARY`
+after each pipeline, including failures and quiet runs. It lists every recorded stage in tree order with
+its outcome and elapsed time; skipped stages show no duration. Names and failure details are escaped for
+Markdown. Single-stage runs are included, and multiple pipelines append rather than replacing earlier
+content. An unavailable summary file or a report that would exceed GitHub's 1 MiB per-step limit prints a
+diagnostic without changing the pipeline result. A direct `PipelineContext.run` call groups its logs but
+does not write a summary.
+
+Both features are automatic in GitHub Actions and leave local console reporting unchanged.
+
+### Structured annotations
+
+`annotate` turns an `Annotation` into a deferred `Operation<unit>`, used through `runOperation` or composed
+with other operations. `Annotation.notice message`, `Annotation.warning message` and `Annotation.error message`
+create diagnostics without metadata. Add `Title`, `File`, `Line`, `EndLine`, `Column` and `EndColumn` through
+a record update; these fields take `ValueSome` when present. Use repository-relative file paths and one-based
+line/column numbers. `EndLine` requires `Line`, columns require `Line`, and `EndColumn` requires `Column`.
+Columns describe ranges within one line; omit them for multiline ranges. Nonpositive positions, reversed
+ranges or unsupported field combinations raise an argument error when the operation runs.
+
+```fsharp
+stage "check configuration" {
+    runOperation (annotate {
+        Annotation.warning "Use the new option name." with
+            Title = ValueSome "Deprecated option"
+            File = ValueSome "build.fsx"
+            Line = ValueSome 12
+            Column = ValueSome 5
+            EndColumn = ValueSome 18
+    })
+}
+```
+
+In GitHub Actions these become runner annotations. Locally they print the level, metadata and literal message.
+The stage's inherited `GITHUB_ACTIONS` setting selects the format; a stage can override it. Annotations always
+go to the diagnostic console, independently of captures, redirects and `quiet`. Constructing an operation or
+running `--explain` emits nothing. An error annotation alone does not fail a stage: return a failure or raise
+an exception when execution should fail. Compiler logs are not automatically parsed for source locations.
+
+The runner's own stage and pipeline errors use the same protocol writer. Titles and messages are escaped
+separately, and commands bypass console wrapping so long diagnostics remain one physical protocol line.
+Protocol I/O failures do not change the stage result.
+
 ## Timeouts
 
 Three names. Meaning shifts with the builder they sit on.

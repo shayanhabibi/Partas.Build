@@ -81,8 +81,9 @@ let private runReportingTimings (pipeline: PipelineContext) =
         PipelineContext.run pipeline
     finally
         let verbosity = defaultValueArg pipeline.Verbosity Verbosity.Default
+        let timings = StageTimings.ordered pipeline.Timings
 
-        match StageTimings.ordered pipeline.Timings with
+        match timings with
         | [] | [ _ ] -> ()
         | _ when verbosity.IsQuiet -> ()
         | timings -> Summary.render timings |> Console.Out.WriteLine
@@ -98,14 +99,32 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
         1
     | Ok _ when Explain.option.GetValue parseResult -> explain command pipelines
     | Ok plan ->
+        let scheduled = ExecutionSchedule.schedule parseResult plan pipelines
+        let executed = ResizeArray<PipelineContext>()
         try
-            for pipeline in ExecutionSchedule.schedule parseResult plan pipelines do
-                runReportingTimings pipeline
+            try
+                for pipeline in scheduled do
+                    executed.Add pipeline
+                    runReportingTimings pipeline
 
-            0
-        with
-        | :? PipelineFailedException -> 1
-        | :? PipelineCancelledException -> 130
+                0
+            with
+            | :? PipelineFailedException -> 1
+            | :? PipelineCancelledException -> 130
+
+        finally
+            // Consolidate only pipelines that ran, respecting each pipeline's reporting destination.
+            executed
+            |> Seq.filter (fun pipeline -> GitHubActions.isEnabled pipeline.EnvVars)
+            |> Seq.groupBy (fun pipeline -> Map.tryFind "GITHUB_STEP_SUMMARY" pipeline.EnvVars)
+            |> Seq.iter (fun (_, pipelines) ->
+                let pipelines = Seq.toList pipelines
+                let allTimings =
+                    pipelines
+                    |> List.choose (fun pipeline ->
+                        let timings = StageTimings.ordered pipeline.Timings
+                        if timings.IsEmpty then None else Some (pipeline.Name, timings))
+                Summary.appendGitHub pipelines.Head.EnvVars allTimings)
 
 /// Applies a finished spec to a command, registering the options its pipelines declared.
 let private applyTo (command: Command) (spec: CommandSpec) =

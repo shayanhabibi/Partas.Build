@@ -1,73 +1,150 @@
 name: CI
+
 on:
+  pull_request:
+    branches: [master]
   push:
-    branches:
-      - master
-  workflow_dispatch: 
+    branches: [master]
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  pages: write
-  id-token: write
+  contents: read
+
 env:
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
-  DOTNET_CLI_TELEMETRY_OPTOUT: true
-  DOTNET_VERSION: 9.0.101
-  NUGET_API_KEY: ${{ secrets.NUGET_KEY }}
-  
-# Kill other jobs when we trigger this workflow by sending new commits
-# to the PR.
-# https://stackoverflow.com/a/72408109
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_NOLOGO: 'true'
+
+# Cancel superseded PR checks, but let an active master publication finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-  
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    # A hung test suite would otherwise hold the runner for six hours before anyone hears about it.
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v5
-        with: 
-          fetch-depth: 0
-
-      # workaround for https://github.com/actions/runner/issues/2033
-      - name: ownership workaround
-        run: git config --global --add safe.directory '*'
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          global-json-file: global.json
 
-      - name: Run ci script
-        run: dotnet run publish --nuget ${{ env.NUGET_API_KEY }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # This repository has no packages.lock.json; setup-dotnet's cache requires one.
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', '**/*.fsproj', '**/*.csproj', 'Directory.Build.*', '.config/dotnet-tools.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Build and test
+        run: |
+          dotnet run --project Build.fsproj -- test --quick 2>&1 |
+            Tee-Object -FilePath "$env:RUNNER_TEMP/ci-test.log"
+          exit $LASTEXITCODE
+
+      - name: Upload build and test log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-log-${{ runner.os }}
+          path: ${{ runner.temp }}/ci-test.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   build-docs:
-    runs-on: ubuntu-latest
+    name: Build documentation
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v3
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-      # The `docs` command restores, builds the Nacara site in docs/docs.fsproj, and merges
-      # docs/static/llms.txt's curated header over output/llms.txt — the one implementation of that merge,
-      # run the same way here as for a local build.
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', '**/*.fsproj', '**/*.csproj', 'Directory.Build.*', '.config/dotnet-tools.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
       - name: Generate documentation
-        run: dotnet run --project Build.fsproj -- docs
+        run: dotnet run --project Build.fsproj -- docs --quick
+
       - name: Upload documentation
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ./output
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build-docs
+          retention-days: 7
+
+  publish:
+    name: Publish NuGet packages to Cloudsmith
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    needs: [build, build-docs]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', '**/*.fsproj', '**/*.csproj', 'Directory.Build.*', '.config/dotnet-tools.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Publish
+        env:
+          NUGET_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NUGET_API_KEY)) {
+            Write-Output '::error::Cloudsmith publishing requires CLOUDSMITH_API_KEY.'
+            exit 1
+          }
+          dotnet run --project Build.fsproj -- publish --quick --skip-tests --nuget-source "https://nuget.cloudsmith.io/shayanhabibi/shayanhabibi-partas-build/v3/index.json"
+          exit $LASTEXITCODE
+
+  deploy:
+    name: Deploy GitHub Pages
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    needs: [build, build-docs]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

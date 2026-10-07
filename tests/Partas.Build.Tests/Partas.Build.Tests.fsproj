@@ -18,6 +18,7 @@
         <Compile Include="ConditionsTests.fs"/>
         <Compile Include="CmdTests.fs"/>
         <Compile Include="OutputTests.fs"/>
+        <Compile Include="AnnotationTests.fs"/>
         <Compile Include="ExecutionTests.fs"/>
         <Compile Include="FailureTests.fs"/>
         <Compile Include="CommandTests.fs"/>

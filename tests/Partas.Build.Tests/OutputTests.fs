@@ -220,7 +220,10 @@ let tests =
             AnsiConsole.Console <- console
 
             try
-                let built = pipeline "failing" { stage "one" { captureOutput (OutputCapture.create()); run loud } }
+                let built = pipeline "failing" {
+                    envVars [ "GITHUB_ACTIONS", "false" ]
+                    stage "one" { captureOutput (OutputCapture.create()); run loud }
+                }
                 Expect.isFalse (runs built) "the pipeline should fail"
             finally
                 AnsiConsole.Console <- previous

@@ -1,5 +1,29 @@
 # Partas.Build
 
+## ⚠️ IMPORTANT: NEW RELEASES ARE ON A TEMPORARY NUGET FEED ⚠️
+
+> [!WARNING]
+> **Use the Cloudsmith feed below for new releases of Partas.Build and its companion packages.**
+> I currently cannot access the old nuget.org account and am waiting for NuGet support to transfer
+> package ownership to my new account. While that transfer is pending, new releases are published
+> to **Cloudsmith temporarily**, under the existing package IDs. Older releases remain on nuget.org.
+>
+> **Feed:** <https://nuget.cloudsmith.io/shayanhabibi/shayanhabibi-partas-build/v3/index.json>
+>
+> Public restores require **no account or API key**. Once ownership is restored, publishing will
+> return to nuget.org and this notice will be updated.
+
+Add the temporary source alongside nuget.org so dependencies can still be restored:
+
+```shell
+dotnet nuget add source https://nuget.cloudsmith.io/shayanhabibi/shayanhabibi-partas-build/v3/index.json --name partas-build-temporary
+```
+
+For shared projects and CI, add that URL to the repository's `NuGet.Config` as well. If your
+configuration uses package source mapping, map the Partas package IDs to this source.
+
+Package hosting is provided by [Cloudsmith](https://cloudsmith.com).
+
 An F# build-pipeline DSL: a stage declares the CLI options it reads, and a command derives its
 `System.CommandLine` option set from the stages it runs. Options, validation, and help text generate from the
 pipeline definition instead of by hand. Runs from a `.fsx` script or a build project.
@@ -179,6 +203,41 @@ producer or a step. See *Migrating work out of `InputSpec.Read`* in
 before/after, and the same file's *Producers and dependencies* and *Failure handlers* sections for the full
 operation list, scope-retry ownership, and remaining limitations.
 
+## GitHub Actions reporting
+
+When `GITHUB_ACTIONS=true`, active top-level stages automatically appear as collapsible log groups. Nested
+stages and parallel branches stay inside their enclosing group's log; parallel execution is preserved.
+`quiet` disables group framing.
+
+Commands also append a Markdown stage summary to `GITHUB_STEP_SUMMARY`, with each recorded stage's outcome,
+duration and failure message. Summaries include nested and skipped stages, single-stage pipelines, and quiet
+or failed runs. Each pipeline appends its own report. Summary write failures, including reaching GitHub's
+1 MiB per-step limit, print a diagnostic without changing the build's exit code.
+
+These features use the runner environment automatically; no workflow YAML changes are needed. Calling
+`PipelineContext.run` directly provides log groups; automatic summaries are part of command invocation.
+
+Build scripts can also emit structured notices, warnings and errors with an optional source location:
+
+```fsharp
+stage "validate" {
+    runOperation (annotate {
+        Annotation.warning "This setting is deprecated." with
+            Title = ValueSome "Configuration warning"
+            File = ValueSome "build.fsx"
+            Line = ValueSome 12
+            Column = ValueSome 5
+    })
+}
+```
+
+Use `Annotation.notice`, `Annotation.warning` or `Annotation.error`; each creates a record whose optional
+fields can be supplied as above. `EndLine` and `EndColumn` describe a range and require their corresponding
+start positions. Source positions are one-based; columns require `Line` and apply only within one line.
+Annotations bypass output captures and quiet logging. Outside GitHub Actions,
+they print readable diagnostics with the same metadata. An error annotation reports a problem; fail the
+step separately when it should stop the build. Compiler output is not automatically parsed into annotations.
+
 ## Motivation
 
 I hate CI/CD and CLI plumbing, but it saves me the headache of returning to old projects later.
@@ -220,6 +279,21 @@ dotnet run --project Build.fsproj -- --help
 Flags belong to the commands whose stages read them: `--quick` skips restores
 and the clean, `--skip-tests` skips the suites, `--configuration` picks the
 configuration. None of them is registered by hand — see *Adding a step*.
+
+## Repository CI
+
+Pull requests and pushes to `master` run the full build and test gate on Linux and Windows, plus the
+documentation build. CI installs the SDK selected by `global.json`,
+caches NuGet packages, and retains build/test logs for seven days. Stage groups, summaries and diagnostics
+come from the same build CLI used locally.
+
+After all checks pass, master runs publish packages to the temporary Cloudsmith feed using
+`CLOUDSMITH_API_KEY` and deploy documentation to the `github-pages` environment. Pull requests never
+publish or deploy. A missing publishing secret fails the publish job. Manual runs validate any selected
+branch; only `master` can publish or deploy. The CLI accepts `publish --nuget-source URL` for an alternate
+feed; its default remains nuget.org, with the `local` fallback when no key is supplied.
+New commits cancel superseded PR runs while active master publications finish. GitHub Actions are pinned
+to commit SHAs and maintained by weekly grouped Dependabot updates.
 
 ## Versioning
 

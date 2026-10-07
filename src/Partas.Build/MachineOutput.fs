@@ -230,6 +230,8 @@ module MachineOutput =
     /// Every command takes it. With <c>--explain</c>, the tree is printed as a JSON document and no condition with
     /// a side effect is evaluated; on a run, the run result is printed as the last line of output, one line of
     /// compact JSON, in place of the timing table.
+    /// Defaults to true in a detected agent environment. <c>--json false</c> selects text explicitly;
+    /// <c>PARTAS_BUILD_DISABLE_AI=1</c> disables automatic defaults without suppressing explicit flags.
     /// </remarks>
     /// <example>
     /// <code lang="shell">
@@ -241,7 +243,7 @@ module MachineOutput =
     let json: ActionInput<bool> =
         Input.option<bool> "--json"
         |> Input.description "Write JSON instead of text: the --explain tree, or the run result as the last line of output"
-        |> Input.def false
+        |> Input.defaultValueFactory (fun _ -> (AiEnvironment.detect ()).Value)
 
     /// <summary>The <c>--report</c> option: a file the run result is written to as JSON.</summary>
     /// <remarks>Written once the command's pipelines finish, whether they succeeded or not, and never under <c>--explain</c>.</remarks>

@@ -55,6 +55,10 @@ which is the **last line** of output, one line of JSON:
 `--report <path>` writes the same document, indented, to a file, with or without `--json`. Take the result from
 there when the run's output is long or interleaved.
 
+Agent environment markers enable `--json` by default. Explicit `--json` makes the format predictable even
+when a harness supplies no marker. Use `--json false` for text, or `PARTAS_BUILD_DISABLE_AI=1` to disable
+automatic defaults. The override does not suppress explicit `--json`; `--explain` and `--schema` remain explicit.
+
 ## Rules
 
 - Do not guess option names; read `<command> --help`.

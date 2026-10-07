@@ -768,7 +768,7 @@ let machineOutputTests =
             use output = new StringWriter()
 
             try
-                let result = Helpers.quietly (fun () -> (recordingRoot (ResizeArray())).Invoke([ "--report"; path ], output = output))
+                let result = Helpers.quietly (fun () -> (recordingRoot (ResizeArray())).Invoke([ "--report"; path; "--json"; "false" ], output = output))
 
                 Expect.equal result.ExitCode ExitCode.Success "the run passes"
                 Expect.isFalse (output.ToString().Contains "formatVersion") "the report stays out of the output"
@@ -900,4 +900,3 @@ let machineOutputTests =
             Expect.equal (List.ofSeq seen) [ true ] "the stage reads the flag"
         }
     ]
-

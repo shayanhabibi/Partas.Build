@@ -338,6 +338,12 @@ under one command, or a pipeline that needs its own name.
 | `--report <path>` | Writes the run result as JSON to a file. Only on commands that run pipelines |
 | `--schema` | Prints the command, its options (name, aliases, type, default, accepted values, description) and its subcommands as JSON, and runs nothing |
 
+`--json` defaults to true in an agent environment, detected lazily from `AGENT`, `AI_AGENT` or vendor markers
+following [is-ai-agent's environment rules](https://github.com/sdairs/is-ai-agent#detection-order).
+Use `--json false` to select text explicitly, or `PARTAS_BUILD_DISABLE_AI=1` to disable automatic defaults.
+The override leaves explicit `--json` available. Detection is fresh per invocation in a long-lived host.
+Neither `--explain` nor `--schema` is enabled automatically, and consumer-declared options keep their defaults.
+
 A command that declares one of these names itself keeps its own option. Every JSON document carries
 `formatVersion`. Text `--explain` evaluates every condition, running a `whenStage` condition stage once; a
 condition that throws is shown with its message. `Conditions.effectful description condition` marks a

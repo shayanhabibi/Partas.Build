@@ -132,8 +132,8 @@ let tests =
                     }
                 }
 
-            let code, printed = capturingOut (fun () -> built.Parse("--explain --quick").Invoke())
-            let _, unset = capturingOut (fun () -> built.Parse("--explain").Invoke())
+            let code, printed = capturingOut (fun () -> built.Parse("--explain --quick --json false").Invoke())
+            let _, unset = capturingOut (fun () -> built.Parse("--explain --json false").Invoke())
 
             Expect.equal code 0 "explain exits zero"
             Expect.stringContains printed "restore  (skipped: --quick is set)" "the flag that skipped the stage is named"

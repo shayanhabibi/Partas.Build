@@ -150,6 +150,21 @@ Options:
 The right-hand column in full is [`docs/content/Build/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md)
 ([rendered](https://shayanhabibi.github.io/Partas.Build/build/capabilities/)).
 
+`--json` defaults to true when the invocation environment identifies an AI coding harness. Detection follows
+the environment rules in [is-ai-agent](https://github.com/sdairs/is-ai-agent#detection-order), including `AGENT`,
+`AI_AGENT` and vendor markers; it does not probe the filesystem or inspect credentials. These inherited markers
+are a convenience signal, not proof that an AI initiated the command.
+
+Use `--json false` for text on one invocation, or set `PARTAS_BUILD_DISABLE_AI=1` to disable automatic agent
+defaults. The override is enabled by any nonblank value except `0`, `false`, `no` or `off` (trimmed and
+case-insensitive). Explicit `--json` still works with the override. `--explain` and `--schema` remain explicit:
+detection changes the output format, never whether the build runs. Child process arguments are unaffected.
+
+`AiEnvironment.detect ()` returns a `Lazy<bool>` that reads the environment only when `.Value` is requested.
+Each JSON default creates a fresh detection, so a reusable command in a long-lived host sees environment
+changes between invocations; a saved lazy result retains its first value. `AiEnvironment.detectWith` accepts
+an environment reader for captured environments and tests.
+
 ## Composition
 
 `command { stage; stage }` is the common form. Consecutive stages yielded into a command become one pipeline

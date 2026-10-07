@@ -39,6 +39,7 @@
         <Compile Include="Builders\Pipeline.fs" />
         <Compile Include="Builders\Inputs.fs" />
         <Compile Include="Builders\Dependencies.fs" />
+        <Compile Include="AiEnvironment.fs" />
         <Compile Include="MachineOutput.fs" />
         <Compile Include="Explain.fs" />
         <Compile Include="Summary.fs" />

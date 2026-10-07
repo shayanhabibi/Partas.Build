@@ -42,6 +42,7 @@ order: 4
 #load "../../../src/Partas.Build/Builders/PipelineSettings.fs"
 #load "../../../src/Partas.Build/Builders/Pipeline.fs"
 #load "../../../src/Partas.Build/Builders/Inputs.fs"
+#load "../../../src/Partas.Build/AiEnvironment.fs"
 #load "../../../src/Partas.Build/MachineOutput.fs"
 #load "../../../src/Partas.Build/Explain.fs"
 #load "../../../src/Partas.Build/Summary.fs"

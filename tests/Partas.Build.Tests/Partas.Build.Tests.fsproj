@@ -22,6 +22,7 @@
         <Compile Include="ExecutionTests.fs"/>
         <Compile Include="FailureTests.fs"/>
         <Compile Include="CommandTests.fs"/>
+        <Compile Include="AiEnvironmentTests.fs"/>
         <Compile Include="CompositionTests.fs"/>
         <Compile Include="ConsumerSurfaceTests.fs"/>
         <Compile Include="BakedTests.fs"/>

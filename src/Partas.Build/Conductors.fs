@@ -1,4 +1,4 @@
-﻿namespace Partas.Build.Internal
+namespace Partas.Build.Internal
 
 open System
 open System.CommandLine
@@ -128,6 +128,11 @@ and PipelineContext = {
     Description: string voption
     Verbosity: Verbosity voption
     Verify: PipelineContext -> bool
+    /// <summary>The environment variables the pipeline sets.</summary>
+    /// <remarks>
+    /// Empty for a new pipeline. A run layers these over the process environment as it is when the run starts,
+    /// and the stages of the run read the combined map here.
+    /// </remarks>
     EnvVars: Map<string, string>
     AcceptableExitCodes: Set<int>
     Timeout: TimeSpan voption
@@ -334,7 +339,7 @@ module StageContext =
         |> ValueOption.defaultWith (fun () ->
             match getOutput ctx with
             // Both streams merged onto stdout, as they were before there was anywhere else to put them.
-            | ValueNone | ValueSome StageOutput.Console -> Console.WriteLine line
+            | ValueNone | ValueSome StageOutput.Console -> Terminal.out().WriteLine line
             | ValueSome StageOutput.Silent -> ()
             | ValueSome(StageOutput.Captured capture) -> OutputCapture.add stream line capture
             | ValueSome(StageOutput.Redirect write) -> write stream line
@@ -407,21 +412,23 @@ module PipelineContext =
     /// The `Verify` a freshly created pipeline carries. Named for the same reason as `noStageHook`.
     let internal alwaysVerify: PipelineContext -> bool = fun _ -> true
 
+    /// <summary>The process environment as it is at the moment of the call.</summary>
+    let ambientEnvironment () : Map<string, string> =
+        seq {
+            for key in Environment.GetEnvironmentVariables().Keys ->
+            try
+                string key, Environment.GetEnvironmentVariable(string key)
+            with _ -> string key, ""
+        }
+        |> Map.ofSeq
+
     let create (name: string): PipelineContext =
-        let envVars =
-            seq {
-                for key in Environment.GetEnvironmentVariables().Keys ->
-                try
-                    string key, Environment.GetEnvironmentVariable(string key)
-                with _ -> string key, ""
-            }
-            |> Map.ofSeq
         {
             Name = name
             Description = ValueNone
             Verbosity = ValueNone
             Verify = alwaysVerify
-            EnvVars = envVars
+            EnvVars = Map.empty
             AcceptableExitCodes = set [ 0 ]
             Timeout = ValueNone
             TimeoutForStep = ValueNone
@@ -444,8 +451,8 @@ module PipelineContext =
     /// <remarks>
     /// A command's pipeline-level operations are *defaults*, not overrides: whatever the pipeline set for
     /// itself wins. "Left alone" is decided against a pristine `PipelineContext.create`, which is the only
-    /// baseline available once a pipeline is a finished value - `ValueNone` for the optional settings, the
-    /// ambient environment for `EnvVars`, `set [0]` for the exit codes, `noStageHook` for the hooks, and the
+    /// baseline available once a pipeline is a finished value - `ValueNone` for the optional settings, no key for
+    /// `EnvVars`, `set [0]` for the exit codes, `noStageHook` for the hooks, and the
     /// record's own literals for the flags. Stages are never touched.
     /// </remarks>
     let applyDefaults (defaults: BuildPipeline) (ctx: PipelineContext): PipelineContext =
@@ -469,15 +476,11 @@ module PipelineContext =
                     orDefaultIfUntouched ctx.NoStdRedirectForStep pristine.NoStdRedirectForStep defaulted.NoStdRedirectForStep
                 AcceptableExitCodes =
                     orDefaultIfUntouched ctx.AcceptableExitCodes pristine.AcceptableExitCodes defaulted.AcceptableExitCodes
-                // Per key, since the pipeline's map starts as the whole ambient environment: a key the pipeline
-                // did not touch still reads back whatever the process was started with.
+                // Per key: a key the pipeline set itself keeps the pipeline's value.
                 EnvVars =
                     defaulted.EnvVars
                     |> Map.fold
-                        (fun envVars key value ->
-                            if Map.tryFind key ctx.EnvVars = Map.tryFind key pristine.EnvVars
-                            then Map.add key value envVars
-                            else envVars)
+                        (fun envVars key value -> if Map.containsKey key ctx.EnvVars then envVars else Map.add key value envVars)
                         ctx.EnvVars
                 PostStages = if List.isEmpty ctx.PostStages then defaulted.PostStages else ctx.PostStages
                 RunBeforeEachStage =
@@ -486,6 +489,11 @@ module PipelineContext =
                     if obj.ReferenceEquals(ctx.RunAfterEachStage, noStageHook) then defaulted.RunAfterEachStage else ctx.RunAfterEachStage
                 Verify = if obj.ReferenceEquals(ctx.Verify, alwaysVerify) then defaulted.Verify else ctx.Verify
         }
+
+    /// <summary><paramref name="ctx"/> with empty <c>Timings</c>, <c>Reports</c> and <c>Producers</c> of its own.</summary>
+    /// <remarks>A run of the result records nothing into the collections of <paramref name="ctx"/>.</remarks>
+    let withRunState (ctx: PipelineContext): PipelineContext =
+        { ctx with Timings = StageTimings.create (); Reports = ScopeReports.create (); Producers = ExecutionState.create () }
 
     let printError (ctx: PipelineContext) (msg: string) =
         { Annotation.error msg with Title = ValueSome ("[PIPELINE] " + ctx.Name) }
@@ -517,12 +525,12 @@ module Output =
         static member inline getVerbosity (verbosity: Verbosity) = verbosity
         static member inline getVerbosity (stageContext: StageContext) = StageContext.getVerbosity stageContext
         static member inline getVerbosity (pipelineContext: PipelineContext) = defaultValueArg pipelineContext.Verbosity Verbosity.Default
-        static member inline write(str: Rule): unit = AnsiConsole.Write(str)
-        static member inline write(str: FigletText): unit = AnsiConsole.Write(str)
-        static member inline write(str: string): unit = AnsiConsole.Markup(str)
-        static member inline writen(renderable: Rule) = AnsiConsole.Write(renderable); AnsiConsole.WriteLine()
-        static member inline writen(renderable: FigletText) = AnsiConsole.Write(renderable); AnsiConsole.WriteLine()
-        static member inline writen(str: string) = AnsiConsole.MarkupLine(str)
+        static member write(str: Rule): unit = Terminal.ansi().Write(str)
+        static member write(str: FigletText): unit = Terminal.ansi().Write(str)
+        static member write(str: string): unit = Terminal.ansi().Markup(str)
+        static member writen(renderable: Rule) = let console = Terminal.ansi () in console.Write(renderable); console.WriteLine()
+        static member writen(renderable: FigletText) = let console = Terminal.ansi () in console.Write(renderable); console.WriteLine()
+        static member writen(str: string) = Terminal.ansi().MarkupLine(str)
     let inline getVerbosity value = ((^T or SRTPHelper):(static member getVerbosity: ^T -> Verbosity) value)
     type private Printable<^T when (^T or SRTPHelper):(static member write: ^T -> unit) and (^T or SRTPHelper):(static member writen: ^T -> unit)> = ^T
     let inline print (message: ^T when Printable<^T>) = ((^T or SRTPHelper):(static member write: ^T -> unit) message)
@@ -531,9 +539,9 @@ module Output =
     let inline nprintn value (message: ^T when Printable<^T>) = if (getVerbosity value).IsQuiet |> not then printn message
     let inline vprint value (message: ^T when Printable<^T>) = if (getVerbosity value).IsVerbose then print message
     let inline vprintn value (message: ^T when Printable<^T>) = if (getVerbosity value).IsVerbose then printn message
-    let inline line () = AnsiConsole.WriteLine()
-    let inline vline value = if (getVerbosity value).IsVerbose then AnsiConsole.WriteLine()
-    let inline nline value = if (getVerbosity value).IsQuiet |> not then AnsiConsole.WriteLine()
+    let inline line () = Terminal.ansi().WriteLine()
+    let inline vline value = if (getVerbosity value).IsVerbose then Terminal.ansi().WriteLine()
+    let inline nline value = if (getVerbosity value).IsQuiet |> not then Terminal.ansi().WriteLine()
     let inline withVerbose fn value = if (getVerbosity value).IsVerbose then fn()
     let inline withNormal fn value = if (getVerbosity value).IsQuiet |> not then fn()
 
@@ -645,6 +653,36 @@ open Partas.Build.Internal
 open System.Net.Http
 open Output
 
+/// <summary>The model types a consumer names in a signature, reachable from <c>Partas.Build</c>.</summary>
+/// <remarks>
+/// Each is an abbreviation of the type of the same name in <c>Partas.Build.Internal</c>, and is interchangeable
+/// with it. The modules of functions over these types (<c>StageContext.create</c>, <c>PipelineContext.run</c>, …)
+/// stay in <c>Partas.Build.Internal</c>; the consumer-facing lookups are in <c>Partas.Build.StageContext</c>.
+/// </remarks>
+[<AutoOpen>]
+module ConsumerTypes =
+    [<AutoOpen>]
+    module Measures =
+        /// <summary>The unit of measure of a <c>StepIndex</c>: <c>0&lt;stepIndex&gt;</c> is a stage's first step.</summary>
+        [<Measure>] type stepIndex = Internal.stepIndex
+
+    type StepIndex = Internal.StepIndex
+    type Step = Internal.Step
+    type StageCondition = Internal.StageCondition
+    type StageIndex = Internal.StageIndex
+    type StageContext = Internal.StageContext
+    type PipelineContext = Internal.PipelineContext
+    type CommandSpec = Internal.CommandSpec
+    type StageParent = Internal.StageParent
+    type RuntimeContext = Internal.RuntimeContext
+    type BuildStage = Internal.BuildStage
+    type BuildStep = Internal.BuildStep
+    type BuildEnvInfo = Internal.BuildEnvInfo
+    type BuildStageIsActive = Internal.BuildStageIsActive
+    type BuildConditions = Internal.BuildConditions
+    type BuildPipeline = Internal.BuildPipeline
+    type BuildCommand = Internal.BuildCommand
+
 module StageContext =
     /// <summary>The inputs stage and the stages nested under it declare, deduplicated.</summary>
     /// <remarks>
@@ -670,6 +708,24 @@ module StageContext =
         match StageContext.getParentPipeline stage with
         | Some pipeline -> ExecutionState.values pipeline.Producers
         | None -> ProducerValues.empty
+
+    /// <summary>Writes one line of step output to the stage's sink: the console, a capture, a redirect, or
+    /// nowhere for a silenced stage.</summary>
+    /// <remarks>
+    /// The routed counterpart of <c>printfn</c> inside a step. A bare <c>printfn</c> reaches the console whatever
+    /// the stage's output setting is.
+    /// </remarks>
+    let writeLine (ctx: StageContext) (stream: StdStream) (line: string) = StageContext.writeLine ctx stream line
+
+    /// <summary>Where the stage's step output goes, from the nearest declaration walking upward.</summary>
+    /// <remarks><c>ValueNone</c> is <c>StageOutput.Console</c>.</remarks>
+    let getOutput (ctx: StageContext) = StageContext.getOutput ctx
+
+    /// <summary>The verbosity in effect for the stage.</summary>
+    let getVerbosity (ctx: StageContext) = StageContext.getVerbosity ctx
+
+    /// <summary>The <c>/</c>-separated names of the stages enclosing the stage, outermost first, ending in its own.</summary>
+    let getNamePath (ctx: StageContext) = StageContext.getNamePath ctx
 
     let rec getStageLevel (ctx: StageContext) = StageContext.mapStageParentContext 0 (getStageLevel >> (+) 1) ctx
 
@@ -718,6 +774,7 @@ module StageContext =
                    (_.EnvVars >> Map.tryFind key >> ValueOption.ofOption)
                    (tryGetEnvVar >> fun fn -> fn key)
             )
+        |> ValueOption.orElseWith (fun _ -> System.Environment.GetEnvironmentVariable key |> ValueOption.ofObj)
 
     let inline getEnvVar (ctx: StageContext) (key: string) = tryGetEnvVar ctx key |> ValueOption.defaultValue ""
 

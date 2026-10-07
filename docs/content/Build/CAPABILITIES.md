@@ -97,12 +97,13 @@ Available inside `stage`, and inside `whenStage`, which accepts everything `stag
 
 | Operation | What it does |
 |---|---|
-| `run` | Adds a step. Takes a literal command line, a `Cmd`, or a function of the `StageContext` returning `unit`, `int`, `Result<unit, string>`, a `Cmd`, an `Async<_>` or a `Task<_>` of any of those, optionally wrapped in `option` |
+| `run` | Adds a step. Takes a literal command line, a `Cmd`, or a function of the `StageContext` returning `unit`, `int`, `Result<unit, string>`, a `Cmd`, an `Async<_>` or a `Task<_>` of any of those, optionally wrapped in `option`. A function returning a `string` is obsolete: use `runLine` |
+| `runLine` | Adds a step that runs the command line a function of the `StageContext` returns (`string`, `Async<string>` or `Task<string>`, optionally wrapped in `option`). The line is split on whitespace, honouring quotes |
 | `runSensitive` | Adds a step from an interpolated command line with every hole masked as `***` wherever the library prints it |
 | `runOperation` | Adds a step from an `Operation<unit>`, with an optional label for `--explain`. Runs under the stage's working directory, environment, acceptable exit codes and output routing |
 | `runHttpHealthCheck` | Adds a step that polls a URL until it answers or the stage is cancelled |
 | `echo` | Adds a step that prints a message through the stage's output sink |
-| `when'` | Runs the stage only when a `bool` holds, or only when a given `StageContext` succeeds |
+| `when'` | Runs the stage only when a `bool` holds, or only when a given `StageContext` succeeds. `when' (not quick) "--quick is set"` gives `--explain` the reason it prints against the skipped stage |
 | `whenEnvVar` | Runs the stage only when an environment variable is set, or set to a given value; also takes an `EnvArg` |
 | `whenBranch` / `whenBranches` | Runs the stage only on the named git branch. Reads `git branch --show-current` in the stage's working directory; a missing git evaluates false rather than throwing |
 | `whenWindows` / `whenLinux` / `whenOSX` | Runs the stage only on that platform. Pass `false` to invert |
@@ -328,6 +329,60 @@ become one implicit pipeline carrying the command's name and description. `Comma
 pipeline written out, for when it needs pipeline-level settings. `pipeline "name" { }` is for several pipelines
 under one command, or a pipeline that needs its own name.
 
+## Flags every command carries
+
+| Flag | What it does |
+|---|---|
+| `--explain` | Prints the resolved stage tree and runs nothing. A grouping command lists its subcommands |
+| `--json` | With `--explain`, prints the tree as JSON, leaving `whenBranch` and `whenStage` conditions unevaluated. On a run, prints the run result — each stage's outcome, failures and timing — as one line of JSON after the run, in place of the timing table |
+| `--report <path>` | Writes the run result as JSON to a file. Only on commands that run pipelines |
+| `--schema` | Prints the command, its options (name, aliases, type, default, accepted values, description) and its subcommands as JSON, and runs nothing |
+
+`--json` defaults to true in an agent environment, detected lazily from `AGENT`, `AI_AGENT` or vendor markers
+following [is-ai-agent's environment rules](https://github.com/sdairs/is-ai-agent#detection-order).
+Use `--json false` to select text explicitly, or `PARTAS_BUILD_DISABLE_AI=1` to disable automatic defaults.
+The override leaves explicit `--json` available. Detection is fresh per invocation in a long-lived host.
+Neither `--explain` nor `--schema` is enabled automatically, and consumer-declared options keep their defaults.
+
+A command that declares one of these names itself keeps its own option. Every JSON document carries
+`formatVersion`. Text `--explain` evaluates every condition, running a `whenStage` condition stage once; a
+condition that throws is shown with its message. `Conditions.effectful description condition` marks a
+condition of your own so the JSON form leaves it unevaluated too.
+
+## Exit codes
+
+| Code | `ExitCode` / `RunOutcome` | When |
+|---|---|---|
+| `0` | `Success` / `Succeeded` | Every pipeline succeeded, or the invocation printed help, a version, `--explain` or `--schema` |
+| `1` | `Failure` / `Failed` | A stage failed, or the invocation raised an exception |
+| `2` | `UsageError` / `UsageError` | The command line did not parse or validate, or the selected pipelines failed dependency validation, `--explain` included. No stage ran |
+| `130` | `Cancelled` / `Cancelled` | The pipeline's own timeout expired, or the invocation's cancellation token fired |
+
+A stage's own `timeout` is a failure of that stage (`1`), not a cancellation. Ctrl+C terminates the process by
+signal: it writes no run result, `--json` line or `--report` file, and the exit status is the shell's (`130` on
+Unix by convention).
+
+## Invoking a command from code
+
+`rootCommand argv { }` parses and runs as it is constructed, and answers the exit code. `Command.root { }` takes
+the same operations and builds a `RootCommandDefinition` without parsing or running anything, so a host binds it
+once and invokes it any number of times. [Hosting a build in a long-lived session](hosting.md) walks through it.
+
+| Member | What it does |
+|---|---|
+| `Command.root { }` | Builds a `RootCommandDefinition`: every operation `rootCommand` takes, nothing run |
+| `Command.invoke args root` | Parses `args` (without the script name), runs what they select, and answers a `RunResult` |
+| `root.Invoke(args, ?output, ?error, ?cancellationToken)` | The same, with a `TextWriter` for everything the run prints (help, `--explain`, the pipeline's lines and console-sink child processes, as plain text), a writer for parse errors, and a token that cancels the run |
+| `root.Command` | The underlying `System.CommandLine` `RootCommand` |
+
+`Invoke` runs on a thread of its own. `Thread.Interrupt` on the calling thread cancels the run as the token
+would — killing the process tree of any running step — then raises `ThreadInterruptedException` from `Invoke`.
+
+`RunResult` is `{ ExitCode; Outcome: RunOutcome; Pipelines: PipelineRun list }`, where each `PipelineRun` is
+`{ Name; Reports: ScopeReport list; Timings: StageTiming list }`, snapshots taken as the pipeline finished. Its
+members flatten across pipelines: `Reports`, `Timings` (pre-order) and `Failures` (every `StepFailure`, tolerated
+ones included). `RunResult.toJson indented result` is the document `--json` and `--report` write.
+
 ## Condition builders
 
 `whenAll { }`, `whenAny { }` and `whenNot { }` take these. Each yields a single condition to a stage. An empty
@@ -368,7 +423,7 @@ Shaping combinators, all `ActionInput<'T> -> ActionInput<'T>` and all pipeable:
 | Function                                                            | What it does                                                                                                              |
 |---------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|
 | `Input.alias` / `Input.aliases`                                     | Adds alternative names. Options only                                                                                      |
-| `Input.description`, `Input.desc`                                   | The help text                                                                                                             |
+| `Input.description` (`Input.desc` is obsolete)                      | The help text                                                                                                             |
 | `Input.helpName`                                                    | The value placeholder in help — `<Debug\|Release>`                                                                        |
 | `Input.defaultValue`, `Input.def`                                   | The value used when the token is absent                                                                                   |
 | `Input.defaultValueFactory`                                         | The same, computed from the `ArgumentResult`                                                                              |
@@ -376,6 +431,7 @@ Shaping combinators, all `ActionInput<'T> -> ActionInput<'T>` and all pipeable:
 | `Input.required`                                                    | Marks an option required                                                                                                  |
 | `Input.recursive`                                                   | Applies the option to the command and, recursively, its subcommands                                                       |
 | `Input.hidden`                                                      | Keeps it out of help output                                                                                               |
+| `Input.sensitive`                                                   | Marks the symbol secret: `--schema` reports it `"sensitive": true` and writes a present default as `"***"`                |
 | `Input.allowMultipleArgumentsPerToken`                              | Lets one identifier token carry several values                                                                            |
 | `Input.acceptOnlyFromAmong`                                         | Restricts to a set of legal strings, ordinally                                                                            |
 | `Input.addCompletion` / `Input.addCompletions`                      | Adds tab-completion suggestions without restricting what is accepted                                                      |
@@ -414,7 +470,7 @@ let build (projects: InputSpec<string list>) = input {
 | `InputSpec.union` | Concatenates input lists, keeping the first occurrence of each |
 
 The `input { let! … and! … return … }` CE is the usual way to build one; `inputs` is the same builder under
-a second name (`src/Partas.Build/Builders/Inputs.fs` binds both). It is applicative: bind every source
+an obsolete second name (`src/Partas.Build/Builders/Inputs.fs` binds both). It is applicative: bind every source
 in a single `let!`/`and!` group. A sequential second `let!` is a compile error (`FS0708`): the input set must
 be readable before anything is parsed. An `input { }` nested inside another's `return` produces an
 `InputSpec<InputSpec<_>>`, which nothing accepts — pass the *source* in as an `InputSpec` instead.
@@ -470,6 +526,25 @@ equivalent. `BuildOption.map`, `.mapOpt` and `.mapArg` apply an `Input.*` combin
 | `Baked.Dotnet.config` | `configuration` (alias `-c`) as `string option`, over `release`/`r`/`debug`/`d` case-insensitively |
 | `Baked.SemVer.bump` | `bump` as `Bump option`, over `major\|minor\|patch\|alpha\|beta\|rc\|preview\|<SEMVER>`, defaulting to `Patch` |
 | `Baked.Common.isCI` | `--ci`, defaulting to true when any of the usual CI environment variables is set |
+| `Baked.Common.quick` | `--quick` (alias `-q`): skips restores, installations, cleaning and formatting |
+| `Baked.Common.skipTests` | `--skip-tests` |
+| `Baked.Common.watch` | `--watch` |
+| `Baked.Dotnet.configOrRelease` | `InputSpec<string>`: the `--configuration` value, `Release` when it is omitted |
+
+`Baked.Stages` holds ready-made stages, each an `InputSpec<StageContext>` that `stage`, `pipeline` and `command`
+yield directly and whose options reach the command's `--help`. Each reads Baked's own options; its `…With`
+counterpart takes each of those options as an `InputSpec<_>` instead. A skip reports its reason to `--explain`.
+
+| Function | What it does |
+|---|---|
+| `Stages.restore solution` | `dotnet tool restore`, then `dotnet restore`; skipped by `--quick` |
+| `Stages.clean directories files` | Empties the directories and deletes the files the glob patterns select (`!` excludes), under the stage's working directory, following no links; skipped by `--quick` |
+| `Stages.build projects` | One `dotnet build -c <configuration>` sub-stage per project, in parallel |
+| `Stages.pack outDir projects` | One `dotnet pack --no-build --no-restore` sub-stage per project, in parallel |
+| `Stages.expecto project arguments` | Runs a built Expecto suite through `dotnet run --no-build`; skipped by `--skip-tests`; under `--ci`, passes `--summary` and captures the output |
+| `Stages.nugetPush packages` | `dotnet nuget push --skip-duplicate`, to nuget.org with `--nuget-key` (masked everywhere it prints) or to the source named `local` without one |
+| `Stages.fantomas paths` | `dotnet fantomas` over the paths; skipped by `--quick` |
+| `Stages.npmInstall directory` | `npm ci` under `--ci`, `npm install` otherwise; skipped by `--quick` |
 
 | Function | What it does |
 |---|---|
@@ -482,7 +557,8 @@ equivalent. `BuildOption.map`, `.mapOpt` and `.mapArg` apply an `Input.*` combin
 
 ## Reference
 
-- [Overview](build-overview.fsx) — the layers, and a first pipeline.
+- [Overview](index.fsx) — the layers, and a first pipeline.
 - [Composing reusable blocks](composition.fsx) — blocks, nesting, and composition across files.
+- [Hosting a build in a long-lived session](hosting.md) — `Command.invoke` from SageFs or any F# host.
 - [Stage CE run overloads](computation-expression-operations.fsx).
 - [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) — full signatures and remarks.

@@ -21,6 +21,7 @@ order: 0
 #load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
 #load "../../../src/Partas.Build/Exceptions.fs"
 #load "../../../src/Partas.Build/Output.fs"
+#load "../../../src/Partas.Build/Terminal.fs"
 #load "../../../src/Partas.Build/Annotations.fs"
 #load "../../../src/Partas.Build/Environment.fs"
 #load "../../../src/Partas.Build/Timing.fs"
@@ -40,17 +41,21 @@ order: 0
 #load "../../../src/Partas.Build/Builders/PipelineSettings.fs"
 #load "../../../src/Partas.Build/Builders/Pipeline.fs"
 #load "../../../src/Partas.Build/Builders/Inputs.fs"
+#load "../../../src/Partas.Build/AiEnvironment.fs"
+#load "../../../src/Partas.Build/MachineOutput.fs"
 #load "../../../src/Partas.Build/Explain.fs"
 #load "../../../src/Partas.Build/Summary.fs"
+#load "../../../src/Partas.Build/RunResult.fs"
 #load "../../../src/Partas.Build/Builders/Command.fs"
 #load "../../../src/Partas.Build.Baked/Program.fs"
 #load "../../../src/Partas.Build.Baked/Common.fs"
 #load "../../../src/Partas.Build.Baked/NuGet.fs"
 #load "../../../src/Partas.Build.Baked/Dotnet.fs"
 #load "../../../src/Partas.Build.Baked/SemVer.fs"
+#load "../../../src/Partas.Build.Baked/Clean.fs"
+#load "../../../src/Partas.Build.Baked/Stages.fs"
 
 open Partas.Build
-open Partas.Build.Internal
 
 (**
 <img src="/Partas.Build/img/sun-ztu.jpeg" width="50%" />
@@ -68,10 +73,11 @@ automatic validation and help.
 |---|---|---|
 | Step | `run`, `echo`, … | one action inside a stage |
 | Stage | `stage "name" { }` | `StageContext` |
-| Inputs | `inputs { }` | `InputSpec<'T>` |
+| Inputs | `input { }` | `InputSpec<'T>` |
 | Pipeline | `pipeline "name" { }` | `PipelineContext` or `InputSpec<PipelineContext>` |
 | Command | `command "name" { }` | `System.CommandLine.Command` |
 | Root | `rootCommand argv { }` | `int` exit code — **it runs immediately** |
+| Hosted root | `Command.root { }` | `RootCommandDefinition` — runs on each `Command.invoke args` |
 
 ## A first pipeline
 *)
@@ -191,6 +197,9 @@ let combined =
 `when'` also accepts a whole `StageContext`. It runs for real, side effects and console output included, and
 its success is the answer.
 
+A `bool` carries no reason, so `--explain` prints a stage it turns off as `(skipped)`. Name the reason as a second
+argument, `when' (not quick) "--quick is set"`, and `--explain` prints `(skipped: --quick is set)`.
+
 ## Inputs
 
 A stage that needs a CLI flag binds it in an `input` CE. It is then lifted into any command that asks for it,
@@ -201,7 +210,7 @@ module Options =
     let quick =
         Input.option<bool> "--quick"
         |> Input.alias "-q"
-        |> Input.desc "Skip restores and cleaning"
+        |> Input.description "Skip restores and cleaning"
 
     let config =
         Input.option<string> "--configuration"
@@ -277,6 +286,35 @@ let main argv =
 (**
 A command with no pipelines is a grouping node: it gets no action, so System.CommandLine reports the missing
 subcommand and prints help instead of succeeding silently.
+
+The exit code tells a mistaken invocation from a broken build: `0` success (help, `--version` and `--explain`
+included), `1` a stage failed, `2` the command line did not parse or validate — an unknown option, a missing
+subcommand, a producer arrangement dependency validation rejects — and `130` the run was cancelled. The
+`ExitCode` module names the four.
+
+### Invoking from a host
+
+`rootCommand` reads its arguments once and runs at construction. A long-lived host — an F# interactive
+session, a test — builds the root once with `Command.root`, which takes every `rootCommand` operation and runs
+nothing, then invokes it as often as it likes. `Command.invoke` answers a `RunResult`: the exit code, its
+`RunOutcome`, and each pipeline run's `ScopeReport`s and `StageTiming`s.
+*)
+
+let root =
+    Command.root {
+        description "My build"
+        addCommands [ buildCommand ]
+    }
+
+let buildQuick () =
+    let result = root |> Command.invoke [ "build"; "--quick"; "true" ]
+    printfn "%d failure(s)" result.Failures.Length
+    result.ExitCode
+
+(**
+`root.Invoke(args, output = writer, cancellationToken = token)` sends help, `--explain`, the timing summary and
+parse errors to `writer` instead of the console, and cancels the running pipeline — its processes with it —
+when `token` fires.
 
 ## Composition
 

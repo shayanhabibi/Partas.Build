@@ -3,6 +3,7 @@ module Partas.Build.Tests.CmdTests
 open System.Diagnostics
 open System.Runtime.InteropServices
 open System.Threading
+open System.Threading.Tasks
 open Expecto
 open Partas.Build
 open Partas.Build.Internal
@@ -151,14 +152,49 @@ let tests =
                     stage "exeAndArgs" { run "dotnet" "--version" }
                     stage "commandLine" { run succeeds }
                     stage "prepared" { run (cmd $"dotnet --version") }
-                    stage "fromContext" { run (fun (_: StageContext) -> succeeds) }
-                    stage "fromContextAsync" { run (fun (_: StageContext) -> async { return succeeds }) }
+                    stage "fromContext" { runLine (fun (_: StageContext) -> succeeds) }
+                    stage "fromContextAsync" { runLine (fun (_: StageContext) -> async { return succeeds }) }
                     stage "buildsACmd" { run (fun (_: StageContext) -> Cmd.ofString succeeds) }
                     stage "sensitive" { runSensitive $"dotnet --version" }
                 }
 
             Expect.isTrue (runs built) "each overload should run its command"
         }
+
+        test "every runLine overload reaches the process" {
+            let built =
+                pipeline "lines" {
+                    stage "line" { runLine (fun _ -> succeeds) }
+                    stage "lineAsync" { runLine (fun _ -> async { return succeeds }) }
+                    stage "lineTask" { runLine (fun _ -> Task.FromResult succeeds) }
+                    stage "lineOption" { runLine (fun _ -> Some succeeds) }
+                    stage "lineAsyncOption" { runLine (fun _ -> async { return Some succeeds }) }
+                    stage "lineTaskOption" { runLine (fun _ -> Task.FromResult(Some succeeds)) }
+                }
+
+            Expect.isTrue (runs built) "each overload should run its command line"
+        }
+
+        test "runLine fails the stage on a failing command line" {
+            Expect.isFalse (runs (pipeline "bad" { stage "bad" { runLine (fun _ -> fails) } })) "the line runs as a process"
+        }
+
+        test "runLine adds no step when the derived line is None" {
+            let built = pipeline "none" { stage "none" { runLine (fun (_: StageContext) -> (None: string option)) } }
+            Expect.isTrue (runs built) "an absent line is not a failure"
+        }
+
+#nowarn "44"
+        test "the obsolete string-returning run overloads still run their command line" {
+            let built =
+                pipeline "obsolete" {
+                    stage "fromContext" { run (fun (_: StageContext) -> succeeds) }
+                    stage "fromContextOption" { run (fun (_: StageContext) -> Some succeeds) }
+                }
+
+            Expect.isTrue (runs built) "the obsolete overloads keep working"
+        }
+#warnon "44"
 
         test "a stage timeout kills the process and everything it started" {
             let before = sleepsAlive ()
@@ -213,6 +249,34 @@ let tests =
             Expect.isEmpty skipped.Secrets "and marks nothing secret"
         }
 
+        test "interrupting the thread waiting on an invocation kills the process and everything it started" {
+            // Tracked by process id rather than by count: other processes on the machine may run the same command.
+            // A killed grandchild lingers as a zombie where nothing reaps orphans, as in some containers.
+            let isZombie (proc: Process) =
+                try (System.IO.File.ReadAllText $"/proc/%i{proc.Id}/stat").Split(')').[1].TrimStart().StartsWith "Z"
+                with _ -> false
+            let sleepIds () =
+                set [ for proc in Process.GetProcessesByName sleepProcessName do if not (isZombie proc) then proc.Id ]
+            let before = sleepIds ()
+            let root = Command.root { pipeline "interrupted" { quiet; stage "sleep" { run sleeps } } }
+            let raised: exn ref = ref null
+            let invoking = Thread(fun () -> try root.Invoke([]) |> ignore with ex -> raised.Value <- ex)
+            invoking.Start()
+
+            let watch = Stopwatch.StartNew()
+            while Set.isEmpty (sleepIds () - before) && watch.ElapsedMilliseconds < 20000L do
+                Thread.Sleep 50
+            let started = sleepIds () - before
+            Expect.isNonEmpty started "the stage should have started its child"
+
+            invoking.Interrupt()
+            Expect.isTrue (invoking.Join(System.TimeSpan.FromSeconds 20.)) "the interrupted invocation should return"
+            Expect.isTrue (raised.Value :? ThreadInterruptedException) $"the interrupt should propagate; got %A{raised.Value}"
+
+            Thread.Sleep 1500
+            Expect.isEmpty (Set.intersect started (sleepIds ())) "the interrupt should kill the whole tree, as a cancellation does"
+        }
+
         // Pins the legacy contract the typed executor (PLAN-Execution C02) deliberately leaves alone: a command
         // cancelled through the token its author passed to `run` is a successful step, and only the ambient
         // stage timeout turns a kill into a failure.
@@ -230,3 +294,5 @@ let tests =
             Expect.equal (sleepsAlive ()) before "the caller's token should kill the whole tree, as the timeout does"
         }
     ]
+    // SageFs live testing classifies a test whose full name contains "integration" as Integration, run on demand.
+    |> testLabel "integration"

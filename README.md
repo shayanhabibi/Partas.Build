@@ -37,7 +37,8 @@ pipeline definition instead of by hand. Runs from a `.fsx` script or a build pro
 - **Documentation:** <https://shayanhabibi.github.io/Partas.Build>
 - **Every operation, one line each:** [`docs/content/Build/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md)
   ([rendered](https://shayanhabibi.github.io/Partas.Build/build/capabilities/))
-- **Agents:** start at <https://shayanhabibi.github.io/Partas.Build/llms.txt>
+- **Agents:** start at <https://shayanhabibi.github.io/Partas.Build/llms.txt>; a consumer repository can paste
+  [the agent snippet](https://shayanhabibi.github.io/Partas.Build/AGENTS-snippet.md) into its own `AGENTS.md`
 
 > The entire [`FSharp.SystemCommandLine`](https://github.com/jordanmarr/FSharp.SystemCommandLine) library is copied directly into this repo. All credit to the original author.
 > Much of the pipeline implementation is copied from [`Fun.Build`](https://github.com/slaveOfTime/Fun.Build). All credit to the original author.
@@ -54,7 +55,7 @@ module Options =
     let quick =
         Input.option<bool> "--quick"
         |> Input.alias "-q"
-        |> Input.desc "Skip restores and cleaning"
+        |> Input.description "Skip restores and cleaning"
 
     let config =
         Input.option<string> "--configuration"
@@ -62,14 +63,14 @@ module Options =
         |> Input.def "Release"
         |> Input.helpName "Debug|Release"
         |> Input.acceptOnlyFromAmong [ "Debug"; "Release" ]
-        |> Input.desc "Build configuration"
+        |> Input.description "Build configuration"
 
 module Stages =
     let restore = input {
         let! quick = Options.quick
 
         return stage "restore" {
-            when' (not quick)
+            when' (not quick) "--quick is set"   // the reason --explain prints when the stage is skipped
             run "dotnet restore"
         }
     }
@@ -141,9 +142,28 @@ Options:
 | A stage that exists only when an option has a value | `whenSome`, which yields no stage for `None` rather than an inactive one                                                   |
 | A block of stages parameterised by an option someone else declares | Take an `InputSpec<'T>` parameter and `let!` it                                                                            |
 | The root command to call itself something other than the script's filename | `name` on `rootCommand`                                                                                                    |
+| Restore, clean, build, pack, Expecto and NuGet push stages, ready made | `Partas.Build.Baked`'s `Stages` — each brings its own `--quick`/`--configuration`/`--skip-tests`/`--nuget-key`                |
+| What a command would run, without running it | `<command> --explain`; `--explain --json` for the tree as JSON, `--schema` for the options                                  |
+| A run's outcome for a script or an agent to read | `--json` (the last line of output) or `--report <path>`; exit codes `0` success, `1` failure, `2` usage error, `130` cancelled |
+| The build as a function in a warm F# session (SageFs) | `Command.root { }` and `Command.invoke`, which answer a `RunResult` — see [Hosting](https://shayanhabibi.github.io/Partas.Build/build/hosting/) |
 
 The right-hand column in full is [`docs/content/Build/CAPABILITIES.md`](docs/content/Build/CAPABILITIES.md)
 ([rendered](https://shayanhabibi.github.io/Partas.Build/build/capabilities/)).
+
+`--json` defaults to true when the invocation environment identifies an AI coding harness. Detection follows
+the environment rules in [is-ai-agent](https://github.com/sdairs/is-ai-agent#detection-order), including `AGENT`,
+`AI_AGENT` and vendor markers; it does not probe the filesystem or inspect credentials. These inherited markers
+are a convenience signal, not proof that an AI initiated the command.
+
+Use `--json false` for text on one invocation, or set `PARTAS_BUILD_DISABLE_AI=1` to disable automatic agent
+defaults. The override is enabled by any nonblank value except `0`, `false`, `no` or `off` (trimmed and
+case-insensitive). Explicit `--json` still works with the override. `--explain` and `--schema` remain explicit:
+detection changes the output format, never whether the build runs. Child process arguments are unaffected.
+
+`AiEnvironment.detect ()` returns a `Lazy<bool>` that reads the environment only when `.Value` is requested.
+Each JSON default creates a fresh detection, so a reusable command in a long-lived host sees environment
+changes between invocations; a saved lazy result retains its first value. `AiEnvironment.detectWith` accepts
+an environment reader for captured environments and tests.
 
 ## Composition
 

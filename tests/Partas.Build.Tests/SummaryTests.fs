@@ -58,6 +58,52 @@ let private indexOf (rows: Row list) (name: string) =
 [<Tests>]
 let tests =
     testList "summary" [
+        test "hosted invocations route diagnostics and group protocol to their writer" {
+            for ci in [ "true"; "false" ] do
+                use output = new StringWriter()
+                let capture = OutputCapture.create()
+                let root = Command.root {
+                    pipeline "hosted" {
+                        envVars [ "GITHUB_ACTIONS", ci ]
+                        stage "work" {
+                            captureOutput capture
+                            runOperation (annotate (Annotation.warning "hosted diagnostic"))
+                        }
+                    }
+                }
+                let result, console = capturingOut (fun () -> root.Invoke([], output = output))
+                Expect.equal result.ExitCode 0 "diagnostics do not fail the hosted invocation"
+                Expect.stringContains (output.ToString()) "hosted diagnostic" "the invocation writer receives the diagnostic"
+                Expect.isFalse (console.Contains "hosted diagnostic") "diagnostics do not leak to the ambient console"
+                Expect.isFalse ((OutputCapture.text capture).Contains "hosted diagnostic") "stage captures do not swallow diagnostics"
+                if ci = "true" then
+                    Expect.stringContains (output.ToString()) "::group::work" "unwrapped group framing reaches the invocation writer"
+                    Expect.stringContains (output.ToString()) "::warning::hosted diagnostic" "the annotation is a workflow command"
+                else
+                    Expect.isFalse ((output.ToString()).Contains "::warning") "local hosted output remains readable text"
+        }
+
+        test "a hosted command resolves its summary environment on every invocation" {
+            let originalCI = Environment.GetEnvironmentVariable "GITHUB_ACTIONS"
+            let originalPath = Environment.GetEnvironmentVariable "GITHUB_STEP_SUMMARY"
+            let first = Path.GetTempFileName()
+            let second = Path.GetTempFileName()
+            let root = Command.root { pipeline "hosted" { quiet; stage "work" { () } } }
+            try
+                Environment.SetEnvironmentVariable("GITHUB_ACTIONS", "true")
+                for path in [ first; second ] do
+                    Environment.SetEnvironmentVariable("GITHUB_STEP_SUMMARY", path)
+                    use output = new StringWriter()
+                    Expect.equal (root.Invoke([], output = output)).ExitCode 0 "the reusable command succeeds"
+                    Expect.stringContains (File.ReadAllText path) "work" "the current destination receives this invocation"
+                Expect.equal (File.ReadAllText first) (File.ReadAllText second) "changing the destination does not reuse the first file"
+            finally
+                Environment.SetEnvironmentVariable("GITHUB_ACTIONS", originalCI)
+                Environment.SetEnvironmentVariable("GITHUB_STEP_SUMMARY", originalPath)
+                File.Delete first
+                File.Delete second
+        }
+
         test "the public Markdown renderer retains its pipeline-name argument" {
             let timing = { Name = "compile"; Depth = 0; Elapsed = TimeSpan.FromSeconds 1.; Outcome = StageOutcome.Succeeded }
             let text = Summary.renderMarkdown "build" [ timing ]
@@ -370,7 +416,7 @@ let tests =
                     }
                 }
 
-            let exitCode, text = capturingOut (fun () -> built.Parse("").Invoke())
+            let exitCode, text = capturingOut (fun () -> built.Parse("--json false").Invoke())
 
             Expect.equal exitCode 1 "a failed pipeline should exit one"
             let rows = rowsOf (text.Substring (text.IndexOf Summary.title))
@@ -407,7 +453,7 @@ let tests =
                     }
                 }
 
-            let exitCode, text = capturingOut (fun () -> built.Parse("").Invoke())
+            let exitCode, text = capturingOut (fun () -> built.Parse("--json false").Invoke())
 
             Expect.equal exitCode 0 "the pipeline should succeed"
             let rows = rowsOf (text.Substring (text.IndexOf Summary.title))

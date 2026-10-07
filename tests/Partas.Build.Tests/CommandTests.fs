@@ -5,6 +5,7 @@ open System.IO
 open System.Reflection
 open System.CommandLine
 open System.CommandLine.Invocation
+open System.Text.Json
 open Expecto
 open Partas.Build
 open Partas.Build.Internal
@@ -18,9 +19,9 @@ let private options () =
     Input.option<bool> "--verbose" |> Input.def false
 
 /// The command's own options, minus the `--help` System.CommandLine adds to every command and the
-/// `--explain` the library adds to every command that runs a pipeline.
+/// `--explain`, `--json`, `--report` and `--schema` the library adds to every command that runs a pipeline.
 let private declared (command: Command) =
-    optionNames command |> List.filter (fun name -> name <> "--help" && name <> "--explain")
+    optionNames command |> List.filter (fun name -> not (List.contains name [ "--help"; "--explain"; "--json"; "--report"; "--schema" ]))
 
 [<Tests>]
 let tests =
@@ -196,9 +197,9 @@ let tests =
             // RootCommandBuilder keeps args in a private field with no public accessor; comparing that field
             // is the only way to assert the delegation without running against the test host's own argv,
             // which the task notes warn against relying on.
-            let argsField = typeof<RootCommandBuilder>.GetField("args", BindingFlags.NonPublic ||| BindingFlags.Instance)
-            let captured = argsField.GetValue(rootCommandOfScript) :?> string array
-            Expect.equal captured (Args.script ()) "rootCommandOfScript captures Args.script ()"
+            let argsField = typeof<RootCommandBuilder>.GetField("readArgs", BindingFlags.NonPublic ||| BindingFlags.Instance)
+            let readArgs = argsField.GetValue(rootCommandOfScript) :?> (unit -> string array)
+            Expect.equal (readArgs ()) (Args.script ()) "rootCommandOfScript reads Args.script ()"
         }
 
         test "Args.take takes everything after the first separator" {
@@ -422,5 +423,480 @@ let defaultsTests =
                 }
 
             Expect.equal described.Description "restore + build" "the command keeps its own description"
+        }
+    ]
+
+/// A root whose one pipeline records the configuration it ran with, and fails under <c>--fail</c>.
+let private recordingRoot (seen: ResizeArray<string>) =
+    let config = Input.option<string> "--configuration" |> Input.def "Debug"
+    let fail = Input.option<bool> "--fail" |> Input.def false
+
+    let compile = input {
+        let! cfg = config
+        and! fail = fail
+        return stage "compile" {
+            run (fun (_: StageContext) ->
+                seen.Add cfg
+                if fail then failwith "compile failed")
+        }
+    }
+
+    Command.root {
+        pipeline "build" {
+            quiet
+            stage "restore" { run noop }
+            compile
+        }
+    }
+
+[<Tests>]
+let invocation =
+    testList "invocation" [
+        test "a passing run exits zero and returns its reports and timings" {
+            let result = Helpers.quietly (fun () -> recordingRoot (ResizeArray()) |> Command.invoke [ "--configuration"; "Release" ])
+
+            Expect.equal result.ExitCode ExitCode.Success "a passing run exits zero"
+            Expect.equal result.Outcome RunOutcome.Succeeded "the outcome names the category"
+            Expect.equal [ for run in result.Pipelines -> run.Name ] [ "build" ] "the one pipeline that ran is recorded"
+            Expect.equal [ for timing in result.Timings -> timing.Name ] [ "restore"; "compile" ] "each stage has its timing"
+            Expect.equal [ for report in result.Reports -> report.Name, report.Outcome ]
+                [ "restore", StageOutcome.Succeeded; "compile", StageOutcome.Succeeded ]
+                "each stage has its report"
+            Expect.isEmpty result.Failures "a passing run records no failure"
+        }
+
+        test "a failing run exits one and its reports carry the failure" {
+            let result = Helpers.quietly (fun () -> recordingRoot (ResizeArray()) |> Command.invoke [ "--fail"; "true" ])
+
+            Expect.equal result.ExitCode ExitCode.Failure "a stage failure exits one"
+            Expect.equal result.Outcome RunOutcome.Failed "the outcome names the category"
+            Expect.equal [ for timing in result.Timings -> timing.Name ] [ "restore"; "compile" ] "the failed stage is timed too"
+
+            let compile = result.Reports |> List.find (fun report -> report.Name = "compile")
+            Expect.isTrue compile.Outcome.IsFailed "the failed stage reports itself failed"
+            Expect.isNonEmpty result.Failures "the failure is readable off the result"
+        }
+
+        test "one definition invoked twice with different arguments runs each set once" {
+            let seen = ResizeArray()
+            let root = recordingRoot seen
+
+            let first = Helpers.quietly (fun () -> root |> Command.invoke [ "--configuration"; "Release" ])
+            let second = Helpers.quietly (fun () -> root |> Command.invoke [ "--configuration"; "Debug"; "--fail"; "true" ])
+
+            Expect.sequenceEqual seen [ "Release"; "Debug" ] "each invocation reads its own arguments"
+            Expect.equal first.ExitCode ExitCode.Success "the first invocation passes"
+            Expect.equal second.ExitCode ExitCode.Failure "the second invocation fails"
+            Expect.equal first.Timings.Length 2 "the first result keeps its own run"
+            Expect.equal second.Timings.Length 2 "the second result holds its own run, not the first one's too"
+            Expect.isEmpty first.Failures "a later failing run leaves an earlier result untouched"
+        }
+
+        test "a parse error exits two and runs nothing" {
+            let seen = ResizeArray()
+            use output = new StringWriter()
+            let result = (recordingRoot seen).Invoke([ "--no-such-option" ], output = output)
+
+            Expect.equal result.ExitCode ExitCode.UsageError "an unknown option is a usage error"
+            Expect.equal result.Outcome RunOutcome.UsageError "the outcome names the category"
+            Expect.isEmpty result.Pipelines "no pipeline ran"
+            Expect.isEmpty seen "no stage ran"
+            Expect.stringContains (output.ToString()) "--no-such-option" "the parse error reaches the given writer"
+        }
+
+        test "a missing subcommand exits two" {
+            let root = Command.root { addCommand (command "build" { stage "one" { run noop } }) }
+            use output = new StringWriter()
+
+            Expect.equal (root.Invoke([], output = output)).ExitCode ExitCode.UsageError "a grouping root without a subcommand is a usage error"
+        }
+
+        test "rootCommand exits two on a parse error" {
+            use output = new StringWriter()
+            let exitCode =
+                rootCommand [| "--no-such-option" |] {
+                    invocationConfiguration (InvocationConfiguration(Output = output, Error = output))
+                    stage "one" { run noop }
+                }
+
+            Expect.equal exitCode ExitCode.UsageError "rootCommand shares the invocation's exit codes"
+        }
+
+        test "a rejected dependency arrangement exits two" {
+            let source = Producer.define "compile" (InputSpec.ret ()) DependencySpec.empty (fun _ _ -> Operation.ret 42)
+            let root = Command.root {
+                pipeline "work" {
+                    Stage.consuming "use" (DependencySpec.require source) (fun (_: int) -> Operation.ret ())
+                    Producer.stage source
+                }
+            }
+            use output = new StringWriter()
+
+            let result = root.Invoke([], output = output)
+            Expect.equal result.ExitCode ExitCode.UsageError "dependency validation is a usage error"
+            Expect.isEmpty result.Pipelines "no pipeline ran"
+            Expect.isNonEmpty (output.ToString()) "the diagnostic reaches the given writer"
+        }
+
+        test "a rejected dependency arrangement under --explain exits two and writes no run result" {
+            let source = Producer.define "compile" (InputSpec.ret ()) DependencySpec.empty (fun _ _ -> Operation.ret 42)
+            let root = Command.root {
+                pipeline "work" {
+                    Stage.consuming "use" (DependencySpec.require source) (fun (_: int) -> Operation.ret ())
+                    Producer.stage source
+                }
+            }
+            let path = Path.Combine(Path.GetTempPath(), $"partas-build-report-{Guid.NewGuid():N}", "result.json")
+            use output = new StringWriter()
+            use error = new StringWriter()
+
+            try
+                let result = root.Invoke([ "--explain"; "--json"; "--report"; path ], output = output, error = error)
+                Expect.equal result.ExitCode ExitCode.UsageError "dependency validation is a usage error under --explain too"
+                Expect.isFalse (output.ToString().Contains "formatVersion") "no run result reaches the output"
+                Expect.isNonEmpty (error.ToString()) "the diagnostic reaches the error writer"
+                Expect.isFalse (File.Exists path) "--report writes nothing under --explain"
+            finally
+                if Directory.Exists(Path.GetDirectoryName path) then Directory.Delete(Path.GetDirectoryName path, true)
+        }
+
+        test "an exception outside a pipeline failure still writes the run result" {
+            let path = Path.Combine(Path.GetTempPath(), $"partas-build-report-{Guid.NewGuid():N}", "result.json")
+            let inner: RunResult voption ref = ref ValueNone
+            let rootRef: RootCommandDefinition voption ref = ref ValueNone
+            let root = Command.root {
+                pipeline "reentrant" {
+                    quiet
+                    stage "again" {
+                        run (fun (_: StageContext) ->
+                            use nested = new StringWriter()
+                            inner.Value <- ValueSome(rootRef.Value.Value.Invoke([ "--report"; path ], output = nested, error = nested)))
+                    }
+                }
+            }
+            rootRef.Value <- ValueSome root
+            use output = new StringWriter()
+
+            try
+                Helpers.quietly (fun () -> root.Invoke([], output = output)) |> ignore
+
+                Expect.equal (inner.Value |> ValueOption.map _.ExitCode) (ValueSome ExitCode.Failure) "the refused reentrant invocation exits one"
+                let document = JsonDocument.Parse(File.ReadAllText path).RootElement
+                Expect.equal (document.GetProperty("outcome").GetString()) "failed" "the report records the failure"
+            finally
+                if Directory.Exists(Path.GetDirectoryName path) then Directory.Delete(Path.GetDirectoryName path, true)
+        }
+
+        test "a cancelled invocation exits 130" {
+            let root = Command.root {
+                pipeline "slow" {
+                    quiet
+                    stage "sleep" { run (fun (_: StageContext) -> async { do! Async.Sleep 30000 }) }
+                }
+            }
+            use cts = new Threading.CancellationTokenSource(TimeSpan.FromMilliseconds 300.)
+            let watch = Diagnostics.Stopwatch.StartNew()
+
+            let result = Helpers.quietly (fun () -> root.Invoke([], cancellationToken = cts.Token))
+
+            Expect.equal result.ExitCode ExitCode.Cancelled "cancellation exits 130"
+            Expect.equal result.Outcome RunOutcome.Cancelled "the outcome names the category"
+            Expect.isLessThan watch.Elapsed (TimeSpan.FromSeconds 20.) "the token cut the sleeping stage short"
+            Expect.equal result.Pipelines.Length 1 "the cancelled pipeline is still recorded"
+        }
+
+        test "an invocation already cancelled runs nothing" {
+            let seen = ResizeArray()
+            use cts = new Threading.CancellationTokenSource()
+            cts.Cancel()
+
+            let result = (recordingRoot seen).Invoke([], cancellationToken = cts.Token)
+
+            Expect.equal result.ExitCode ExitCode.Cancelled "a cancelled token exits 130"
+            Expect.isEmpty seen "no stage ran"
+            Expect.isEmpty result.Pipelines "no pipeline started"
+        }
+
+        test "an invocation's output receives what the run writes to the console, as plain text" {
+            let root = Command.root {
+                pipeline "routed" {
+                    stage "child" { run (Cmd.ofList "dotnet" [ "--version" ]) }
+                    stage "line" { run (fun (ctx: StageContext) -> StageContext.writeLine ctx StdStream.Out "from-a-step") }
+                }
+            }
+            use output = new StringWriter()
+
+            let result, console = Helpers.capturingOut (fun () -> root.Invoke([], output = output))
+            let written = output.ToString()
+
+            Expect.equal result.ExitCode ExitCode.Success "the run passes"
+            Expect.stringContains written "from-a-step" "a step's console line reaches the given writer"
+            Expect.stringContains written "PIPELINE routed is finished" "the pipeline's own lines reach it too"
+            Expect.isTrue
+                (Text.RegularExpressions.Regex.IsMatch(written, @"(?m)^\d+\.\d+\.\d+"))
+                $"a child process's output reaches it; got:\n{written}"
+            Expect.isFalse (written.Contains "\u001b") "the writer receives plain text"
+            Expect.isFalse (console.Contains "from-a-step") "the console receives none of it"
+        }
+
+        test "a root command builder over a function reads its arguments as it runs" {
+            let reads = ref 0
+            let builder = RootCommandBuilder(fun () -> reads.Value <- reads.Value + 1; [| "--no-such-option" |])
+            Expect.equal reads.Value 0 "constructing the builder reads nothing"
+
+            use output = new StringWriter()
+            let exitCode =
+                builder {
+                    invocationConfiguration (InvocationConfiguration(Output = output, Error = output))
+                    stage "one" { run noop }
+                }
+
+            Expect.equal reads.Value 1 "running the command reads the arguments once"
+            Expect.equal exitCode ExitCode.UsageError "and parses what the function answered"
+        }
+
+        test "an invocation refused a running pipeline records and prints nothing of the run holding it" {
+            use started = new Threading.ManualResetEventSlim false
+            use release = new Threading.ManualResetEventSlim false
+            let root = Command.root {
+                pipeline "shared" {
+                    stage "stage-alpha" {
+                        run (fun (_: StageContext) ->
+                            started.Set()
+                            release.Wait(TimeSpan.FromSeconds 30.) |> ignore)
+                    }
+                    stage "stage-beta" { run noop }
+                }
+            }
+            use firstOutput = new StringWriter()
+            use secondOutput = new StringWriter()
+            let first = Threading.Tasks.Task.Run(fun () -> root.Invoke([], output = firstOutput))
+
+            try
+                Expect.isTrue (started.Wait(TimeSpan.FromSeconds 30.)) "the first invocation reaches its stage"
+                let second = root.Invoke([], output = secondOutput)
+
+                Expect.notEqual second.ExitCode ExitCode.Success "the refused invocation fails"
+                Expect.isEmpty second.Pipelines "the refused invocation records no pipeline run"
+                Expect.isFalse
+                    (secondOutput.ToString().Contains "stage-alpha")
+                    $"the refused invocation prints nothing of the other run; got:\n{secondOutput}"
+            finally
+                release.Set()
+
+            Expect.isTrue (first.Wait(TimeSpan.FromSeconds 30.)) "the first invocation finishes"
+            Expect.equal first.Result.ExitCode ExitCode.Success "the first invocation is undisturbed"
+            Expect.equal [ for timing in first.Result.Timings -> timing.Name ] [ "stage-alpha"; "stage-beta" ] "and records its own run"
+        }
+
+        test "help and --explain write to the given output and exit zero" {
+            let root = recordingRoot (ResizeArray())
+            use help = new StringWriter()
+            use explained = new StringWriter()
+
+            let helpResult = root.Invoke([ "--help" ], output = help)
+            let explainResult = root.Invoke([ "--explain" ], output = explained)
+
+            Expect.equal helpResult.ExitCode ExitCode.Success "help exits zero"
+            Expect.stringContains (help.ToString()) "--configuration" "help reaches the given writer"
+            Expect.equal explainResult.ExitCode ExitCode.Success "--explain exits zero"
+            Expect.stringContains (explained.ToString()) "compile" "the explained tree reaches the given writer"
+            Expect.isEmpty explainResult.Pipelines "--explain runs no pipeline"
+        }
+    ]
+
+let private property (name: string) (element: JsonElement) = element.GetProperty name
+let private items (element: JsonElement) = [ for item in element.EnumerateArray() -> item ]
+let private named (name: string) (elements: JsonElement list) =
+    elements |> List.find (fun element -> (element |> property "name").GetString() = name)
+
+/// A root whose one pipeline runs a stage that passes and a stage that fails, loud enough to print a timing table.
+let private failingRoot () =
+    Command.root {
+        pipeline "build" {
+            stage "restore" { run noop }
+            stage "compile" { run (fun (_: StageContext) -> failwith "compile failed") }
+        }
+    }
+
+[<Tests>]
+let machineOutputTests =
+    testList "machine output" [
+        test "--json writes the run result as the last line of the invocation's output" {
+            use output = new StringWriter()
+            let result = Helpers.quietly (fun () -> (failingRoot ()).Invoke([ "--json" ], output = output))
+
+            // The given output also receives the run's own console lines; the result follows them, on one line.
+            let lines = output.ToString().Split([| '\n' |], StringSplitOptions.RemoveEmptyEntries)
+            Expect.isFalse (output.ToString().Contains "Outcome") "the result replaces the timing table"
+
+            let document = JsonDocument.Parse(Array.last lines).RootElement
+            Expect.equal ((document |> property "exitCode").GetInt32()) result.ExitCode "the exit code matches the result"
+            Expect.equal ((document |> property "outcome").GetString()) "failed" "the outcome is named"
+
+            let pipeline = document |> property "pipelines" |> items |> List.exactlyOne
+            Expect.equal ((pipeline |> property "name").GetString()) "build" "the pipeline is named"
+            Expect.equal [ for timing in pipeline |> property "timings" |> items -> (timing |> property "name").GetString() ] [ "restore"; "compile" ] "every stage is timed"
+
+            let compile = pipeline |> property "reports" |> items |> named "compile"
+            Expect.equal ((compile |> property "outcome").GetString()) "failed" "the failed stage reports itself failed"
+            Expect.isTrue ((compile |> property "propagates").GetBoolean()) "and fails the pipeline"
+            let failure = compile |> property "failures" |> items |> List.exactlyOne
+            Expect.equal ((failure |> property "step").GetInt32()) 0 "the failing step is indexed from zero"
+            Expect.equal ((failure |> property "cause" |> property "kind").GetString()) "raised" "the cause is classified"
+            Expect.stringContains ((failure |> property "cause" |> property "message").GetString()) "compile failed" "and described"
+        }
+
+        test "--json keeps a failed command's secret out of the result" {
+            let key = "super-secret-key"
+            let root = Command.root {
+                pipeline "publish" { stage "push" { run (Helpers.ProcessFixture.command [ "no-such-mode" ] |> Cmd.secretArg key) } }
+            }
+            use output = new StringWriter()
+
+            let result = Helpers.quietly (fun () -> root.Invoke([ "--json" ], output = output))
+            let json = output.ToString().Split([| '\n' |], StringSplitOptions.RemoveEmptyEntries) |> Array.last
+
+            Expect.equal result.ExitCode ExitCode.Failure "the command fails"
+            Expect.isFalse (output.ToString().Contains key) "the secret stays out of the output and the result"
+            let cause = (JsonDocument.Parse json).RootElement |> property "pipelines" |> items |> List.exactlyOne |> property "reports" |> items |> named "push" |> property "failures" |> items |> List.exactlyOne |> property "cause"
+            Expect.isNonEmpty ((cause |> property "message").GetString()) "the failure is described"
+        }
+
+        test "--report writes the run result to a file and nothing to the output" {
+            let path = Path.Combine(Path.GetTempPath(), $"partas-build-report-{Guid.NewGuid():N}", "result.json")
+            use output = new StringWriter()
+
+            try
+                let result = Helpers.quietly (fun () -> (recordingRoot (ResizeArray())).Invoke([ "--report"; path; "--json"; "false" ], output = output))
+
+                Expect.equal result.ExitCode ExitCode.Success "the run passes"
+                Expect.isFalse (output.ToString().Contains "formatVersion") "the report stays out of the output"
+                let document = JsonDocument.Parse(File.ReadAllText path).RootElement
+                Expect.equal ((document |> property "outcome").GetString()) "succeeded" "the file holds the result"
+                Expect.equal (document |> property "pipelines" |> items |> List.exactlyOne |> property "timings" |> items |> List.length) 2 "with every stage it ran"
+            finally
+                if Directory.Exists(Path.GetDirectoryName path) then Directory.Delete(Path.GetDirectoryName path, true)
+        }
+
+        test "--schema describes the command tree with types, defaults and choices, and runs nothing" {
+            let seen = ResizeArray()
+            let configuration =
+                Input.option<string> "--configuration"
+                |> Input.alias "-c"
+                |> Input.description "The build configuration"
+                |> Input.def "Release"
+                |> Input.acceptOnlyFromAmong [ "Debug"; "Release" ]
+
+            let build = command "build" {
+                description "builds"
+                input {
+                    let! cfg = configuration
+                    return stage "compile" { run (fun (_: StageContext) -> seen.Add cfg) }
+                }
+            }
+
+            let root = Command.root { description "the root"; addCommand build }
+            use output = new StringWriter()
+
+            let result = root.Invoke([ "--schema" ], output = output)
+
+            Expect.equal result.ExitCode ExitCode.Success "the schema exits zero"
+            Expect.isEmpty seen "and runs nothing"
+            let document = JsonDocument.Parse(output.ToString()).RootElement
+            let rootCommand = document |> property "command"
+            Expect.isFalse ((rootCommand |> property "runsPipelines").GetBoolean()) "the root only dispatches"
+            let buildCommand = rootCommand |> property "subcommands" |> items |> named "build"
+            Expect.equal ((buildCommand |> property "description").GetString()) "builds" "a subcommand carries its description"
+            Expect.isTrue ((buildCommand |> property "runsPipelines").GetBoolean()) "and says it runs pipelines"
+
+            let option = buildCommand |> property "options" |> items |> named "--configuration"
+            Expect.equal [ for alias in option |> property "aliases" |> items -> alias.GetString() ] [ "-c" ] "aliases are listed"
+            Expect.equal ((option |> property "type").GetString()) "string" "the type is named"
+            Expect.equal ((option |> property "description").GetString()) "The build configuration" "the description is carried"
+            Expect.isTrue ((option |> property "hasDefault").GetBoolean()) "the default is reported"
+            Expect.equal ((option |> property "default").GetString()) "Release" "with its value"
+            Expect.equal [ for choice in option |> property "choices" |> items -> choice.GetString() ] [ "Debug"; "Release" ] "the accepted values are listed"
+            Expect.isFalse ((option |> property "required").GetBoolean()) "an option with a default is not required"
+
+            use subOutput = new StringWriter()
+            root.Invoke([ "build"; "--schema" ], output = subOutput) |> ignore
+            let subDocument = JsonDocument.Parse(subOutput.ToString()).RootElement
+            Expect.equal ((subDocument |> property "command" |> property "name").GetString()) "build" "a subcommand's schema starts at the subcommand"
+        }
+
+        test "--schema masks the default of a sensitive option" {
+            let key = Input.option<string> "--key" |> Input.def "SEKRIT-123" |> Input.sensitive
+            let token = Input.optionMaybe<string> "--token" |> Input.sensitive
+            let plain = Input.option<string> "--plain" |> Input.def "visible"
+
+            let built = command "publish" {
+                input {
+                    let! key = key
+                    and! token = token
+                    and! plain = plain
+                    return stage "push" { run (fun (_: StageContext) -> ignore (key, token, plain)) }
+                }
+            }
+
+            use output = new StringWriter()
+            built.Parse("--schema").Invoke(InvocationConfiguration(Output = output)) |> ignore
+            let text = output.ToString()
+            Expect.isFalse (text.Contains "SEKRIT-123") "the secret is absent from the document"
+
+            let options = JsonDocument.Parse(text).RootElement |> property "command" |> property "options" |> items
+            let keyOption = options |> named "--key"
+            Expect.isTrue ((keyOption |> property "sensitive").GetBoolean()) "the option is reported sensitive"
+            Expect.isTrue ((keyOption |> property "hasDefault").GetBoolean()) "it still reports a default"
+            Expect.equal ((keyOption |> property "default").GetString()) "***" "written masked"
+
+            let tokenOption = options |> named "--token"
+            Expect.equal ((tokenOption |> property "default").ValueKind) JsonValueKind.Null "an absent default stays null"
+
+            let plainOption = options |> named "--plain"
+            Expect.isFalse ((plainOption |> property "sensitive").GetBoolean()) "an unmarked option is not sensitive"
+            Expect.equal ((plainOption |> property "default").GetString()) "visible" "and its default is written"
+        }
+
+        test "a command that declares --json keeps its own option" {
+            let seen = ResizeArray<string>()
+            let json = Input.option<string> "--json" |> Input.def ""
+
+            let built = command "emit" {
+                input {
+                    let! path = json
+                    return stage "write" { run (fun (_: StageContext) -> seen.Add path) }
+                }
+            }
+
+            let jsonOptions = built.Options |> Seq.filter (fun option -> option.Name = "--json") |> List.ofSeq
+            Expect.equal jsonOptions.Length 1 "the library's flag gives way"
+            Expect.equal (List.exactlyOne jsonOptions).ValueType typeof<string> "the consumer's option stays"
+
+            let code = Helpers.quietly (fun () -> built.Parse("--json out.json").Invoke())
+            Expect.equal code 0 "the command still runs"
+            Expect.equal (List.ofSeq seen) [ "out.json" ] "and reads its own option"
+        }
+
+        test "a stage that reads the library's --json registers it once" {
+            let seen = ResizeArray<bool>()
+
+            let built = command "emit" {
+                input {
+                    let! json = MachineOutput.json
+                    return stage "write" { run (fun (_: StageContext) -> seen.Add json) }
+                }
+            }
+
+            Expect.equal (optionNames built |> List.filter ((=) "--json")) [ "--json" ] "the flag is declared once"
+
+            use output = new StringWriter()
+            built.Parse("--schema").Invoke(InvocationConfiguration(Output = output)) |> ignore
+            let options = JsonDocument.Parse(output.ToString()).RootElement |> property "command" |> property "options" |> items
+            let jsonEntries = options |> List.filter (fun option -> (option |> property "name").GetString() = "--json")
+            Expect.equal jsonEntries.Length 1 "and described once"
+
+            Helpers.quietly (fun () -> built.Parse("--json").Invoke()) |> ignore
+            Expect.equal (List.ofSeq seen) [ true ] "the stage reads the flag"
         }
     ]

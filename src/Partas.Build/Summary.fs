@@ -106,7 +106,7 @@ module Summary =
                 Out = AnsiConsoleOutput writer)
             |> AnsiConsole.Create
 
-        let width = AnsiConsole.Profile.Width
+        let width = Partas.Build.Internal.Terminal.width ()
         console.Profile.Width <- width
         console.Write (table width timings)
         writer.ToString().TrimEnd()

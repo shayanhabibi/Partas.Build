@@ -14,3 +14,8 @@ let config =
             "debug", Some "Debug"
             "d", Some "Debug"
         ])
+
+/// The `--configuration` option's value, `Release` when it is omitted.
+let configOrRelease: InputSpec<string> =
+    InputSpec.ofInput config.option
+    |> InputSpec.map (Option.defaultValue "Release")

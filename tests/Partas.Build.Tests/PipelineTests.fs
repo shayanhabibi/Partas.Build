@@ -364,3 +364,105 @@ let tests =
             expectOneImplementation [ "description"; "onFailure"; "post"; "runAfterEachStage"; "runBeforeEachStage" ]
         }
     ]
+
+[<Tests>]
+let runs =
+    testList "pipeline run" [
+        test "a step reads an environment variable set after the pipeline value was built" {
+            let seen = ResizeArray()
+            let late = $"PARTAS_BUILD_LATE_{System.Guid.NewGuid():N}"
+            let changed = $"PARTAS_BUILD_CHANGED_{System.Guid.NewGuid():N}"
+            System.Environment.SetEnvironmentVariable(changed, "before")
+
+            let built =
+                pipeline "environment" {
+                    quiet
+                    stage "read" {
+                        run (fun (ctx: StageContext) ->
+                            seen.Add (StageContext.getEnvVar ctx late)
+                            seen.Add (StageContext.getEnvVar ctx changed)
+                            seen.Add (StageContext.buildEnvVars ctx |> Map.tryFind changed |> Option.defaultValue ""))
+                    }
+                }
+
+            try
+                System.Environment.SetEnvironmentVariable(late, "late")
+                System.Environment.SetEnvironmentVariable(changed, "after")
+                quietly (fun () -> PipelineContext.run built)
+            finally
+                System.Environment.SetEnvironmentVariable(late, null)
+                System.Environment.SetEnvironmentVariable(changed, null)
+
+            Expect.sequenceEqual seen [ "late"; "after"; "after" ]
+                "the run starts from the environment as it is when the run starts, for lookups and child processes alike"
+        }
+
+        test "a pipeline's own environment variables sit over the process environment" {
+            let seen = ResizeArray()
+            let name = $"PARTAS_BUILD_OWN_{System.Guid.NewGuid():N}"
+
+            let built =
+                pipeline "environment" {
+                    quiet
+                    envVars [ name, "pipeline" ]
+                    stage "read" { run (fun (ctx: StageContext) -> seen.Add (StageContext.getEnvVar ctx name)) }
+                }
+
+            try
+                System.Environment.SetEnvironmentVariable(name, "process")
+                quietly (fun () -> PipelineContext.run built)
+            finally
+                System.Environment.SetEnvironmentVariable(name, null)
+
+            Expect.sequenceEqual seen [ "pipeline" ] "the pipeline's value wins over the process's"
+        }
+
+        test "a second concurrent run of one pipeline value fails fast, and a copy runs alongside" {
+            // One capture around the whole test: the runs on other threads write to the console it installs.
+            quietly (fun () ->
+                use started = new System.Threading.ManualResetEventSlim false
+                use release = new System.Threading.ManualResetEventSlim false
+                let ran = ResizeArray()
+
+                let built =
+                    pipeline "reentrant" {
+                        quiet
+                        stage "block" {
+                            run (fun (_: StageContext) ->
+                                lock ran (fun () -> ran.Add "block")
+                                started.Set()
+                                release.Wait(System.TimeSpan.FromSeconds 30.) |> ignore)
+                        }
+                    }
+
+                let firstError: exn ref = ref null
+                let first =
+                    System.Threading.Thread(fun () ->
+                        try PipelineContext.run built with ex -> firstError.Value <- ex)
+                first.Start()
+
+                try
+                    Expect.isTrue (started.Wait(System.TimeSpan.FromSeconds 30.)) "the first run reaches its stage"
+
+                    let second = Expect.throwsC (fun () -> PipelineContext.run built) id
+                    Expect.isTrue (second :? System.InvalidOperationException) $"the second run raises InvalidOperationException; got {second.GetType().Name}"
+                    Expect.stringContains second.Message "reentrant" "the message names the pipeline"
+
+                    let copy = PipelineContext.withRunState built
+                    let copyRun = System.Threading.Tasks.Task.Run(fun () -> PipelineContext.run copy)
+                    release.Set()
+                    Expect.isTrue (copyRun.Wait(System.TimeSpan.FromSeconds 30.)) "the copy runs to completion"
+                    Expect.equal (StageTimings.ordered copy.Timings).Length 1 "the copy records into its own collections"
+                finally
+                    release.Set()
+                    first.Join()
+
+                Expect.isNull firstError.Value "the first run is undisturbed by the rejected second"
+                Expect.equal (StageTimings.ordered built.Timings).Length 1 "the first run records its own stage alone"
+                Expect.equal (List.ofSeq ran) [ "block"; "block" ] "the rejected run ran nothing"
+
+                PipelineContext.run built
+                Expect.equal ran.Count 3 "the value runs again once the first run has finished"
+            )
+        }
+    ]

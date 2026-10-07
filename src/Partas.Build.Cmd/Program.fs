@@ -136,6 +136,13 @@ module Cmd =
     /// <c>cmd</c> and unquoted strings, losing the exact quoting <c>cmd</c> exists to provide. Three
     /// optional flags become eight branches. This fixes that.
     /// </remarks>
+    /// <example>
+    /// <code lang="fsharp">
+    /// cmd $"dotnet test -c {configuration}"
+    /// |> Cmd.argIf ci [ "--logger"; "trx" ]
+    /// |> Cmd.argIf quiet [ "-v"; "q" ]
+    /// </code>
+    /// </example>
     let argIf (condition: bool) (values: string list) (cmd: Cmd) = if condition then args values cmd else cmd
 
     /// <summary>Appends arguments rendered from the given value, only when it is <c>Some</c>.</summary>
@@ -143,6 +150,12 @@ module Cmd =
     /// Parallels <c>Option</c> patterns like <c>iter</c> and <c>map</c>, avoiding the need to lift
     /// <c>Option.iter</c> around the whole command line.
     /// </remarks>
+    /// <example>
+    /// <code lang="fsharp">
+    /// cmd $"dotnet build"
+    /// |> Cmd.argWhenSome framework (fun tfm -> [ "--framework"; tfm ])
+    /// </code>
+    /// </example>
     let argWhenSome (value: 'a option) (render: 'a -> string list) (cmd: Cmd) =
         match value with
         | Some value -> args (render value) cmd
@@ -292,4 +305,10 @@ module CmdHelpers =
     /// <c>cmd</c> has no such competition. <c>runSensitive</c> has none either, which is why it takes the
     /// interpolated string directly.
     /// </remarks>
+    /// <example>
+    /// <code lang="fsharp">
+    /// let project = "src/My Lib/MyLib.fsproj"
+    /// let build = cmd $"dotnet build {project} -c Release"   // dotnet, build, src/My Lib/MyLib.fsproj, -c, Release
+    /// </code>
+    /// </example>
     let inline cmd (command: FormattableString) = Cmd.ofFormattable false command

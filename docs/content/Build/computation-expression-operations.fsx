@@ -22,6 +22,7 @@ order: 4
 #load "../../../src/Partas.Build/System.CommandLine/Inputs.fs"
 #load "../../../src/Partas.Build/Exceptions.fs"
 #load "../../../src/Partas.Build/Output.fs"
+#load "../../../src/Partas.Build/Terminal.fs"
 #load "../../../src/Partas.Build/Annotations.fs"
 #load "../../../src/Partas.Build/Environment.fs"
 #load "../../../src/Partas.Build/Timing.fs"
@@ -41,20 +42,24 @@ order: 4
 #load "../../../src/Partas.Build/Builders/PipelineSettings.fs"
 #load "../../../src/Partas.Build/Builders/Pipeline.fs"
 #load "../../../src/Partas.Build/Builders/Inputs.fs"
+#load "../../../src/Partas.Build/AiEnvironment.fs"
+#load "../../../src/Partas.Build/MachineOutput.fs"
 #load "../../../src/Partas.Build/Explain.fs"
 #load "../../../src/Partas.Build/Summary.fs"
+#load "../../../src/Partas.Build/RunResult.fs"
 #load "../../../src/Partas.Build/Builders/Command.fs"
 #load "../../../src/Partas.Build.Baked/Program.fs"
 #load "../../../src/Partas.Build.Baked/Common.fs"
 #load "../../../src/Partas.Build.Baked/NuGet.fs"
 #load "../../../src/Partas.Build.Baked/Dotnet.fs"
 #load "../../../src/Partas.Build.Baked/SemVer.fs"
+#load "../../../src/Partas.Build.Baked/Clean.fs"
+#load "../../../src/Partas.Build.Baked/Stages.fs"
 
 
 
 open System.Threading
 open Partas.Build
-open Partas.Build.Internal
 (**
 # Computation Expression Operations
 
@@ -124,31 +129,36 @@ let _ = stage "stage" {
     run (fun _ -> task { do () })
 
 (**
+#### `runLine`
+
+A function returning a command line is `runLine`, not `run`. `run (fun ctx -> "...")` still compiles, marked
+obsolete: a lambda written to return a message would otherwise start a process. The line is split on whitespace,
+honouring quotes; build a `Cmd` with `cmd $"..."` to keep each interpolation hole as one argument.
+
 ##### `commandFn: StageContext -> string`
 ##### `commandFn: StageContext -> Async<string>`
 ##### `commandFn: StageContext -> Task<string>`
 *)
-    run (fun _ -> "dotnet build")
-    run (fun _ -> async { return "dotnet build" })
-    run (fun _ -> task { return "dotnet build" })
+    runLine (fun _ -> "dotnet build")
+    runLine (fun _ -> async { return "dotnet build" })
+    runLine (fun _ -> task { return "dotnet build" })
     // With CancellationToken
-    run (fun _ -> "dotnet build") CancellationToken.None
-    run (fun _ -> async { return "dotnet build" }) CancellationToken.None
-    run (fun _ -> task { return "dotnet build" }) CancellationToken.None
+    runLine (fun _ -> "dotnet build") CancellationToken.None
+    runLine (fun _ -> async { return "dotnet build" }) CancellationToken.None
+    runLine (fun _ -> task { return "dotnet build" }) CancellationToken.None
 
 (**
 ##### `commandMaybeFn: StageContext -> string option`
 ##### `commandMaybeFn: StageContext -> Async<string option>`
 ##### `commandMaybeFn: StageContext -> Task<string option>`
 *)
-    // todo - overloads without CancellationToken should not require explicit typing
-    run (fun _ -> Some "dotnet build")
-    run (fun _ -> async { return Option<string>.None })
-    run (fun _ -> task { return Some "dotnet build" })
+    runLine (fun _ -> Some "dotnet build")
+    runLine (fun _ -> async { return Option<string>.None })
+    runLine (fun _ -> task { return Some "dotnet build" })
     // With CancellationToken
-    run (fun _ -> Some "dotnet build") CancellationToken.None
-    run (fun _ -> async { return Some "dotnet build" }) CancellationToken.None
-    run (fun _ -> task { return Some "dotnet build" }) CancellationToken.None
+    runLine (fun _ -> Some "dotnet build") CancellationToken.None
+    runLine (fun _ -> async { return Some "dotnet build" }) CancellationToken.None
+    runLine (fun _ -> task { return Some "dotnet build" }) CancellationToken.None
 
 
 (**

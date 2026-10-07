@@ -1,4 +1,4 @@
-﻿# CLAUDE.md
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `notes/PLAN-Execution.md` and its checklist `notes/PLAN-Execution-Tasks.md` own the current execution model: typed producers and `consumes`, failure handlers, the scope reports, and the shared `StageSettingsBuilder`/`PipelineSettingsBuilder`.
 
-The one-line version: input collection is **applicative**, not monadic. `InputSpec<'T> = { Inputs: ActionInput list; Read: ParseResult -> 'T }` makes the input set readable without a `ParseResult`, breaking the circularity between registering options and binding their values. Stages are pure (no `ActionContext`); binding happens in an `inputs { let! … and! … return … }` CE, and pipelines/commands harvest `.Inputs` upward.
+The one-line version: input collection is **applicative**, not monadic. `InputSpec<'T> = { Inputs: ActionInput list; Read: ParseResult -> 'T }` makes the input set readable without a `ParseResult`, breaking the circularity between registering options and binding their values. Stages are pure (no `ActionContext`); binding happens in an `input { let! … and! … return … }` CE (`inputs` is its obsolete second name), and pipelines/commands harvest `.Inputs` upward.
 
 ## Commands
 
@@ -38,28 +38,63 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Current state (verify before assuming)
 
-- Phases 0-7 of `notes/PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (433 Expecto tests across four suites — 291 in `tests/Partas.Build.Tests`, one file per layer, plus 65 in `tests/Partas.Build.ExternalAnnotations.Tests`, 74 in `tests/Partas.ExternalAnnotations.Tests` and 3 in `tests/Partas.Build.Cmd.NetStandard.Tests`; the `test` stage also runs `tests/Partas.Build.CompilerProbe` in both Debug and Release, 11 tests each). The `Build/` CLI is written against the library: a breaking change breaks it first.
+- Phases 0-7 of `notes/PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (506 Expecto tests across four suites — 365 in `tests/Partas.Build.Tests`, one file per layer, plus 65 in `tests/Partas.Build.ExternalAnnotations.Tests`, 73 in `tests/Partas.ExternalAnnotations.Tests` (2 more ignored) and 3 in `tests/Partas.Build.Cmd.NetStandard.Tests`; the `test` stage also runs `tests/Partas.Build.CompilerProbe` in both Debug and Release, 11 tests each). The `Build/` CLI is written against the library: a breaking change breaks it first.
 - The DSL exists end to end: `inputs` (`Builders/Inputs.fs`), `stage` (`Builders/Stage.fs`), `pipeline` (`Builders/Pipeline.fs`), `command`/`rootCommand` (`Builders/Command.fs`). A stage that declares an input turns its pipeline into an `InputSpec<PipelineContext>`, and the command registers whatever those specs declare. Conditions are in `Builders/Conditions.fs` — `whenAll`/`whenAny`/`whenNot`/`whenEnv`/`whenStage` plus the `when'`/`whenEnvVar`/`whenBranch`/`when{Windows,Linux,OSX}` operations on `StageBuilder`.
 - A command carries `PipelineDefaults: BuildPipeline` and takes the pipeline-level operations itself (`workingDir`, `envVars`, the three timeouts, `acceptExitCodes`, the output operations, `noPrefixForStep`/`noStdRedirectForStep`, `runBeforeEachStage`/`runAfterEachStage`, `post`, `verbosity`/`verbose`/`quiet`), each one built through `CommandBuilderBase.MapPipelineDefault`. They are **defaults, not overrides**: `PipelineContext.applyDefaults` copies a setting across only where the pipeline left it at the value `PipelineContext.create` gave it, so a pipeline that sets the same thing wins. See *Command defaults* below.
-- `run`/`runSensitive` start real processes through `CmdRunner` (`Process.fs`). A `Cmd`, defined in `src/Partas.Build.Cmd/Program.fs`, keeps the executable and its arguments apart all the way to `ProcessStartInfo.ArgumentList`, so the platform does the escaping. Interpolate through the `cmd` helper — `run (cmd $"dotnet build {project}")`. `run $"..."` binds to the `string` overload and flattens the holes; `runSensitive $"..."` takes the `FormattableString` directly and masks every hole as `***`. There is no `Fake.Core.Process` dependency; `notes/PLAN.md`'s *The command runner* records why.
+- `run`/`runSensitive` start real processes through `CmdRunner` (`Process.fs`). A `Cmd`, defined in `src/Partas.Build.Cmd/Program.fs`, keeps the executable and its arguments apart all the way to `ProcessStartInfo.ArgumentList`, so the platform does the escaping. Interpolate through the `cmd` helper — `run (cmd $"dotnet build {project}")`. `run $"..."` binds to the `string` overload and flattens the holes; `runSensitive $"..."` takes the `FormattableString` directly and masks every hole as `***`. A function returning a command line is `runLine (fun ctx -> "...")`; the `run` overloads over `StageContext -> string` (and its `Async`/`Task`/`option` forms) are `[<Obsolete>]`, since a lambda returning a message would start a process. `runLine` is a separate name, so the `run` overload set — and the `FS0041` balance below — is unchanged. There is no `Fake.Core.Process` dependency; `notes/PLAN.md`'s *The command runner* records why.
 - Fun.Build's `Mode` (`Execution | CommandHelp | Verification`) has **not** been ported. `PipelineContext.Verify` is a placeholder and `buildPipelineVerification` is commented out. `CommandHelp` is redundant: System.CommandLine generates help. Whether `Verification` survives is an open question in `notes/PLAN.md`.
 - `PipelineContext.run` is complete enough to execute stages, post stages, timeouts, parallelism and cancellation.
 
 ## Architecture notes
 
-Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Environment.fs` → `Timing.fs` → `Producer.fs` → `Failures.fs` → `Conductors.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/PipelineSettings.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Explain.fs` → `Summary.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
+Compile order in `Partas.Build.fsproj` matters (F#): `System.CommandLine/Aliases.fs` → `System.CommandLine/Inputs.fs` → `Exceptions.fs` → `Output.fs` → `Terminal.fs` → `Annotations.fs` → `Environment.fs` → `Timing.fs` → `Producer.fs` → `Failures.fs` → `Conductors.fs` → `GitHubActions.fs` → `Conductors.Runners.fs` → `Process.fs` → `Operations.fs` → `Dependencies.fs` → `DependencyPlan.fs` → `ExecutionState.fs` → `Builders/StageSettings.fs` → `Builders/Stage.fs` → `Builders/Conditions.fs` → `Builders/PipelineSettings.fs` → `Builders/Pipeline.fs` → `Builders/Inputs.fs` → `Builders/Dependencies.fs` → `MachineOutput.fs` → `Explain.fs` → `Summary.fs` → `RunResult.fs` → `Builders/Command.fs`. The batteries-included layer is its own project, `src/Partas.Build.Baked`.
 
-`Explain.fs` renders the resolved stage tree `--explain` prints, as text only, independent of the console and
-any stage sink — a stage that silences or captures its output is still described in full. It compiles before
+`Explain.fs` renders the resolved stage tree `--explain` prints, as text or JSON, independent of the console and
+any stage sink — a stage that silences or captures its output is still described in full. `Explain.explain mode`
+builds the model (`ExplainedPipeline`/`ExplainedStage`/`ExplainedStep`/`ExplainedCondition`); `renderWith` and
+`toJson` render it. It compiles before
 `Builders/Command.fs`, whose `applyTo` registers the flag on every command and prints what the renderer returns.
-It depends on nothing beyond the core model and the `Input.*` combinators. A command that runs pipelines gets
+It depends on the core model, the `Input.*` combinators and `MachineOutput.fs` (for `--json` and the JSON
+document writer). A command that runs pipelines gets
 `Explain.option` and reads it in its own action. A grouping command gets `Explain.groupingOption`, which carries
 the rendering — a list of the subcommands it dispatches to — on the option's own `Action`: such a command has no
 action of its own, and adding one would displace System.CommandLine's "Required command was not provided.".
-Rendering evaluates every stage's `IsActive`, so a `whenBranch` starts `git` and a `whenStage` runs its condition
-stage. `StageContext.Conditions` lets a skip name the condition that caused it: `addPredicateBecause` writes it
-alongside `IsActive`. The structured conditions in `Builders/Conditions.fs` supply a reason; `when'` supplies
-none, since a `bool` argument carries no reason to report.
+Rendering never calls `IsActive`: it walks `StageContext.Conditions` — `addPredicateBecause` is the single writer
+of both, so the list conjoins to `IsActive` — calling each condition at most once, stopping at the first that fails
+or throws, and rendering a throw as its message (`condition failed: …`) instead of crashing. Under
+`ExplainMode.Evaluated` (text `--explain`) a `whenBranch` starts `git` and a `whenStage` runs its condition stage,
+once. Under `ExplainMode.Static` (`--explain --json`) a condition marked `Conditions.effectful` is reported
+`unevaluated` with its description and left uncalled. The mark is the condition's runtime type,
+`EffectfulCondition` (an `FSharpFunc` subclass), not a closure-keyed table: the optimiser copies a closure it
+inlines, and an eta-expansion at a call site that coerces an argument (`whenBranches ["main"]` against a
+`string seq` parameter) wraps it, so `whenBranches` takes `#seq<string>` to keep the call a plain application.
+`whenBranches`, `whenStageSucceeds` (`when' stage`, `whenStage`) are marked; `whenAll`/`whenAny`/`whenNot` mark
+their result when any child is marked (`Conditions.combined`). A condition wrapped in an unmarked lambda is
+evaluated. `StageContext.Conditions` also lets a skip name the condition that caused it. The structured
+conditions in `Builders/Conditions.fs` supply a reason; `when' value` supplies none, and `when' value "reason"`
+supplies the one written at the call site.
+
+`AiEnvironment.fs` precedes `MachineOutput.fs` and detects agent environment markers through a lazy result.
+`MachineOutput.json` uses a fresh lazy detection in its default factory, so each invocation sees current
+environment values. `PARTAS_BUILD_DISABLE_AI=1` disables automatic JSON, while explicit flags still win.
+`--schema` and `--explain` remain explicit because they stop the command from executing normally.
+
+`MachineOutput.fs` holds the machine-readable flags and the command-tree schema. `applyTo` registers `--json` and
+`--schema` on every command and `--report <path>` on a command that runs pipelines, each through `reserve`, which
+skips a flag whose name or alias the command already declares (the consumer's option wins; System.CommandLine
+would reject the duplicate). `--schema` carries its action on the option, like `Explain.groupingOption`, and
+prints `MachineOutput.commandSchema` of the parsed command. Under `--json`, `--explain` prints `Explain.toJson` (static)
+and a run prints `RunResult.toJson false` as one line after the run, in place of the timing table; `--report`
+writes the indented form to a file. Both are written for every outcome the command action reaches, a failed
+dependency validation included, but not for a System.CommandLine parse error, nor under `--explain` (a failed
+validation there prints its message and exits `2`). An exception other than a pipeline failure or cancellation
+writes the result as `Failed` and then propagates to System.CommandLine's handler (exit `1`). JSON is written with
+`Utf8JsonWriter` by hand, not reflection serialization: every document carries `formatVersion`
+(`MachineOutput.FormatVersion`). `System.Text.Json` is a package reference on `netstandard2.0` only.
+`Input.sensitive` marks an option or argument as carrying a secret, recorded against the `Symbol` in a
+`ConditionalWeakTable` in `Inputs.fs` (System.CommandLine has no property bag); `--schema` writes a marked
+symbol's present default as `"***"` alongside `"sensitive": true`. `Baked.NuGet.apiKey` is marked, since its
+default is read from `NUGET_API_KEY`. Text `--help` still prints the default.
 
 `Failures.fs` holds what a scope reports about itself, apart from what it prints. A `ScopeReport` carries three
 fields: `Outcome` (the scope's own `StageOutcome`), `Propagates` (whether that failure fails the scope
@@ -123,18 +158,78 @@ line already carries. `Summary.render` sizes its three columns to the ambient co
 fit — the middle of a stage name, the end of an outcome — so the table is one row per stage at any width, and
 the `Depth` indent survives an 80-column CI log.
 
+`RunResult.fs` holds what a command invocation answers, and the exit codes it ends with: `ExitCode.Success`
+(0 — help, `--version` and `--explain` included), `Failure` (1, a stage failed), `UsageError` (2 — a parse
+error, a missing subcommand, a failed `DependencyPlan.validate`) and `Cancelled` (130). `RunResult` carries the
+code, its `RunOutcome`, and a `PipelineRun` per pipeline started — its `ScopeReports.stages` and ordered
+`StageTimings`, snapshotted in `runReportingTimings`'s `finally` so a later run of the same pipeline value
+leaves an earlier result intact. `Command.root { … }` builds a `RootCommandDefinition` (the `rootCommand`
+operations, via the shared `RootCommandBuilderBase.Define`) without parsing or running; `Command.invoke args`
+and `RootCommandDefinition.Invoke(args, ?output, ?error, ?cancellationToken)` parse and run it, and
+`RootCommandBuilder.Run` is `Define` + `Invoke` + `.ExitCode`, so the exit-code mapping lives in `Invoke` alone:
+a parse result whose `Action` is System.CommandLine's `ParseErrorAction` becomes 2 there, whatever the action
+returned. The command action finds its invocation's state — the cancellation token and the `PipelineRun`
+collector — in a `ConditionalWeakTable` keyed by the `ParseResult`; a parse result invoked directly through
+System.CommandLine has none (the action makes a local, uncancellable one so `--json`/`--report` still see its
+runs), and still gets 2 for a failed dependency validation (the
+action returns it) but 1 for a parse error (System.CommandLine's own). The token reaches the engine through
+`PipelineContext.runWith`, which links it into the pipeline's own timeout source. `output` replaces the
+invocation configuration's `Output`/`Error`, which is where help, parse errors, `--explain`, the timing summary
+and the dependency diagnostic go, and becomes the run writer (`Terminal.withOutput`, below) for everything the
+run sends to the console. `Invoke` runs the parse-and-invoke on a `LongRunning` task and waits on it: a
+`ThreadInterruptedException` on the waiting thread (SageFs's `cancel_eval` is `Thread.Interrupt`) cancels the
+invocation's own linked `CancellationTokenSource` — reaching the registration-based process-tree kill through
+the same token chain as `cancellationToken` — waits up to five seconds for the run to wind down, and rethrows.
+`rootCommandOfScript` is `RootCommandBuilder Args.script`: the builder's primary constructor takes a
+`unit -> string array` read once per `Run`, so argv is read when the command runs, never at module
+initialisation; `rootCommand` is annotated `string array` to keep the array constructor's overload unambiguous.
+
+`Terminal.fs` (`Partas.Build.Internal.Terminal`) is the only route to the console. Spectre's static
+`AnsiConsole` binds to the `Console.Out` current at its first use and keeps writing there after a host swaps
+`Console.Out` (spike in `PLAN-Integration.md` §8 Q5), so the library never calls `AnsiConsole.*` directly:
+`Terminal.ansi ()` answers `AnsiConsole.Console`, rebinding it to the current `Console.Out` when `Console.Out`
+changed since the last call and nothing else replaced `AnsiConsole.Console` meanwhile (an explicit assignment,
+as the tests' `capturingOut` makes, is kept). Each `Console.Out` writer keeps the console it was first seen
+with, so restoring a writer restores its console. Writing through a host's `Console.Out` can deadlock: on Unix
+the runtime locks `Console.Out` for every terminal write, and Expecto's `Console.Out` takes Expecto's lock before
+writing to the terminal, so a pipeline thread and Expecto's logger take the two locks in opposite orders under a
+pseudo-terminal. `tests/Partas.Build.Tests/Main.fs` therefore pins `AnsiConsole.Console` to the real stdout
+before Expecto starts; a host with the same kind of writer passes `output` to `invoke` or pins the console the
+same way. Under `Terminal.withOutput writer` — an `AsyncLocal`, so it flows
+into the thread-pool work the run starts — `ansi ()` is a plain (no ANSI, no colour) console over `writer`,
+`Terminal.out ()` (where a `Console`-sink step line goes) is `writer`, and `CmdRunner.outputPolicy` redirects a
+`Console`-sink child, which would otherwise inherit the real stdout; `withOutput` installs the writer through
+`TextWriter.Synchronized`, since several threads write to it. A console whose writer has no terminal
+reports width `-1` and renders nothing, so `ansi`/`plain` give it `FallbackWidth` (80). `Terminal.ensureUtf8`
+sets the console encodings at most once per process, skips a redirected stream, and swallows a failure.
+
+`PipelineContext.create` starts `EnvVars` empty: it holds the variables the pipeline sets. `runWith` layers
+them over `PipelineContext.ambientEnvironment ()` read as the run starts, so a variable set after the pipeline
+value was built is visible to its steps. `runWith` also refuses a second concurrent run of one pipeline value
+(identity: the `ScopeReports` a value and its record copies share) with an `InvalidOperationException` before
+touching anything; `PipelineContext.withRunState` gives a copy collections of its own that runs independently.
+`Builders/Command.fs`'s `runReportingTimings` holds the guard itself (`PipelineContext.Running.enter`, then
+`runEntered`) outside the `try` whose `finally` records and prints the run, so a refused invocation reports
+nothing of the run holding the value.
+
 `src/Partas.Build.Cmd` (`Program.fs`, `Execution.fs`) is the process layer, defining `Cmd` and compiling before `Partas.Build`.
 
 `src/Partas.Build.Baked` is the batteries-included layer over the library: ready-made `Input.*`/`Argument.*` definitions
-for the options every build CLI ends up wanting (`--configuration`, `--nuget-key`, `--project`, `--ci`, a version
-bump), the semver arithmetic in `Version`, and `IO.writeVersion`/`IO.bumpVersion` for editing a project file's
-`<Version>`. It is the only place in the library that writes to disk.
+for the options every build CLI ends up wanting (`--configuration` and `Dotnet.configOrRelease`, `--nuget-key`,
+`--project`, `--ci`, `--quick`, `--skip-tests`, `--watch`, a version bump), the semver arithmetic in `Version`, and
+`IO.writeVersion`/`IO.bumpVersion` for editing a project file's `<Version>`. It is the only place in the library that
+writes to disk, apart from the result file `--report` names. `Stages.fs` holds the prefab stages (`restore`, `clean`, `build`, `pack`, `expecto`, `nugetPush`,
+`fantomas`, `npmInstall`): functions answering `InputSpec<StageContext>` that read Baked's own options, each with a
+`…With` counterpart taking those options as `InputSpec`s. A skip carries a reason for `--explain`. `Clean.fs` is the
+glob matcher behind `clean`, on `System.IO` alone; it never follows a symbolic link, so everything it deletes lies
+under its root.
 
 The core model, once a single `Types.fs`, is split by responsibility and compiles in this order:
 1. `Exceptions.fs` (`Partas.Build.ErrorHandling`) — pipeline exceptions, `FailureCause`, `StepOutcome`.
-2. `Output.fs` (`Partas.Build.OutputHandling`) — `OutputCapture`, `StageOutput`, markup.
+2. `Output.fs` (`Partas.Build.OutputHandling`) — `OutputCapture`, `StageOutput`, markup; then `Terminal.fs`
+   (`Partas.Build.Internal.Terminal`) — the console every write goes through, resolved at the moment of writing.
 3. `Environment.fs`, `Timing.fs`, `Producer.fs` (`Partas.Build`) — `EnvArg`; `StageTimings`; `ProducerId`/`ProducerRef`/`ProducerValues` and the `ExecutionState` type.
-4. `Conductors.fs` — `Partas.Build.Internal` first: `StageContext`, `PipelineContext`, `CommandSpec`. `Step` is `StepFn | Operation | StepOfStage`: a nested stage *is* one step of its parent, and stages nest arbitrarily. `StageParent` links a stage to a parent stage or the pipeline. The file ends in `Partas.Build` with the `StageContext` lookups that need `FsToolkit`/`HttpClient`.
+4. `Conductors.fs` — `Partas.Build.Internal` first: `StageContext`, `PipelineContext`, `CommandSpec`. `Step` is `StepFn | Operation | StepOfStage`: a nested stage *is* one step of its parent, and stages nest arbitrarily. `StageParent` links a stage to a parent stage or the pipeline. The file ends in `Partas.Build` with the `ConsumerTypes` module — `[<AutoOpen>]` abbreviations of every model type a consumer names in a signature (`StageContext`, `PipelineContext`, `CommandSpec`, `StageParent`, `RuntimeContext`, `Step`, `StageCondition`, `StageIndex`, `StepIndex`, the `Build*` aliases; the `stepIndex` measure sits in the nested `[<AutoOpen>] Measures` module, since the Nacara reference routes pages case-insensitively and `stepIndex`/`StepIndex` would collide) — and the `StageContext` lookups that need `FsToolkit`/`HttpClient`, plus the consumer-facing re-exports `writeLine`/`getOutput`/`getVerbosity`/`getNamePath`. A consumer never needs `open Partas.Build.Internal`; `tests/Partas.Build.Tests/ConsumerSurfaceTests.fs` compiles without it and must keep doing so.
 5. `Conductors.Runners.fs` (`Partas.Build.Internal.Runners`) — the execution engine (`StageContext.run`, `PipelineContext.run`).
 
 The `Build*` function aliases (`BuildStage`, `BuildStep`, `BuildStageIsActive`, …) no longer take an `ActionContext`: stages are pure, and the aliases match Fun.Build's originals except that Fun.Build declares them as delegates where this port uses plain function types. That difference has one mechanical consequence: **do not mark a CE entry member `inline` when it applies a `Build*` alias**, or Release builds fail with `FS1118` (Debug compiles fine). `Run` members are the usual offenders. `run (build: BuildStage, buildStep: StageContext -> BuildStep)` on `StageBuilder` stays non-generic: generalizing it ties it against the flexible-signature `run (step)` overload under `FS0041` at four existing call sites (`PLAN-Execution.md`'s T8 section). Being non-generic, it composes the alias itself, so that member must also stay non-`inline`. `FS1114` ("marked inline but was not bound in optimization environment") is the failure mode of forwarding one generic member to another sibling overload rather than building its step directly — moving the shared builder settings hit it in both Debug and Release, not only in Release like `FS1118`.
@@ -156,7 +251,7 @@ a `voption` setting transfers only when the pipeline left it `ValueNone`; `PostS
 declared none; `AcceptableExitCodes` only while the pipeline is still on `set [0]`; the hooks and `Verify` only
 while they are still the `noStageHook`/`alwaysVerify` values `create` installed, so those are named
 module-level bindings rather than inline `ignore` — reference equality is the test; and `EnvVars` per key,
-since a pipeline's map starts as the whole ambient environment. `NoPrefixForStep`/`NoStdRedirectForStep` are
+a default key applying wherever the pipeline did not set that key itself. `NoPrefixForStep`/`NoStdRedirectForStep` are
 plain bools with no unset state, so a pipeline setting one to the value it already had is indistinguishable
 from not setting it at all — the single known gap.
 
@@ -173,11 +268,18 @@ Overload resolution in these builders fails in ways that are invisible by inspec
 
 `Build/Program.fs` is the whole CLI — repository paths, options, stages and commands in one file. Repository paths come from `Partas.TypeProvider.BuildHelper` (`type Repo = BuildHelperProvider<...>`, with `Repo.FileSystem` and `Repo.VirtualFileSystem` for the real and virtual file systems), so a renamed project breaks compilation instead of failing mid-release. A new packable project goes in `Project.allProjects`, which is both what `bump` can version and what `pack` packs; `Repo.Project.<name>.Path` is a compile-time constant, while `PackageId`/`AssemblyName`/`Version` are MSBuild evaluations that shell out to `dotnet msbuild -getProperty`, so keep those off any path that runs before parsing.
 
-Since Phase 7 the CLI is written against Partas.Build (`Build.fsproj` has a project reference to `src/Partas.Build`), so it doubles as the design's acceptance test. A step is a stage; a stage that needs a flag binds it in `inputs { let! quick = Options.quick ... return stage "..." { when' (not quick); run (cmd $"dotnet ...") } }`, and the command registers it by running the pipeline that contains it. The CLI has no per-command option lists and no process wrappers. Custom operations cannot sit under an `if`/`match`, so a stage that branches builds a `Cmd` first and runs it unconditionally, and a stage that exists only when an option was supplied is yielded through `whenSome` — `ProjectManagement.publish` yields its `nuget publish` stage that way, so the stage closes over the key rather than reaching for `key.Value` under a `when'`.
+Since Phase 7 the CLI is written against Partas.Build (`Build.fsproj` has a project reference to `src/Partas.Build`), so it doubles as the design's acceptance test. A step is a stage; a stage that needs a flag binds it in `input { let! quick = Baked.Common.quick ... return stage "..." { when' (not quick) "--quick is set"; run (cmd $"dotnet ...") } }`, and the command registers it by running the pipeline that contains it. The CLI has no per-command option lists and no process wrappers. Custom operations cannot sit under an `if`/`match`, so a stage that branches builds a `Cmd` first and runs it unconditionally, and a stage that exists only when an option was supplied is yielded through `whenSome` — `Baked.Stages.nugetPush`, which `ProjectManagement.publishAll` uses, matches on the key the same way, so the stage closes over the key rather than reaching for `key.Value` under a `when'`. Restore, clean, build, pack, the Expecto suites and the push are Baked prefabs (`notes/PLAN-Integration.md` §3.1); the CLI keeps only what is its own — the compiler probe, the docs stages, `bump`'s project list.
 
-The four Expecto suites run `--sequenced`. Each drives real pipelines, and a pipeline writes to one process-wide console and holds a thread in `Async.RunSynchronously` for the length of every stage — run in parallel on a two-core runner, that yields a log whose lines belong to no test in particular, with enough blocked workers that the thread pool grows one thread at a time. `Tests.execute` captures the suites' output when `--ci` is set, so a green CI run says nothing and a red one lifts the whole failure into the annotation; locally it stays live. `Tests.execute` also runs `tests/Partas.Build.CompilerProbe` twice, once per configuration, regardless of `--configuration`. Release catches an `inline` member that applies a `Build*` alias (`FS1118`), which a Debug build compiles clean.
+The four Expecto suites run `--sequenced`. Each drives real pipelines, and a pipeline writes to one process-wide console and holds a thread in `Async.RunSynchronously` for the length of every stage — run in parallel on a two-core runner, that yields a log whose lines belong to no test in particular, with enough blocked workers that the thread pool grows one thread at a time. `Baked.Stages.expecto` captures output under `--ci` by default; this repository overrides its suites to console output so assertions reach the CI log and uploaded artifact. Test child processes receive an empty `GITHUB_STEP_SUMMARY` so fixture commands keep their reports out of the real job summary. Library builds run sequentially because they share referenced assembly outputs. `Tests.execute` also runs `tests/Partas.Build.CompilerProbe` twice, once per configuration, regardless of `--configuration`. Release catches an `inline` member that applies a `Build*` alias (`FS1118`), which a Debug build compiles clean.
 
-Fake survives only where it is better than a process call: `!!` and `Shell.cleanDirs` for the clean. Everything else is a `run` step.
+The `cmd`, `operations` and `CompilerTests` lists end in `|> testLabel "integration"`, so their tests' full names
+start with an `integration` segment (`integration.cmd.…` in Expecto's output; a `--filter`/`--filter-test-list` on
+them needs it, `--filter-test-case` does not).
+SageFs live testing classifies a test whose full name contains `integration` as Integration and runs it only on
+demand, instead of on every change under a five-second timeout; the rule is `CategoryDetection.categorize` in
+SageFs's `SageFs.Core/Features/LiveTestingTypes.fs`, which for Expecto reads the name alone.
+
+There is no Fake dependency: the clean is `Baked.Stages.clean`, over `System.IO`. Everything else is a `run` step.
 
 ### Versioning
 
@@ -198,6 +300,8 @@ a patch bump move it breaks anything not rebuilt in the same pass with `Could no
 
 - `.editorconfig` sets Stroustrup style, `max_line_length=150`, `fsharp_space_before_uppercase_invocation=true`. No fantomas tool is installed (`.config/dotnet-tools.json` declares no tools at all) and there is no `format`/`lint` command — match surrounding style manually.
 - Prefer `voption`/`ValueOption` and `[<Struct>]` DUs in the library: a departure from the ported Fun.Build code.
-- Public API goes in `[<AutoOpen>]` modules under `Partas.Build`; the model and engine stay in `Partas.Build.Internal`.
-- Console output is Spectre.Console throughout, with GitHub Actions `::error title=...::` fallbacks when `GITHUB_ENV` is present (see `printError` in both context modules).
+- Public API goes in `[<AutoOpen>]` modules under `Partas.Build`; the model and engine stay in `Partas.Build.Internal`. A model type that appears in a public signature gets an abbreviation in `ConsumerTypes` (`Conductors.fs`), and a lookup a step needs gets a re-export in the public `StageContext` module.
+- Human-readable console output uses `Terminal.ansi ()`, which follows the invocation writer. Plain host consoles disable CI profile enrichment to preserve plain text. GitHub workflow commands use `Terminal.out ()` directly to preserve one physical line, enabled by case-insensitive `GITHUB_ACTIONS=true` detection (see `WorkflowCommands` and `printError` in both context modules).
 - The Nacara site (`docs/Site.fs`, `docs/docs.fsproj`) publishes every page under `docs/content/` and `docs/blog/`, plus the generated API reference, so internal working documents belong in `notes/` (as the `PLAN*.md` files do), not under `docs/`.
+- The `.fsx` pages under `docs/content/` `#load` the library's sources in `<Compile>` order: a file added to `Partas.Build.fsproj` or `Partas.Build.Baked.fsproj` goes into all four lists, or the pages stop type-checking. Check a page with `dotnet fsi <page>.fsx` from its own directory. `docs/static/` is copied to the site root verbatim: `llms.txt` and `AGENTS-snippet.md` (the block a consumer pastes into its `AGENTS.md`, also packed into the `Partas.Build` package root). Nacara generates no `llms-full.txt`.
+- XML docs carry `<example>` blocks on the entry points an agent hovers (`run`/`runLine`/`runSensitive`, `input`, `whenSome`, `Cmd.argIf`/`argWhenSome`/`cmd`, `stage`/`pipeline`/`command`/`rootCommand`/`rootCommandOfScript`, `Command.root`/`invoke`, `RootCommandDefinition.Invoke`, `RunResult`, `MachineOutput.json`, `Baked.Stages`). They are written to compile: an edit to one is checked by pasting it into a scratch script against the built library. Escape `<` as `&lt;` inside them; `GenerateDocumentationFile` is on and the build stays warning-free.

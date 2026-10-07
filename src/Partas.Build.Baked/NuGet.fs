@@ -9,9 +9,10 @@ let apiKey =
     |> BuildOptionInput.withAlias "k"
     |> BuildOption.createMaybe<string>
     |> BuildOption.map (
-        Input.desc "NuGet API key"
+        Input.description "NuGet API key"
         >> Input.helpName "APIKEY"
         >> Input.arity Arity.ExactlyOne
+        >> Input.sensitive
         >> Input.def (
                 try
                 let result = System.Environment.GetEnvironmentVariable "NUGET_API_KEY"

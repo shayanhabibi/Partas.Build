@@ -31,3 +31,8 @@ let skipTests =
 let watch =
     Input.option<bool> "--watch"
     |> Input.description "Runs the operation in watch mode"
+
+/// `--cwd`: working directory for operation (primarily used with fable)
+let cwd =
+    Input.option<string> "--cwd"
+    |> Input.description "Working directory for operation"

@@ -56,7 +56,7 @@ let private skipReason (skip: InputSpec<bool>) =
 /// Binds <paramref name="skip"/> and skips the stage <paramref name="spec"/> answers when it reads <c>true</c>.
 let private skippedBy (skip: InputSpec<bool>) (spec: InputSpec<StageContext>) : InputSpec<StageContext> =
     let reason = ValueSome (skipReason skip)
-    InputSpec.map2 (fun skipped stage -> StageContext.addPredicateBecause reason (fun _ -> not skipped) stage) skip spec
+    InputSpec.map2 (fun skipped -> StageContext.addPredicateBecause reason (fun _ -> not skipped)) skip spec
 
 let private quick = InputSpec.ofInput Common.quick
 let private skipTests = InputSpec.ofInput Common.skipTests
@@ -67,9 +67,11 @@ let private projectName (project: string) = Path.GetFileNameWithoutExtension pro
 
 /// <summary><c>restore</c>: <c>dotnet tool restore</c>, then <c>dotnet restore</c> of
 /// <paramref name="solution"/>; skipped when <paramref name="skip"/> reads <c>true</c>.</summary>
+/// <param name="solution">Arg provided to <c>dotnet restore</c></param>
+/// <param name="skip">InputSpec providing boolean as to skip restore or not</param>
 let restoreWith (skip: InputSpec<bool>) (solution: string) =
     stage "restore" {
-        run (cmd $"dotnet tool restore --verbosity q")
+        run "dotnet tool restore --verbosity q"
         run (cmd $"dotnet restore {solution}")
     }
     |> InputSpec.ret
@@ -86,6 +88,9 @@ let restore (solution: string) = restoreWith quick solution
 /// <c>bin</c> directory except the root's, and creates or empties <c>tmp</c>. The step's label, shown by
 /// <c>--explain</c>, lists the patterns.
 /// </remarks>
+/// <param name="skip"></param>
+/// <param name="directories"></param>
+/// <param name="files"></param>
 let cleanWith (skip: InputSpec<bool>) (directories: string list) (files: string list) =
     let label =
         [ if not directories.IsEmpty then "empty " + String.concat " " directories
@@ -123,6 +128,9 @@ let build (projects: string list) = buildWith Dotnet.configOrRelease projects
 /// <summary><c>pack</c>: one <c>dotnet pack --no-build --no-restore</c> sub-stage per project, writing to
 /// <paramref name="outDir"/>, run under <c>parallel'</c>.</summary>
 /// <remarks>Packs what a <c>build</c> in the same configuration left behind.</remarks>
+/// <param name="configuration"></param>
+/// <param name="outDir"></param>
+/// <param name="projects"></param>
 let packWith (configuration: InputSpec<string>) (outDir: string) (projects: string list) = input {
     let! configuration = configuration
     return stage "pack" {
@@ -155,6 +163,11 @@ let pack (outDir: string) (projects: string list) = packWith Dotnet.configOrRele
 /// Stages.expectoWith fast Dotnet.configOrRelease (InputSpec.ofInput Common.isCI) "tests/Unit/Unit.fsproj" []
 /// </code>
 /// </example>
+/// <param name="skip"></param>
+/// <param name="configuration"></param>
+/// <param name="isCI"></param>
+/// <param name="project"></param>
+/// <param name="arguments"></param>
 let expectoWith (skip: InputSpec<bool>) (configuration: InputSpec<string>) (isCI: InputSpec<bool>) (project: string) (arguments: string list) =
     input {
         let! configuration = configuration
@@ -183,6 +196,10 @@ let expecto (project: string) (arguments: string list) = expectoWith skipTests D
 /// shows it as <c>***</c>. <paramref name="packages"/> is passed through for <c>dotnet nuget push</c> to expand,
 /// so <c>bin/*.nupkg</c> pushes every package there.
 /// </remarks>
+/// <param name="apiKey">InputSpec providing the API key or <c>None</c> to push to the local feed</param>
+/// <param name="localSource">The name of the local feed</param>
+/// <param name="source">The name of the remote feed</param>
+/// <param name="packages">The glob of the packages to push</param>
 let nugetPushWith (apiKey: InputSpec<string option>) (localSource: string) (source: string) (packages: string) = input {
     let! apiKey = apiKey
     return stage "push" {

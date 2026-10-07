@@ -9,13 +9,14 @@
         <PackageId>Partas.Build.Baked</PackageId>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <Description>Prebaked options, arguments, and composed stages for Partas.Build</Description>
-    <Version>0.2.0</Version><AssemblyVersion>0.0.0.0</AssemblyVersion></PropertyGroup>
+    <Version>0.3.0</Version><AssemblyVersion>0.0.0.0</AssemblyVersion></PropertyGroup>
 
     <ItemGroup>
         <Compile Include="Program.fs" />
         <Compile Include="Common.fs" />
         <Compile Include="NuGet.fs" />
         <Compile Include="Dotnet.fs" />
+        <Compile Include="Fable.fs" />
         <Compile Include="SemVer.fs" />
         <Compile Include="Clean.fs" />
         <Compile Include="Stages.fs" />

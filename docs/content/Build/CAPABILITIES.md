@@ -8,7 +8,7 @@ order: 1
 
 One line per custom operation on the four builders, per `Input` combinator, and per `Cmd` argument helper. The
 [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) has full signatures and remarks.
-[Composing reusable blocks](composition.fsx) has worked examples.
+[Composing reusable blocks](composition.md) has worked examples.
 
 ## How settings resolve
 
@@ -557,8 +557,8 @@ counterpart takes each of those options as an `InputSpec<_>` instead. A skip rep
 
 ## Reference
 
-- [Overview](index.fsx) — the layers, and a first pipeline.
-- [Composing reusable blocks](composition.fsx) — blocks, nesting, and composition across files.
+- [Overview](index.md) — the layers, and a first pipeline.
+- [Composing reusable blocks](composition.md) — blocks, nesting, and composition across files.
 - [Hosting a build in a long-lived session](hosting.md) — `Command.invoke` from SageFs or any F# host.
-- [Stage CE run overloads](computation-expression-operations.fsx).
+- [Stage CE run overloads](computation-expression-operations.md).
 - [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) — full signatures and remarks.

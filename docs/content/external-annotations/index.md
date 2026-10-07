@@ -1,4 +1,4 @@
-﻿---
+---
 title: Overview
 category: ExternalAnnotations
 index: 1
@@ -39,7 +39,7 @@ sites resolve.
 | `Partas.Build.ExternalAnnotations` | Partas.Build stages and commands over the generator, plus the MSBuild `.targets` as an embedded resource and a packed `build/` asset. |
 | `Partas.ExternalAnnotations.Tool` | The `partas-annotations` dotnet tool: a `rootCommand` over the library's three commands. |
 
-The tool is what MSBuild shells out to during pack. See [the F# surface](external-annotations-api.fsx) to own
+The tool is what MSBuild shells out to during pack. See [the F# surface](external-annotations-api.md) to own
 the behaviour in your own build instead.
 
 Your assembly is never loaded for execution and its target framework is irrelevant. Any tool host produces

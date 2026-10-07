@@ -152,27 +152,6 @@ module Documentation =
         }
     }
 
-    /// <summary>Prepends the <c>docs/static/llms.txt</c> header to <c>output/llms.txt</c>, which Nacara generates
-    /// as a verbatim copy of that same file, so the body appears twice. <c>output/llms-full.txt</c> does not
-    /// exist, so that half of the merge has no effect.</summary>
-    /// <remarks>
-    /// Written for fsdocs, which generated both files at the site root as a link inventory under such a heading.
-    /// </remarks>
-    let llms = input {
-        let! watch = Baked.Common.watch
-        return stage "llms" {
-            when' (not watch) "--watch is set"
-            run (fun ctx ->
-                let header = File.ReadAllText(Path.Combine(root, "docs", "static", "llms.txt")).TrimEnd()
-                for name in [ "llms.txt"; "llms-full.txt" ] do
-                    let path = Path.Combine(root, "output", name)
-                    if File.Exists path then
-                        let body = File.ReadAllLines path |> Array.skipWhile (fun line -> line.Trim() = "" || line.StartsWith "# ")
-                        File.WriteAllLines(path, Array.append [| header; "" |] body)
-                        StageContext.writeLine ctx StdStream.Out $"merged docs/llms.txt into output/{name}")
-        }
-    }
-
 module Commands =
     let build =
         command "build" {
@@ -231,7 +210,6 @@ module Commands =
                 Prelude.restore
                 ProjectManagement.buildAll
                 Documentation.generate
-                Documentation.llms
             }
         }
 

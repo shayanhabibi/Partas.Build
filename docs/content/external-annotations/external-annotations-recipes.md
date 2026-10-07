@@ -7,7 +7,7 @@ index: 3
 # External Annotations — Recipes
 
 Concrete setups. Background is on the [overview](index.md); the F# API is
-[here](external-annotations-api.fsx).
+[here](external-annotations-api.md).
 
 ## Ship annotations from a repo you own
 

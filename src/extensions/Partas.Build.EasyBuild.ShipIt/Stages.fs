@@ -7,15 +7,26 @@ open System.Threading
 open Partas.Build
 open Partas.Build.Internal
 
+let private commandStage name (command: Cmd) =
+        let stage = stage name { run command }
+        // Boundary inspection is deferred until execution, so discovery is pure.
+        let steps = stage.Steps |> List.map (function
+            | Step.StepFn(label, execute) -> Step.StepFn(label, fun ctx index -> async {
+                ToolSetup.validateBoundary (StageContext.getWorkingDir ctx |> ValueOption.defaultWith Directory.GetCurrentDirectory) |> ignore
+                return! execute ctx index
+              })
+            | other -> other)
+        { stage with Steps = steps }
+
 let private operation name (build: 'T -> Cmd) (inputs: InputSpec<'T>) =
-    inputs |> InputSpec.map (fun value -> stage name { run (build value) })
+    inputs |> InputSpec.map (build >> commandStage name)
 
 let generateWith options = operation "shipit generate" Operations.generate options
 let generate = generateWith Inputs.release
 let githubWith (options: InputSpec<ReleaseOptions>) (token: InputSpec<string option>) = input {
     let! options = options
     and! token = token
-    return stage "shipit github" { run (Operations.github options token) }
+    return commandStage "shipit github" (Operations.github options token)
 }
 let github = githubWith Inputs.release Inputs.token
 /// Calculate and apply versions locally, even if the consumer supplies another mode.
@@ -31,7 +42,7 @@ let initWorkflows = operation "shipit init workflows" Operations.initWorkflows (
 let initGithubWith (organization: InputSpec<bool>) (dryRun: InputSpec<bool>) = input {
     let! organization = organization
     and! dryRun = dryRun
-    return stage "shipit init github" { run (Operations.initGithub organization dryRun) }
+    return commandStage "shipit init github" (Operations.initGithub organization dryRun)
 }
 let initGithub = initGithubWith (InputSpec.ofInput Inputs.organization) (InputSpec.ofInput Inputs.dryRun)
 
@@ -41,7 +52,7 @@ let setupWith (version: InputSpec<string>) = input {
     let! version = version
     return stage "shipit setup" {
         run (fun (ctx: StageContext) -> async {
-            let root = ToolSetup.repositoryRoot (directory ctx)
+            let root = ToolSetup.validateBoundary (directory ctx)
             let executionContext = StageContext.setWorkingDir (ValueSome root) ctx
             let execute command = async {
                 match! CmdRunner.run executionContext 0<stepIndex> CancellationToken.None command with
@@ -62,8 +73,10 @@ let configureProjectsWith (changelog: InputSpec<string>) (projects: InputSpec<st
     return stage "shipit init project" {
         run (fun (ctx: StageContext) -> async {
             let root = directory ctx
+            ToolSetup.validateBoundary root |> ignore
             let path = Path.GetFullPath(Path.Combine(root, changelog))
             let projects = projects |> List.map (fun project -> Path.GetFullPath(Path.Combine(root, project)))
+            ProjectSetup.validateProjects projects
             if not (File.Exists path) then
                 let! result = CmdRunner.run ctx 0<stepIndex> CancellationToken.None (Operations.initChangelog (Some path))
                 match result with

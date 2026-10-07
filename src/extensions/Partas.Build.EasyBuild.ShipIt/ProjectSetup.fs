@@ -34,13 +34,16 @@ let private validateProject (path: string) =
                        && not (version.Value.Contains "$" || version.Value.Contains "@(") -> ()
     | _ -> invalidArg "projects" $"{path}: requires exactly one unconditional literal /Project/PropertyGroup/Version. Configure externally defined or conditional versions manually."
 
+let internal validateProjects (projects: string list) =
+    if projects.IsEmpty then invalidArg "projects" "At least one project is required."
+    projects |> List.iter validateProject
+
 /// Add missing XML updaters atomically, retaining the existing changelog bytes outside inserted YAML.
 let configure (changelog: string) (projects: string list) =
-    if projects.IsEmpty then invalidArg "projects" "At least one project is required."
     let changelog = Path.GetFullPath changelog
     let directory = Path.GetDirectoryName changelog
     let projects = projects |> List.map Path.GetFullPath |> List.distinct
-    projects |> List.iter validateProject
+    validateProjects projects
     let bytes = File.ReadAllBytes changelog
     let hasBom = bytes.Length >= 3 && bytes[0] = 239uy && bytes[1] = 187uy && bytes[2] = 191uy
     let offset = if hasBom then 3 else 0
@@ -75,9 +78,17 @@ let configure (changelog: string) (projects: string list) =
                             Some (Path.GetFullPath(Path.Combine(directory, file)), selected)
                         | _ -> invalidOp "XML updater must be a mapping."
                     | _ -> invalidOp "Each updater must be a mapping.") |> Set.ofSeq
-            let last = sequence.Children[sequence.Children.Count - 1]
-            let lineEnd = yaml.Value.IndexOf('\n', int last.End.Index)
-            let insertion = if lineEnd < 0 then yaml.Length else lineEnd + 1
+            // Representation mapping End marks do not span their contents. The next root
+            // key reliably bounds the entire sequence, including multiline updater mappings.
+            let insertion =
+                mapping.Children.Keys
+                |> Seq.filter (fun key -> key.Start.Index > sequence.Start.Index)
+                |> Seq.map (fun key -> int key.Start.Index - (int key.Start.Column - 1))
+                |> Seq.sort
+                |> Seq.tryHead
+                |> Option.defaultValue yaml.Length
+            let precedingComments = Regex.Match(yaml.Value.Substring(0, insertion), "(?:^#[^\\r\\n]*\\r?\\n)+\\z", RegexOptions.Multiline)
+            let insertion = insertion - precedingComments.Length
             registered, insertion, int sequence.Start.Column - 1, ""
         | _ -> invalidOp "ShipIt updaters must be a block sequence."
     let missing = projects |> List.filter (fun path -> not (existing.Contains(path, selector)))

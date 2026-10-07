@@ -13,6 +13,66 @@ let private labels (stage: StageContext) = stage.Steps |> List.choose (function
 
 [<Tests>]
 let tests = testList "shipit" [
+    test "setup and bump stages reject nested manifests at execution" {
+        let directory = Directory.CreateTempSubdirectory "shipit-boundary-stage"
+        try
+            Directory.CreateDirectory(Path.Combine(directory.FullName, ".git")) |> ignore
+            Directory.CreateDirectory(Path.Combine(directory.FullName, ".config")) |> ignore
+            File.WriteAllText(Path.Combine(directory.FullName, ".config", "dotnet-tools.json"), "{}")
+            let nested = Directory.CreateDirectory(Path.Combine(directory.FullName, "nested"))
+            Directory.CreateDirectory(Path.Combine(nested.FullName, ".config")) |> ignore
+            File.WriteAllText(Path.Combine(nested.FullName, ".config", "dotnet-tools.json"), "{}")
+            for spec in [ Stages.setup; Stages.bump ] do
+                let stage = spec.Read (parse spec.Inputs "") |> StageContext.setWorkingDir (ValueSome nested.FullName)
+                let result = quietly (fun () -> runStage stage)
+                let messages = match result with Error errors -> errors |> List.map _.Message |> String.concat "\n" | Ok () -> ""
+                Expect.stringContains messages "Ambiguous tool manifest" "same boundary on both stages"
+        finally directory.Delete true
+    }
+    test "project init rejects invalid versions before invoking changelog creation" {
+        let directory = Directory.CreateTempSubdirectory "shipit-project-init"
+        try
+            Directory.CreateDirectory(Path.Combine(directory.FullName, ".git")) |> ignore
+            let project = Path.Combine(directory.FullName, "Invalid.fsproj")
+            File.WriteAllText(project, "<Project/>")
+            let spec = Stages.configureProjects "CHANGELOG.md" [ project ]
+            let stage = spec.Read (parse spec.Inputs "") |> StageContext.setWorkingDir (ValueSome directory.FullName)
+            let result, output = capturingOut (fun () -> runStage stage)
+            let errors = match result with Error errors -> errors |> List.map _.Message |> String.concat "\n" | Ok () -> ""
+            Expect.stringContains errors "unconditional literal" "validate before invoking dotnet"
+            Expect.isFalse (File.Exists(Path.Combine(directory.FullName, "CHANGELOG.md"))) "no changelog created"
+        finally directory.Delete true
+    }
+    test "project setup can add a second multiline XML updater" {
+        let directory = Directory.CreateTempSubdirectory "shipit-project"
+        try
+            let changelog = Path.Combine(directory.FullName, "CHANGELOG.md")
+            let a = Path.Combine(directory.FullName, "A.fsproj")
+            let b = Path.Combine(directory.FullName, "B.fsproj")
+            for project in [a; b] do File.WriteAllText(project, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
+            File.WriteAllText(changelog, "---\nname: shared\n---\nbody\n")
+            ProjectSetup.configure changelog [a]
+            ProjectSetup.configure changelog [b]
+            let once = File.ReadAllText changelog
+            Expect.stringContains once "file: 'A.fsproj'" "first survives"
+            Expect.stringContains once "file: 'B.fsproj'" "second added"
+            ProjectSetup.configure changelog [a; b]
+            Expect.equal (File.ReadAllText changelog) once "both idempotent"
+        finally directory.Delete true
+    }
+    test "setup rejects a nested tool manifest before any process" {
+        let directory = Directory.CreateTempSubdirectory "shipit-boundary"
+        try
+            Directory.CreateDirectory(Path.Combine(directory.FullName, ".git")) |> ignore
+            let nested = Directory.CreateDirectory(Path.Combine(directory.FullName, "nested"))
+            let config = Directory.CreateDirectory(Path.Combine(nested.FullName, ".config"))
+            File.WriteAllText(Path.Combine(config.FullName, "dotnet-tools.json"), """{"version":1,"isRoot":true,"tools":{}}""")
+            let mutable called = false
+            let execute _ = async { called <- true; return 0 }
+            Expect.throws (fun () -> ToolSetup.runWith execute nested.FullName "3.1.0" |> Async.RunSynchronously) "nested manifest is ambiguous"
+            Expect.isFalse called "no process"
+        finally directory.Delete true
+    }
     test "bump is local even with consumer Push mode" {
         let spec = Stages.bumpWith (InputSpec.ret { ReleaseOptions.defaults with Mode = Push })
         let resolved = spec.Read (parse spec.Inputs "")
@@ -123,6 +183,8 @@ let tests = testList "shipit" [
             }
             ToolSetup.runWith execute nested.FullName "3.1.0" |> Async.RunSynchronously
             Expect.equal calls.Count 3 "create install restore"
+            Expect.sequenceEqual calls[0].Arguments
+                [ "new"; "tool-manifest"; "--output"; Path.Combine(directory.FullName, ".config"); "--no-update-check" ] "template output is the manifest directory"
             Expect.isTrue (calls[1].Arguments |> List.contains manifest) "repository manifest"
             ToolSetup.runWith execute nested.FullName "3.1.0" |> Async.RunSynchronously
             Expect.equal calls.Count 4 "second run only restores"

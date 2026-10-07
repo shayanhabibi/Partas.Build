@@ -5,6 +5,7 @@
     <Version>0.1.0</Version>
     <AssemblyVersion>0.0.0.0</AssemblyVersion>
     <Description>Composable EasyBuild.ShipIt release workflows for Partas.Build</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Types.fs" />
@@ -14,6 +15,7 @@
     <Compile Include="Inputs.fs" />
     <Compile Include="Stages.fs" />
     <Compile Include="Commands.fs" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../Partas.Build/Partas.Build.fsproj" />

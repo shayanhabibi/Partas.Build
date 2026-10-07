@@ -27,6 +27,7 @@
         <Compile Include="ConsumerSurfaceTests.fs"/>
         <Compile Include="BakedTests.fs"/>
         <Compile Include="ShipItTests.fs"/>
+        <Compile Include="ShipItContractTests.fs"/>
         <Compile Include="ExplainTests.fs"/>
         <Compile Include="SummaryTests.fs"/>
         <Compile Include="CompilerTests.fs"/>

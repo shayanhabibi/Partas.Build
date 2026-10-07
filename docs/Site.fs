@@ -9,6 +9,7 @@ let theme =
     Theme.defaults
     |> Theme.navbar [
         NavbarSection("Build", "build", "/build/")
+        NavbarSection("Extensions", "extensions", "/extensions/")
         NavbarSection("External Annotations", "external-annotations", "/external-annotations/")
         NavbarSection("Reference", "reference", "/reference/")
         NavbarDivider
@@ -32,7 +33,10 @@ let theme =
 let apiOptions = {
         FSharpApi.defaults with
             Root = "reference"
-            Sources = [ FSharpApiSource.create "../src/Partas.Build/bin/Release/net10.0/Partas.Build.dll" ]
+            Sources = [
+                FSharpApiSource.create "../src/Partas.Build/bin/Release/net10.0/Partas.Build.dll"
+                FSharpApiSource.create "../src/extensions/Partas.Build.EasyBuild.ShipIt/bin/Release/net10.0/Partas.Build.EasyBuild.ShipIt.dll"
+            ]
             Exclude = [ "Partas.Build.Internal" ]
     }
 

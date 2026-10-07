@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net8.0;netstandard2.0</TargetFrameworks>
+    <PackageId>Partas.Build.EasyBuild.ShipIt</PackageId>
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <Description>Composable EasyBuild.ShipIt release workflows for Partas.Build</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Types.fs" />
+    <Compile Include="Operations.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../Partas.Build/Partas.Build.fsproj" />
+  </ItemGroup>
+</Project>

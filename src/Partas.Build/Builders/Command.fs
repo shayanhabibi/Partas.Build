@@ -1,4 +1,4 @@
-﻿[<AutoOpen>]
+[<AutoOpen>]
 module Partas.Build.CommandBuilder
 
 open System
@@ -91,14 +91,17 @@ let private invocations = ConditionalWeakTable<ParseResult, InvocationState>()
 /// so does a run of a single stage, whose wall time is the pipeline's own, and a run under <c>--json</c>, whose
 /// result carries the timings.
 /// </remarks>
-let private runReportingTimings (output: TextWriter) (asJson: bool) (state: InvocationState) (pipeline: PipelineContext) =
+let private runReportingTimings (output: TextWriter) (asJson: bool) (state: InvocationState)
+    (summaries: ResizeArray<Map<string, string> * (string * StageTiming list)>) (pipeline: PipelineContext) =
     // Entered outside the `try`: a run refused here must not record or print the collections of the run holding it.
     use _running = PipelineContext.Running.enter pipeline
+    let envVars = Map.foldBack Map.add pipeline.EnvVars (PipelineContext.ambientEnvironment ())
     try
-        PipelineContext.runEntered state.CancellationToken pipeline
+        PipelineContext.runEntered state.CancellationToken { pipeline with EnvVars = envVars }
     finally
         let timings = StageTimings.ordered pipeline.Timings
         state.Record { Name = pipeline.Name; Reports = ScopeReports.stages pipeline.Reports; Timings = timings }
+        summaries.Add((envVars, (pipeline.Name, timings)))
 
         let verbosity = defaultValueArg pipeline.Verbosity Verbosity.Default
         let timings = StageTimings.ordered pipeline.Timings
@@ -155,17 +158,15 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
         else reportResult configuration.Output parseResult ExitCode.UsageError []
     | Ok _ when explaining -> explain configuration.Output asJson command pipelines
     | Ok plan ->
-        let scheduled = ExecutionSchedule.schedule parseResult plan pipelines
-        let executed = ResizeArray<PipelineContext>()
+        let summaries = ResizeArray<Map<string, string> * (string * StageTiming list)>()
         let exitCode =
             try
                 try
-                    for pipeline in scheduled do
+                    for pipeline in ExecutionSchedule.schedule parseResult plan pipelines do
                         if state.CancellationToken.IsCancellationRequested then
                             raise (PipelineCancelledException "Cancelled by the invocation")
 
-                        executed.Add pipeline
-                        runReportingTimings configuration.Output asJson state pipeline
+                        runReportingTimings configuration.Output asJson state summaries pipeline
 
                     ExitCode.Success
                 with
@@ -174,20 +175,14 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
                 | _ ->
                     reportResult configuration.Output parseResult ExitCode.Failure state.Pipelines |> ignore
                     reraise ()
-
             finally
-                // Consolidate only pipelines that ran, respecting each pipeline's reporting destination.
-                executed
-                |> Seq.filter (fun pipeline -> GitHubActions.isEnabled pipeline.EnvVars)
-                |> Seq.groupBy (fun pipeline -> Map.tryFind "GITHUB_STEP_SUMMARY" pipeline.EnvVars)
-                |> Seq.iter (fun (_, pipelines) ->
-                    let pipelines = Seq.toList pipelines
-                    let allTimings =
-                        pipelines
-                        |> List.choose (fun pipeline ->
-                            let timings = StageTimings.ordered pipeline.Timings
-                            if timings.IsEmpty then None else Some (pipeline.Name, timings))
-                    Summary.appendGitHub pipelines.Head.EnvVars allTimings)
+                // Use snapshots of completed runs, never collections belonging to a refused or old run.
+                summaries
+                |> Seq.filter (fst >> GitHubActions.isEnabled)
+                |> Seq.groupBy (fun (envVars, _) -> Map.tryFind "GITHUB_STEP_SUMMARY" envVars)
+                |> Seq.iter (fun (_, reports) ->
+                    let reports = Seq.toList reports
+                    Summary.appendGitHub (fst reports.Head) (List.map snd reports))
 
         reportResult configuration.Output parseResult exitCode state.Pipelines
 

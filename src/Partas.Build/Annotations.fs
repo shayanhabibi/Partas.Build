@@ -64,7 +64,7 @@ module internal WorkflowCommands =
     let tryWrite (command: string) =
         try
             // Spectre wraps even plain WriteLine calls. Runner commands must remain one physical line.
-            Console.Out.WriteLine command
+            (Terminal.out ()).WriteLine command
             true
         with
         | :? IOException
@@ -126,4 +126,4 @@ module internal WorkflowCommands =
             let details = if details = "" then "" else " " + details + ":"
             let label = Char.ToUpperInvariant(level[0]).ToString() + level.Substring(1)
             let text = Markup.Escape (label + ":" + details + " " + annotation.Message)
-            AnsiConsole.MarkupLine $"[{color}]{text}[/]"
+            (Terminal.ansi ()).MarkupLine $"[{color}]{text}[/]"

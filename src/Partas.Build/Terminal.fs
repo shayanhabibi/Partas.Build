@@ -30,7 +30,12 @@ let private withWidth (console: IAnsiConsole) =
 
 /// <summary>A console over <paramref name="writer"/> that writes plain text: no ANSI sequences, no colour.</summary>
 let plain (writer: TextWriter) : IAnsiConsole =
-    AnsiConsoleSettings(Ansi = AnsiSupport.No, ColorSystem = ColorSystemSupport.NoColors, Out = AnsiConsoleOutput writer)
+    // CI enrichers run after these settings and can re-enable ANSI for a plain host writer.
+    AnsiConsoleSettings(
+        Ansi = AnsiSupport.No,
+        ColorSystem = ColorSystemSupport.NoColors,
+        Enrichment = ProfileEnrichment(UseDefaultEnrichers = false),
+        Out = AnsiConsoleOutput writer)
     |> AnsiConsole.Create
     |> withWidth
 

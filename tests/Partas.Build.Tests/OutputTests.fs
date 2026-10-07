@@ -305,6 +305,18 @@ let terminal =
             Expect.stringContains (recorded.ToString()) "assigned" "an explicit assignment wins over Console.Out"
         }
 
+        test "a plain host console stays plain under GitHub's environment enrichment" {
+            let original = System.Environment.GetEnvironmentVariable "GITHUB_ACTIONS"
+            try
+                System.Environment.SetEnvironmentVariable("GITHUB_ACTIONS", "true")
+                use writer = new StringWriter()
+                Terminal.plain(writer).MarkupLine "[bold red]plain host text[/]"
+                Expect.stringContains (writer.ToString()) "plain host text" "the styled text is rendered"
+                Expect.isFalse ((writer.ToString()).Contains "\u001b") "CI enrichment cannot add ANSI to plain host output"
+            finally
+                System.Environment.SetEnvironmentVariable("GITHUB_ACTIONS", original)
+        }
+
         test "a console over a writer without a terminal renders at the fallback width" {
             use writer = new StringWriter()
             let console = Terminal.plain writer

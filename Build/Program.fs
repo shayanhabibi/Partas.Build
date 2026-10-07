@@ -77,9 +77,26 @@ module Prelude =
 module ProjectManagement =
     let private packages = Repo.VirtualFileSystem.bin.ToString()
 
-    let buildAll = Baked.Stages.build (Project.allProjects |> List.map snd)
+    // These projects share references and output paths; independent dotnet builds must not race.
+    let buildAll =
+        Baked.Stages.build (Project.allProjects |> List.map snd)
+        |> InputSpec.map (StageContext.toggleParallel false)
     let packAll = Baked.Stages.pack packages (Project.allProjects |> List.map snd)
-    let publishAll = Baked.Stages.nugetPushWith Baked.NuGet.apiKey (InputSpec.ofInput Options.nugetSource) (Path.Combine(packages, "*.nupkg"))
+    let publishAll = input {
+        let! source = Options.nugetSource
+        and! apiKey = Baked.NuGet.apiKey.option
+        return stage "push" {
+            let packageGlob = Path.Combine(packages, "*.nupkg")
+            match apiKey with
+            | Some key ->
+                stage "push to source" {
+                    run (cmd $"dotnet nuget push {packageGlob} --source {source}"
+                         |> Cmd.secretOption "--api-key" key
+                         |> Cmd.arg "--skip-duplicate")
+                }
+            | None -> stage "push to local feed" { run (cmd $"dotnet nuget push {packageGlob} --source local --skip-duplicate") }
+        }
+    }
     let bumpArgument =
         Baked.SemVer.Stages.bumpArgument (InputSpec.ofInput Project.target)
 
@@ -101,11 +118,14 @@ module Tests =
               Repo.Project.``Partas.Build.ExternalAnnotations.Tests``.Path
               Repo.Project.``Partas.Build.Tests``.Path
               Repo.Project.``Partas.ExternalAnnotations.Tests``.Path ]
-            |> InputSpec.traverse (fun project -> Baked.Stages.expecto project expectoArguments)
+            |> InputSpec.traverse (fun project ->
+                Baked.Stages.expecto project expectoArguments
+                |> InputSpec.map (StageContext.setOutput (ValueSome StageOutput.Console)))
         return stage "test" {
             when' (not skipTests) "--skip-tests is set"
+            outputTo StageOutput.Console
             envVars [ "GITHUB_STEP_SUMMARY", "" ]
-            suites |> InputSpec.map (List.map (fun suite -> { suite with Output = ValueSome StageOutput.Console }))
+            suites
             // Built by the run, in both configurations regardless of `--configuration`: Release is what catches FS1118.
             for probeConfig in [ "Debug"; "Release" ] do stage $"compiler probe ({probeConfig})" {
                 run (

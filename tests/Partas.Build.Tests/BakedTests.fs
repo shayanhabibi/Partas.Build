@@ -159,7 +159,9 @@ let tests =
                 try
                     let root = directory.FullName
                     let link (path: string) (target: string) = Directory.CreateSymbolicLink(Path.Combine(root, path), target) |> ignore
-                    link "link" outside.FullName
+                    try link "link" outside.FullName
+                    with :? IOException as error when System.OperatingSystem.IsWindows() && (error.HResult &&& 0xffff) = 1314 ->
+                        skiptest "Windows requires Developer Mode or the symbolic-link privilege for this test"
                     link "bin/inner" outside.FullName
                     link "src/loop" root
                     File.CreateSymbolicLink(Path.Combine(root, "src/A/linked.nupkg"), Path.Combine(outside.FullName, "secret.nupkg"))

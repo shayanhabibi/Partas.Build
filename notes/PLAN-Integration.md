@@ -4,6 +4,12 @@ Findings from a survey of how Partas.Build is used in practice, and the design t
 2026-09-24. **Status: every section implemented on `claude/partas-build-patterns-jgrwr0-integration` (see the status
 line under each section, and §7), except §4.5's warning for undescribed commands.**
 
+Continuation: `feature/build-hosting-discoverability` retains this implementation and incorporates
+`feature/github-actions-summary-groups`. The merge preserves hosted invocation, machine-readable output,
+GitHub summaries and annotations together. Repository library builds run sequentially to avoid shared
+reference-output races; test logs stay live. Plain host writers disable Spectre's CI profile enrichment.
+The warning for undescribed commands in §4.5 remains open.
+
 Companion to `PLAN-Discoverability.md`, which responded to `FEEDBACK-Xantham.md` (a report written against
 0.3.0). This document starts from the consumers' *code* instead of a written report, and adds a third axis the
 earlier plans do not cover: running builds inside a long-lived F# host, specifically SageFs.
@@ -592,7 +598,8 @@ others branch from). Integration decisions:
    step output that is not captured.
    **Decided:** both. `--json` puts it on stdout as the last line, one line of compact JSON; `--report <path>`
    writes it, indented, to a file, with or without `--json`.
-3. Prefab stages as functions or records (§3.1, W12).
+3. Prefab stages as functions or records (§3.1, W12). **Decided: functions**, each with a `…With` counterpart
+   taking its options as `InputSpec`s (§3.1's status).
 4. Does `Command.invoke` take the `RootCommandBuilder` result, the `CommandSpec`, or both — and does it live in
    `Partas.Build` or a separate `Partas.Build.Hosting` namespace?
    **Decided:** neither. `rootCommand args { … }` runs at construction and `CommandSpec` lives in `Internal`, so

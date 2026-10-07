@@ -1,4 +1,4 @@
-[<AutoOpen>]
+﻿[<AutoOpen>]
 module Partas.Build.ConditionsBuilder
 
 open System

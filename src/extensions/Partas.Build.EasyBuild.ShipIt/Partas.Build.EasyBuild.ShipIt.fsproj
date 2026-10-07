@@ -9,8 +9,13 @@
   <ItemGroup>
     <Compile Include="Types.fs" />
     <Compile Include="Operations.fs" />
+    <Compile Include="ToolSetup.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../Partas.Build/Partas.Build.fsproj" />
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Partas.Build.Tests</_Parameter1>
+    </AssemblyAttribute>
+    <PackageReference Include="System.Text.Json" Version="8.0.5" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
   </ItemGroup>
 </Project>

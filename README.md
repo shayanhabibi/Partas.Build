@@ -13,6 +13,12 @@
 > Public restores require **no account or API key**. Once ownership is restored, publishing will
 > return to nuget.org and this notice will be updated.
 
+For `.fsx` scripts, add this directive before any `#r "nuget: ..."` package references:
+
+```fsharp
+#i "nuget: https://nuget.cloudsmith.io/shayanhabibi/shayanhabibi-partas-build/v3/index.json"
+```
+
 Add the temporary source alongside nuget.org so dependencies can still be restored:
 
 ```shell

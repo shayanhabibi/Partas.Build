@@ -26,6 +26,8 @@
         <Compile Include="CompositionTests.fs"/>
         <Compile Include="ConsumerSurfaceTests.fs"/>
         <Compile Include="BakedTests.fs"/>
+        <Compile Include="ShipItTests.fs"/>
+        <Compile Include="ShipItContractTests.fs"/>
         <Compile Include="ExplainTests.fs"/>
         <Compile Include="SummaryTests.fs"/>
         <Compile Include="CompilerTests.fs"/>
@@ -42,6 +44,7 @@
     <ItemGroup>
         <ProjectReference Include="..\..\src\Partas.Build\Partas.Build.fsproj"/>
         <ProjectReference Include="..\..\src\Partas.Build.Baked\Partas.Build.Baked.fsproj"/>
+        <ProjectReference Include="../../src/extensions/Partas.Build.EasyBuild.ShipIt/Partas.Build.EasyBuild.ShipIt.fsproj"/>
         <!-- Built, never referenced: the tests run it as a child process from its own output directory. -->
         <ProjectReference Include="..\Fixtures\ProcessFixture\ProcessFixture.csproj" ReferenceOutputAssembly="false"/>
     </ItemGroup>

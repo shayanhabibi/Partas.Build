@@ -53,6 +53,7 @@ module Project =
             "build", Repo.Project.``Partas.Build``.Path
             "baked", Repo.Project.``Partas.Build.Baked``.Path
             "cmd", Repo.Project.``Partas.Build.Cmd``.Path
+            "shipit", Repo.Project.``Partas.Build.EasyBuild.ShipIt``.Path
             "external-annotations", Repo.Project.``Partas.ExternalAnnotations``.Path
             "external-annotations-tool", Repo.Project.``Partas.ExternalAnnotations.Tool``.Path
             "build-external-annotations", Repo.Project.``Partas.Build.ExternalAnnotations``.Path

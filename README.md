@@ -353,6 +353,7 @@ Build/
 src/Partas.Build/         the library
 src/Partas.Build.Cmd/     the command value and the process runner
 src/Partas.Build.Baked/   ready-made options, stages and semver helpers
+src/extensions/Partas.Build.EasyBuild.ShipIt/   ShipIt-backed bump, release inputs, commands and explicit setup
 docs/                     the Nacara site (Site.fs, docs.fsproj, content/, blog/, static/)
 tests/                    the Expecto suites
 ```

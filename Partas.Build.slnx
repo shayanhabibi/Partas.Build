@@ -20,6 +20,9 @@
     <Project Path="src/Partas.Build.Cmd/Partas.Build.Cmd.fsproj" />
     <Project Path="src/Partas.Build/Partas.Build.fsproj" />
   </Folder>
+  <Folder Name="/src/extensions/">
+    <Project Path="src/extensions/Partas.Build.EasyBuild.ShipIt/Partas.Build.EasyBuild.ShipIt.fsproj" />
+  </Folder>
   <Folder Name="/src/external-annotations/">
     <Project Path="Partas.Build.ExternalAnnotations/Partas.Build.ExternalAnnotations.fsproj" />
     <Project Path="Partas.ExternalAnnotations.Tool/Partas.ExternalAnnotations.Tool.fsproj" />

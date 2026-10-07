@@ -11,6 +11,7 @@
 - [Index](https://shayanhabibi.github.io/Partas.Build/build/): the layers, and a first pipeline
 - [Composition](https://shayanhabibi.github.io/Partas.Build/build/composition/): nesting stages, and reusing commands across files
 - [Hosting](https://shayanhabibi.github.io/Partas.Build/build/hosting/): running a build from a long-lived F# session (SageFs) through `Command.invoke`
+- [ShipIt extension](https://shayanhabibi.github.io/Partas.Build/extensions/shipit/): ShipIt-backed package bumps, release commands and explicit setup
 
 ## Ask the script rather than reading it
 

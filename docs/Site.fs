@@ -22,7 +22,7 @@ let theme =
     ]
     |> Theme.navbarEnd
         [
-            // NavbarDynamicWidget Search.trigger
+            NavbarDynamicWidget Search.trigger
             NavbarIcon("GitHub", "https://github.com/shayanhabibi/Partas.Build", Icons.github)
         ]
     |> Theme.editUrl "https://github.com/shayanhabibi/Partas.Build/edit/master/docs"
@@ -104,12 +104,13 @@ let plugins =
         AgentFriendly.summary "Composable build workflows and command-line tools in F#."
         >> AgentFriendly.details "Start with https://shayanhabibi.github.io/Partas.Build/build/getting-started.md. Commands derive their inputs and help from the stages they run. Inspect a consumer build with --help, --schema --json, or --explain --json before executing it. See https://shayanhabibi.github.io/Partas.Build/build/agents.md for JSON output and exit codes, and https://shayanhabibi.github.io/Partas.Build/AGENTS-snippet.md for repository instructions."
     )
-    >> OgImage.registerWith (
-        OgImage.defaultImage (OgImage.image "/img/sun-ztu.jpeg" |> OgImage.withAlt "Partas.Build")
-    )
+    // >> OgImage.registerWith (
+    //     OgImage.defaultImage (OgImage.image "/img/sun-ztu.jpeg" |> OgImage.withAlt "Partas.Build")
+    // )
     >> LightningCss.register
     >> Esbuild.register
     >> Nuglify.minifyHtml
+    >> Search.register
     // Validate after AgentFriendly writes Markdown and llms-full.txt. Canonical URLs point to
     // this build, not the previously deployed site; local links are still validated normally.
     >> LinkValidator.registerWith (LinkValidator.ignoring [ @"^https://shayanhabibi\.github\.io/Partas\.Build/" ])

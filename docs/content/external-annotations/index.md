@@ -1,10 +1,9 @@
 ---
-title: Overview
+title: External Annotations
 category: ExternalAnnotations
 index: 1
 ---
 
-# External Annotations
 
 ReSharper and Rider read code annotations — `[<LanguageInjection>]`, `[<NotNull>]`, `[<StringFormatMethod>]`
 and the rest — from two places: an assembly's own metadata, and an **external annotations** sidecar named

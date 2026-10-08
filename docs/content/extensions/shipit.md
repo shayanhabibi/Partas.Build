@@ -5,8 +5,6 @@ category: Extensions
 order: 1
 ---
 
-# EasyBuild.ShipIt
-
 `Partas.Build.EasyBuild.ShipIt` wraps [EasyBuild.ShipIt](https://github.com/easybuild-org/EasyBuild.ShipIt) as reusable operations, inputs, stages and commands. ShipIt calculates release versions from conventional commits, updates changelogs and configured project files, and can open release pull requests.
 
 The extension supports `net10.0`, `net8.0` and `netstandard2.0`. The default ShipIt tool version, 3.1.0, requires .NET 10. Add the extension as a project/package reference using the [installation guide](../Build/installation.md).

@@ -8,8 +8,9 @@ order: 0
 <section class="pb-hero">
 <div>
 <span class="pb-eyebrow">F# build workflows · For people and agents</span>
-<h1>A build you can<br/>read and reuse.</h1>
-<p class="pb-hero__summary">Declare the inputs and dependencies each stage needs. Compose a CLI with deduplicated options and generated help. Inspect the plan, then run it with typed results or JSON.</p>
+<h1>CLI & Build for happiness</h1>
+<p class="pb-hero__summary">Let the flags and inputs your workflow needs decide the CLI interface, not the other way
+around.</p>
 <div class="pb-actions">
 <a class="pb-button pb-button--primary" href="/Partas.Build/build/getting-started/">Get started →</a>
 <a class="pb-button" href="/Partas.Build/reference/">API reference</a>
@@ -17,18 +18,22 @@ order: 0
 </div>
 <div class="pb-demo" aria-label="A build command and its automatically registered configuration option">
 <div class="pb-demo__label">Build.fs</div>
-<pre><code><span class="k">let</span> build = <span class="k">input</span> {
-    <span class="k">let!</span> config = Input.option&lt;string&gt; <span class="s">"--configuration"</span>
-                  |&gt; Input.def <span class="s">"Release"</span>
-    <span class="k">return</span> stage <span class="s">"compile"</span> {
-        run (cmd $<span class="s">"dotnet build -c {config}"</span>)
-    }
-}
 
-<span class="k">let</span> root = Command.root {
-    command <span class="s">"build"</span> &#123; build &#125;
-}</code></pre>
-<div class="pb-demo__output">$ build build --help<br/>Options: --configuration &lt;value&gt; [default: Release]</div>
+```fsharp frame=none
+let build = input {
+    let! config =
+        Input.option<string> "--configuration"
+        |> Input.def "Release"
+    return stage "build" {
+        run (cmd $"dotnet build -c {config}")
+        }
+    }
+let root = Command.root {
+        command "compile" { build }
+    }
+```
+
+<div class="pb-demo__output">$ build compile --help<br/>&emsp;Options: --configuration &lt;value&gt; [default: Release]</div>
 </div>
 </section>
 

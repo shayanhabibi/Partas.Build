@@ -5,8 +5,6 @@ category: Build
 order: 21
 ---
 
-# Composing reusable blocks
-
 [The guide](index.md) introduces one stage at a time. This page builds a library of reusable *blocks* —
 stages that carry their own CLI inputs — and assembles them into pipelines and commands.
 

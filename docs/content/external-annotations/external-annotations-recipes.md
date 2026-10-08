@@ -4,8 +4,6 @@ category: ExternalAnnotations
 index: 3
 ---
 
-# External Annotations — Recipes
-
 Concrete setups. Background is on the [overview](index.md); the F# API is
 [here](external-annotations-api.md).
 

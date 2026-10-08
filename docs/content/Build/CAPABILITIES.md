@@ -4,8 +4,6 @@ category: Build
 order: 1
 ---
 
-# Capabilities
-
 One line per custom operation on the four builders, per `Input` combinator, and per `Cmd` argument helper. The
 [API reference](https://shayanhabibi.github.io/Partas.Build/reference/) has full signatures and remarks.
 [Composing reusable blocks](composition.md) has worked examples.

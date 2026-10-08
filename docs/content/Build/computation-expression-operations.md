@@ -4,8 +4,6 @@ category: Build
 order: 4
 ---
 
-# Computation Expression Operations
-
 ## Stage
 
 > Unless stated otherwise, every example runs inside a `stage` computation.

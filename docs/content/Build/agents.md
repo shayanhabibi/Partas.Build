@@ -15,7 +15,9 @@ dotnet run --project Build.fsproj -- build --schema --json
 dotnet run --project Build.fsproj -- build --explain --json
 ```
 
-`--help` describes registered inputs. `--schema --json` returns the command schema. `--explain --json` returns a static execution plan without running steps or effectful conditions. Text `--explain` may evaluate conditions such as a Git branch check.
+`--help` describes registered inputs. `--schema --json` returns the command schema as compact JSON. `--explain --json` returns a compact, static execution plan without running steps or effectful conditions. Text `--explain` may evaluate conditions such as a Git branch check.
+
+For people, `--schema` prints indented JSON unless agent detection enables JSON mode. Use `--schema --json false` to request indentation explicitly. Console JSON mode always emits compact output; `--report <file>` saves an indented run result.
 
 ## Consume a run result
 

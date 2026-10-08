@@ -104,6 +104,53 @@ let detectionTests =
 [<Tests>]
 let jsonDefaultTests =
     testList "AI JSON defaults" [
+        testCase "schema indentation follows explicit JSON flags and fresh agent defaults" (fun () ->
+            let root =
+                Command.root {
+                    pipeline "build" {
+                        stage "work" { run (fun (_: StageContext) -> failwith "schema must not execute stages") }
+                    }
+                }
+            let check disabled args indented =
+                withEnvironment [ "AGENT", "codex"; "PARTAS_BUILD_DISABLE_AI", disabled ] (fun () ->
+                    use output = new StringWriter()
+                    let result = root.Invoke(args, output = output)
+                    Expect.equal result.ExitCode 0 "schema exits without executing stages"
+                    let text = output.ToString().TrimEnd()
+                    use document = JsonDocument.Parse text
+                    Expect.equal (document.RootElement.GetProperty("formatVersion").GetInt32()) 1 "the schema remains valid"
+                    Expect.equal (text.Contains '\n') indented "only human schema output spans multiple lines")
+
+            check "1" [ "--schema" ] true
+            check "1" [ "--schema"; "--json" ] false
+            check "0" [ "--schema" ] false
+            check "0" [ "--schema"; "--json"; "false" ] true
+            check "1" [ "--schema" ] true)
+
+        testCase "JSON explain is one line for pipelines and grouping commands" (fun () ->
+            let child =
+                command "child" {
+                    pipeline "build" {
+                        stage "work" { run (fun (_: StageContext) -> failwith "explain must not execute stages") }
+                    }
+                }
+            let group = command "group" { addCommand child }
+            let check (built: System.CommandLine.Command) (args: string) =
+                use output = new StringWriter()
+                let code = built.Parse(args).Invoke(System.CommandLine.InvocationConfiguration(Output = output))
+                Expect.equal code 0 "explain exits without executing stages"
+                let text = output.ToString().TrimEnd()
+                use document = JsonDocument.Parse text
+                Expect.equal (document.RootElement.GetProperty("formatVersion").GetInt32()) 1 "the explanation remains valid"
+                Expect.isFalse (text.Contains '\n') "JSON explain is a single physical line"
+
+            withEnvironment [ "AGENT", "codex"; "PARTAS_BUILD_DISABLE_AI", "1" ] (fun () ->
+                check child "--explain --json"
+                check group "--explain --json")
+            withEnvironment [ "AGENT", "codex"; "PARTAS_BUILD_DISABLE_AI", "0" ] (fun () ->
+                check child "--explain"
+                check group "--explain"))
+
         testCase "a reused command defaults to JSON for an agent and honors the disable override" (fun () ->
             let root = Command.root { pipeline "build" { quiet; stage "work" { () } } }
             let invoke args =

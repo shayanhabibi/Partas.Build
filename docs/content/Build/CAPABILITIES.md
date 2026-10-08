@@ -332,9 +332,9 @@ under one command, or a pipeline that needs its own name.
 | Flag | What it does |
 |---|---|
 | `--explain` | Prints the resolved stage tree and runs nothing. A grouping command lists its subcommands |
-| `--json` | With `--explain`, prints the tree as JSON, leaving `whenBranch` and `whenStage` conditions unevaluated. On a run, prints the run result — each stage's outcome, failures and timing — as one line of JSON after the run, in place of the timing table |
+| `--json` | With `--schema`, selects compact JSON. With `--explain`, prints the tree as compact JSON, leaving `whenBranch` and `whenStage` conditions unevaluated. On a run, prints the run result — each stage's outcome, failures and timing — as one line of JSON after the run, in place of the timing table |
 | `--report <path>` | Writes the run result as JSON to a file. Only on commands that run pipelines |
-| `--schema` | Prints the command, its options (name, aliases, type, default, accepted values, description) and its subcommands as JSON, and runs nothing |
+| `--schema` | Prints the command, its options (name, aliases, type, default, accepted values, description) and its subcommands as JSON, and runs nothing. Indented unless `--json` is true; `--schema --json false` explicitly requests indentation |
 
 `--json` defaults to true in an agent environment, detected lazily from `AGENT`, `AI_AGENT` or vendor markers
 following [is-ai-agent's environment rules](https://github.com/sdairs/is-ai-agent#detection-order).

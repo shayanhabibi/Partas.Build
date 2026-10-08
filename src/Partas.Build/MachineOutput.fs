@@ -16,7 +16,8 @@ open System.CommandLine.Invocation
 /// <c>--report</c>. A command that already declares one of these names, or an alias of one, keeps its own option
 /// and goes without the library's.
 /// <para>
-/// Under <c>--json</c>, <c>--explain</c> writes its tree as one JSON document, evaluated statically, and a run
+/// Under <c>--json</c>, <c>--schema</c> and <c>--explain</c> write compact JSON, with the explain tree evaluated
+/// statically, and a run
 /// writes its <c>RunResult</c> as one line of compact JSON, the last line the run writes to the invocation's
 /// output, in place of the timing table. Step output is unaffected, and still reaches the console unless the
 /// stage captures or silences it: a consumer reading stdout reads the last line, or reads <c>--report</c>.
@@ -209,6 +210,14 @@ module MachineOutput =
 
         writer.WriteEndObject()
 
+    let private commandSchemaWithIndentation indented (command: Command) =
+        document indented (fun writer ->
+            writer.WriteStartObject()
+            writer.WriteNumber("formatVersion", FormatVersion)
+            writer.WritePropertyName "command"
+            writeCommand writer command
+            writer.WriteEndObject())
+
     /// <summary><paramref name="command"/> and every command under it, with each option and argument it takes,
     /// as an indented JSON document.</summary>
     /// <remarks>
@@ -218,19 +227,15 @@ module MachineOutput =
     /// that only dispatches to its subcommands.
     /// </remarks>
     let commandSchema (command: Command) =
-        document true (fun writer ->
-            writer.WriteStartObject()
-            writer.WriteNumber("formatVersion", FormatVersion)
-            writer.WritePropertyName "command"
-            writeCommand writer command
-            writer.WriteEndObject())
+        commandSchemaWithIndentation true command
 
     /// <summary>The <c>--json</c> flag.</summary>
     /// <remarks>
-    /// Every command takes it. With <c>--explain</c>, the tree is printed as a JSON document and no condition with
+    /// Every command takes it. With <c>--schema</c>, the JSON is compact instead of indented.
+    /// With <c>--explain</c>, the tree is printed as compact JSON and no condition with
     /// a side effect is evaluated; on a run, the run result is printed as the last line of output, one line of
     /// compact JSON, in place of the timing table.
-    /// Defaults to true in a detected agent environment. <c>--json false</c> selects text explicitly;
+    /// Defaults to true in a detected agent environment. <c>--json false</c> selects text explicitly, or indented JSON for <c>--schema</c>;
     /// <c>PARTAS_BUILD_DISABLE_AI=1</c> disables automatic defaults without suppressing explicit flags.
     /// </remarks>
     /// <example>
@@ -242,7 +247,7 @@ module MachineOutput =
     /// </example>
     let json: ActionInput<bool> =
         Input.option<bool> "--json"
-        |> Input.description "Write JSON instead of text: the --explain tree, or the run result as the last line of output"
+        |> Input.description "Write compact JSON: the --schema or --explain tree, or the run result as the last line of output"
         |> Input.defaultValueFactory (fun _ -> (AiEnvironment.detect ()).Value)
 
     /// <summary>The <c>--report</c> option: a file the run result is written to as JSON.</summary>
@@ -251,18 +256,6 @@ module MachineOutput =
         Input.optionMaybe<string> "--report"
         |> Input.description "Write the run result as JSON to this file"
         |> Input.helpName "path"
-
-    /// <summary>The <c>--schema</c> flag, which prints <c>commandSchema</c> for the command it is given to, and exits.</summary>
-    let schema: ActionInput<bool> =
-        Input.option<bool> "--schema"
-        |> Input.description "Print this command, its options and its subcommands as JSON, and exit"
-        |> Input.def false
-        |> Input.editOption (fun option ->
-            option.Action <-
-                { new SynchronousCommandLineAction() with
-                    member _.Invoke(parseResult: ParseResult) =
-                        parseResult.InvocationConfiguration.Output.WriteLine(commandSchema parseResult.CommandResult.Command)
-                        0 })
 
     /// <summary>Whether <paramref name="input"/> is registered on the parsed command and given on the command line
     /// or by default as <c>true</c>.</summary>
@@ -273,6 +266,20 @@ module MachineOutput =
             | null -> false
             | _ -> input.GetValue parseResult
         | _ -> false
+
+    /// <summary>The <c>--schema</c> flag, which prints the schema for the command it is given to, and exits.</summary>
+    /// <remarks>Indented by default, or compact when <c>--json</c> is true, explicitly or through agent detection.</remarks>
+    let schema: ActionInput<bool> =
+        Input.option<bool> "--schema"
+        |> Input.description "Print this command, its options and its subcommands as JSON, and exit"
+        |> Input.def false
+        |> Input.editOption (fun option ->
+            option.Action <-
+                { new SynchronousCommandLineAction() with
+                    member _.Invoke(parseResult: ParseResult) =
+                        let indented = not (isSet json parseResult)
+                        parseResult.InvocationConfiguration.Output.WriteLine(commandSchemaWithIndentation indented parseResult.CommandResult.Command)
+                        0 })
 
     /// <summary>The value of <paramref name="input"/> when it is registered on the parsed command.</summary>
     let tryValue (input: ActionInput<'T option>) (parseResult: ParseResult) =

@@ -348,12 +348,12 @@ module Explain =
 
         walk "" command
 
-    /// <summary>The tree of <paramref name="pipelines"/>, run by <paramref name="command"/>, as an indented JSON
+    /// <summary>The tree of <paramref name="pipelines"/>, run by <paramref name="command"/>, as a compact JSON
     /// document.</summary>
     let toJson (mode: ExplainMode) (command: Command) (pipelines: PipelineContext list) =
         let explained = explain mode pipelines
 
-        MachineOutput.document true (fun writer ->
+        MachineOutput.document false (fun writer ->
             writer.WriteStartObject()
             writer.WriteNumber("formatVersion", MachineOutput.FormatVersion)
             writer.WriteString("command", command.Name)
@@ -372,9 +372,9 @@ module Explain =
             MachineOutput.writeStrings writer "undescribedCommands" (undescribed command)
             writer.WriteEndObject())
 
-    /// <summary>The immediate subcommands of <paramref name="command"/>, as an indented JSON document.</summary>
+    /// <summary>The immediate subcommands of <paramref name="command"/>, as a compact JSON document.</summary>
     let subcommandsToJson (command: Command) =
-        MachineOutput.document true (fun writer ->
+        MachineOutput.document false (fun writer ->
             writer.WriteStartObject()
             writer.WriteNumber("formatVersion", MachineOutput.FormatVersion)
             writer.WriteString("command", command.Name)

@@ -2,6 +2,12 @@
 title: Release Notes
 ---
 
+### 0.8.1
+
+* Console JSON mode emits compact schema and explain output. A plain `--schema` remains indented for people;
+  `--schema --json false` requests indentation even in an agent environment. Detected agents receive compact
+  output by default. Saved `--report` files remain indented.
+
 ### 0.6.1-alpha.1
 
 * Producers: `Producer.define name inputs dependencies execute` declares a typed, named unit of deferred work

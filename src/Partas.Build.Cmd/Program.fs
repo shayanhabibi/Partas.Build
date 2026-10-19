@@ -44,6 +44,35 @@ module Cmd =
     [<Literal>]
     let private mask = "***"
 
+    /// <summary>Values masked wherever a <see cref="T:Partas.Build.Cmd"/> is printed, in any argument.</summary>
+    /// <remarks>
+    /// The set is process-wide, and a registered value stays masked for the lifetime of the process.
+    /// <c>Input.sensitive</c> registers every value read from a marked input. A registered value prints as
+    /// <c>***</c> as a whole argument and inside a longer one (<c>--api-key=***</c>).
+    /// </remarks>
+    module Redaction =
+        let private values = Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+        // Longest first, so a value containing another registered value is masked whole.
+        let mutable private ordered: string array = [||]
+
+        /// <summary>Adds a value to the masked set. A null, empty or whitespace value is ignored.</summary>
+        let register (value: string) =
+            if not (String.IsNullOrWhiteSpace value) then
+                lock values (fun () ->
+                    if values.Add value then
+                        ordered <- values |> Seq.sortByDescending (fun value -> value.Length) |> Array.ofSeq)
+
+        /// <summary>Replaces every occurrence of a registered value in the text with <c>***</c>.</summary>
+        let redact (text: string) =
+            let ordered = ordered
+
+            if String.IsNullOrEmpty text || ordered.Length = 0 then text
+            else
+                let mutable redacted = text
+                for value in ordered do
+                    if redacted.Contains value then redacted <- redacted.Replace(value, mask)
+                redacted
+
     /// <summary>Accumulates tokens across literal fragments and interpolated values.</summary>
     /// <remarks>
     /// A token ends at unquoted whitespace and nowhere else, so a value glued to literal text
@@ -220,8 +249,8 @@ module Cmd =
 
         acc.ToCmd()
 
-    /// How the command is printed: secrets masked, and anything containing whitespace quoted so the
-    /// printed form can be pasted into a shell.
+    /// How the command is printed: secrets and every value registered with <c>Redaction</c> masked, and anything
+    /// containing whitespace quoted so the printed form can be pasted into a shell.
     let toLogString (cmd: Cmd) =
         let quoteIfNeeded (value: string) =
             if String.IsNullOrEmpty value then "\"\""
@@ -229,8 +258,8 @@ module Cmd =
             else value
 
         cmd.Arguments
-        |> List.mapi (fun i arg -> if cmd.Secrets.Contains i then mask else quoteIfNeeded arg)
-        |> List.append [ quoteIfNeeded cmd.Executable ]
+        |> List.mapi (fun i arg -> if cmd.Secrets.Contains i then mask else quoteIfNeeded (Redaction.redact arg))
+        |> List.append [ quoteIfNeeded (Redaction.redact cmd.Executable) ]
         |> String.concat " "
 
 

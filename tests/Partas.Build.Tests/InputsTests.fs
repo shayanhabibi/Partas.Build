@@ -310,3 +310,44 @@ let tests =
             Expect.equal (input.GetValue parsed |> List.map (fun l -> l.Name)) [ "ast"; "proto" ] "in the order given"
         }
     ]
+
+[<Tests>]
+let sensitiveValues =
+    testList "sensitive input values" [
+        test "reading a sensitive option masks its value in every printed command" {
+            let key = Input.option<string> "--key" |> Input.sensitive
+            let value = "fake-inputs-key-91c2"
+            let read = (InputSpec.ofInput key).Read (parse [ key ] $"--key {value}")
+
+            Expect.equal read value "the read value is the value itself"
+            Expect.equal (Cmd.toLogString (Cmd.ofString $"tool push -k {read}")) "tool push -k ***" "a string command masks it"
+            Expect.equal (Cmd.toLogString (cmd $"tool push --key={read}")) "tool push --key=***" "an interpolated command masks it"
+            Expect.equal (Cmd.toLogString (Cmd.ofList "tool" [ "-k"; read ])) "tool -k ***" "a list command masks it"
+        }
+
+        test "reading a sensitive option, list or non-string input masks each value it carries" {
+            let maybe = Input.optionMaybe<string> "--maybe-key" |> Input.sensitive
+            let many = Input.option<string list> "--many-key" |> Input.sensitive
+            let pin = Input.option<int> "--pin" |> Input.sensitive
+            let parsed = parse [ maybe; many; pin ] "--maybe-key fake-maybe-3d1e --many-key fake-many-a1 --many-key fake-many-b2 --pin 482913"
+
+            Expect.equal ((InputSpec.ofInput maybe).Read parsed) (Some "fake-maybe-3d1e") "the option reads Some"
+            Expect.equal ((InputSpec.ofInput many).Read parsed) [ "fake-many-a1"; "fake-many-b2" ] "the list reads both"
+            Expect.equal ((InputSpec.ofInput pin).Read parsed) 482913 "the int reads as given"
+
+            Expect.equal
+                (Cmd.toLogString (Cmd.ofList "tool" [ "fake-maybe-3d1e"; "fake-many-a1"; "fake-many-b2"; "--pin=482913" ]))
+                "tool *** *** *** --pin=***"
+                "every carried value is masked"
+        }
+
+        test "an unmarked input, and a blank sensitive value, mask nothing" {
+            let plain = Input.option<string> "--plain"
+            let blank = Input.option<string> "--blank" |> Input.sensitive |> Input.def " "
+            let parsed = parse [ plain; blank ] "--plain fake-plain-value-55"
+
+            Expect.equal ((InputSpec.ofInput plain).Read parsed) "fake-plain-value-55" "the plain value reads"
+            Expect.equal ((InputSpec.ofInput blank).Read parsed) " " "the blank default reads"
+            Expect.equal (Cmd.toLogString (Cmd.ofList "tool" [ "fake-plain-value-55"; "a b" ])) "tool fake-plain-value-55 \"a b\"" "both stay printable"
+        }
+    ]

@@ -402,6 +402,12 @@ accepts is accepted, and the stage runs for real, side effects included.
 `StageContext list`: the stage built from the bound value, or `[]`. The absent case is an empty list, not an
 inactive stage requiring a name. `build` receives the value already unwrapped, inside the condition that guards it.
 
+A condition decides whether a stage runs, not whether it is built: a stage body, both branches of an `if`
+included, is built before any condition is evaluated. `key.Value` under `when' key.IsSome` throws while the
+stage is built when `key` is `None`; `whenSome key (fun key -> ...)` builds the stage only for `Some`. An
+exception raised while a command builds its stages fails the invocation (exit `1`) with a message naming the
+command and the stages being built.
+
 ## `Input` combinators
 
 Declaring functions:
@@ -429,7 +435,7 @@ Shaping combinators, all `ActionInput<'T> -> ActionInput<'T>` and all pipeable:
 | `Input.required`                                                    | Marks an option required                                                                                                  |
 | `Input.recursive`                                                   | Applies the option to the command and, recursively, its subcommands                                                       |
 | `Input.hidden`                                                      | Keeps it out of help output                                                                                               |
-| `Input.sensitive`                                                   | Marks the symbol secret: `--schema` reports it `"sensitive": true` and writes a present default as `"***"`                |
+| `Input.sensitive`                                                   | Marks the symbol secret: each value read from it prints as `***` in every logged or explained command line, and `--schema` reports it `"sensitive": true` with a present default written as `"***"` |
 | `Input.allowMultipleArgumentsPerToken`                              | Lets one identifier token carry several values                                                                            |
 | `Input.acceptOnlyFromAmong`                                         | Restricts to a set of legal strings, ordinally                                                                            |
 | `Input.addCompletion` / `Input.addCompletions`                      | Adds tab-completion suggestions without restricting what is accepted                                                      |

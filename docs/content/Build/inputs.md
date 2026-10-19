@@ -52,6 +52,7 @@ If one value depends on another, derive it after binding. Keep runtime work insi
 - `Input.def value`: a default.
 - `Input.acceptOnlyFromAmong values`: validation against a fixed set.
 - `Input.map f`: transform a parsed value.
-- `Input.sensitive`: hide the value in structured inspection.
+- `Input.sensitive`: mask the value as `***` in every printed command line (the run log, `--explain` and its
+  JSON) and in `--schema`. The process still receives it unmasked.
 
 See [Capabilities](CAPABILITIES.md#input-combinators) for the complete list and [Baked](baked.md) for ready-made inputs.

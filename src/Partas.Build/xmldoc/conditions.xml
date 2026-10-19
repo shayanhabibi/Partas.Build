@@ -8,6 +8,12 @@ remarks-level content (<para>, <c>, text) and never a <remarks> of its own.
     <para>Conditions conjoin rather than replace: a second condition narrows the stage to the logical AND of
     both, it does not overwrite the first. To widen instead of narrow, pass a single <c>whenAny { }</c> block.</para>
   </conjoin>
+  <builtRegardless>
+    <para>A condition decides whether the stage runs, not whether it is built. The whole body (both branches of
+    an <c>if</c>, and every nested stage) is built with the stage, before any condition is evaluated. A value
+    that exists only when the condition holds, such as <c>key.Value</c> under <c>when' key.IsSome</c>, belongs in
+    <c>whenSome</c>, whose stage is built only for <c>Some</c>.</para>
+  </builtRegardless>
   <ceRestriction>
     <para>A custom operation cannot sit under an <c>if</c> or a <c>match</c> inside a computation expression.
     A stage that needs to branch must build the value first and apply the operation unconditionally.</para>

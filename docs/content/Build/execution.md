@@ -66,6 +66,7 @@ Post stages run after the main stages, including after failure.
 - `continueStageOnFailure`: let the pipeline continue.
 - `continueOnStepFailure`: apply both.
 - `acceptExitCodes`: accept additional process exit codes.
-- `failIfIgnored`: treat a skipped stage as failure.
+- `failIfIgnored`: treat a skipped stage as failure. The stage body is still built when the stage is skipped;
+  bind a value that exists only when the stage runs with `whenSome`.
 
 For typed outputs and prerequisite ordering, use [producers and dependencies](CAPABILITIES.md#producers-and-dependencies). For recovery policies, see [failure handlers](CAPABILITIES.md#failure-handlers).

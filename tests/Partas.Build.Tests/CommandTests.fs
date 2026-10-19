@@ -426,6 +426,28 @@ let defaultsTests =
         }
     ]
 
+/// A root shaped like a publish command whose `push` stage reads `apiKey.Value` while it is built, so building it
+/// without `--api-key` or `--dry-publish` raises a NullReferenceException.
+let private keylessPublishRoot () =
+    let apiKey = Input.optionMaybe<string> "--api-key" |> Input.sensitive
+    let dryPublish = Input.option<bool> "--dry-publish"
+
+    Command.root {
+        input {
+            let! apiKey = apiKey
+            and! dryPublish = dryPublish
+            return
+                stage "publish" {
+                    failIfIgnored
+                    when' (dryPublish || apiKey.IsSome)
+                    if dryPublish then
+                        stage "dry publish" { run noop }
+                    else
+                        stage "push" { run (cmd $"dotnet nuget push pkg -k {apiKey.Value}") }
+                }
+        }
+    }
+
 /// A root whose one pipeline records the configuration it ran with, and fails under <c>--fail</c>.
 let private recordingRoot (seen: ResizeArray<string>) =
     let config = Input.option<string> "--configuration" |> Input.def "Debug"
@@ -490,6 +512,54 @@ let invocation =
             Expect.equal first.Timings.Length 2 "the first result keeps its own run"
             Expect.equal second.Timings.Length 2 "the second result holds its own run, not the first one's too"
             Expect.isEmpty first.Failures "a later failing run leaves an earlier result untouched"
+        }
+
+        test "an exception raised while building a command's stages fails the invocation naming the stage" {
+            use output = new StringWriter()
+            use error = new StringWriter()
+            let result = Helpers.quietly (fun () -> (keylessPublishRoot ()).Invoke([], output = output, error = error))
+            let printed = output.ToString() + error.ToString()
+
+            Expect.equal result.ExitCode ExitCode.Failure "a build failure exits one"
+            Expect.equal result.Outcome RunOutcome.Failed "the outcome names the category"
+            Expect.isFalse (printed.Contains "Unhandled exception") "the failure is reported, not left unhandled"
+            Expect.stringContains printed "publish/push" "the message names the stage being built"
+            Expect.stringContains printed "NullReferenceException" "the message keeps the original exception"
+            match result.Failures with
+            | [ { Cause = FailureCause.Raised raised } ] -> Expect.isTrue (raised :? NullReferenceException) "the cause is the original exception"
+            | failures -> failtestf "expected one raised failure, got %A" failures
+        }
+
+        test "an exception raised while building a command's stages reaches --json as a failed result" {
+            use output = new StringWriter()
+            let result = Helpers.quietly (fun () -> (keylessPublishRoot ()).Invoke([ "--json" ], output = output))
+            let json = output.ToString().Split([| '\n' |], StringSplitOptions.RemoveEmptyEntries) |> Array.last
+            let document = JsonDocument.Parse(json).RootElement
+
+            Expect.equal result.ExitCode ExitCode.Failure "a build failure exits one"
+            Expect.equal (document.GetProperty("outcome").GetString()) "failed" "the result is failed"
+            let report = document.GetProperty("pipelines").EnumerateArray() |> Seq.exactlyOne |> _.GetProperty("reports").EnumerateArray() |> Seq.exactlyOne
+            Expect.equal (report.GetProperty("address").GetString()) "publish/push" "the report addresses the stage being built"
+            let cause = report.GetProperty("failures").EnumerateArray() |> Seq.exactlyOne |> _.GetProperty("cause")
+            Expect.equal (cause.GetProperty("kind").GetString()) "raised" "the cause is a raised exception"
+            Expect.equal (cause.GetProperty("exceptionType").GetString()) typeof<NullReferenceException>.FullName "of the original type"
+        }
+
+        test "an exception raised while building a command's stages fails --explain naming the stage" {
+            use output = new StringWriter()
+            use error = new StringWriter()
+            let result = (keylessPublishRoot ()).Invoke([ "--explain" ], output = output, error = error)
+            let printed = output.ToString() + error.ToString()
+
+            Expect.equal result.ExitCode ExitCode.Failure "a build failure exits one under --explain too"
+            Expect.isFalse (printed.Contains "Unhandled exception") "the failure is reported, not left unhandled"
+            Expect.stringContains printed "publish/push" "the message names the stage being built"
+        }
+
+        test "the publish command builds and runs its dry branch" {
+            let result = Helpers.quietly (fun () -> (keylessPublishRoot ()) |> Command.invoke [ "--dry-publish"; "true" ])
+
+            Expect.equal result.ExitCode ExitCode.Success "the dry branch builds without reading the key"
         }
 
         test "a parse error exits two and runs nothing" {

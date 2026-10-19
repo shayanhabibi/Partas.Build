@@ -239,6 +239,32 @@ let tests =
             Expect.isFalse ((Cmd.toLogString pushed).Contains "super-secret-key") "the key never reaches log"
         }
 
+        test "a step's printed command line masks a sensitive input's value and the process receives it" {
+            let value = "fake-run-key-c4a9"
+            let key = Input.option<string> "--key" |> Input.sensitive
+            let child = ResizeArray<string>()
+            let root = Command.root {
+                pipeline "publish" {
+                    verbose
+                    input {
+                        let! key = key
+                        return stage "push" {
+                            redirectOutput (fun _ line -> lock child (fun () -> child.Add line))
+                            run (Cmd.ofList "dotnet" [ Helpers.ProcessFixture.assemblyPath; "args"; key ])
+                        }
+                    }
+                }
+            }
+            use output = new System.IO.StringWriter()
+
+            let result = root.Invoke([ "--key"; value ], output = output)
+
+            Expect.equal result.ExitCode ExitCode.Success "the step runs"
+            Expect.sequenceEqual child [ $"{value.Length}:{value}" ] "the process receives the value unmasked"
+            Expect.isFalse (output.ToString().Contains value) "the run log carries no part of the key"
+            Expect.stringContains (output.ToString()) "args ***" "the logged command line masks it"
+        }
+
         test "secretOptionWhenSome omits flag entirely when there is no value" {
             let baseline = Cmd.ofList "dotnet" [ "nuget"; "push"; "pkg.nupkg" ]
             let applied = baseline |> Cmd.secretOptionWhenSome "-k" (Some "key")

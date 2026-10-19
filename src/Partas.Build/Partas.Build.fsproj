@@ -14,6 +14,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <Compile Include="Construction.fs" />
         <Compile Include="System.CommandLine\Aliases.fs" />
         <Compile Include="System.CommandLine\Inputs.fs" />
         <Compile Include="Exceptions.fs" />

@@ -350,3 +350,46 @@ let tests =
             Expect.equal (subcommand |> property "description" |> text) "does the thing" "with its description"
         }
     ]
+
+[<Tests>]
+let sensitiveInputs =
+    /// A command whose stage builds the same command line three ways from one sensitive option.
+    let publishing (key: ActionInput<string>) =
+        command "publish" {
+            pipeline "p" {
+                input {
+                    let! key = key
+                    return stage "push" {
+                        run (cmd $"dotnet nuget push pkg -k {key}")
+                        run $"dotnet nuget push pkg --api-key={key}"
+                        run (Cmd.ofList "dotnet" [ "nuget"; "push"; "pkg"; "-k"; key ])
+                    }
+                }
+            }
+        }
+
+    testList "explain sensitive inputs" [
+        test "explain masks a sensitive input's value however the command line was built" {
+            let value = "fake-explain-key-0b7d"
+            let built = publishing (Input.option<string> "--key" |> Input.sensitive)
+
+            let _, printed = capturingOut (fun () -> built.Parse($"--key {value} --explain --json false").Invoke())
+
+            Expect.isFalse (printed.Contains value) "the text tree carries no part of the key"
+            Expect.stringContains printed "-k ***" "a separate argument is masked"
+            Expect.stringContains printed "--api-key=***" "a glued argument is masked"
+        }
+
+        test "explain --json masks a sensitive input's value in every step label" {
+            let value = "fake-explain-json-key-4e21"
+            let built = publishing (Input.option<string> "--key" |> Input.sensitive)
+
+            use output = new StringWriter()
+            built.Parse($"--key {value} --explain --json").Invoke(System.CommandLine.InvocationConfiguration(Output = output)) |> ignore
+            let json = output.ToString()
+
+            Expect.isFalse (json.Contains value) "the JSON form carries no part of the key"
+            let labels = [ for step in JsonDocument.Parse(json).RootElement |> property "pipelines" |> items |> List.exactlyOne |> stageNamed "push" |> property "steps" |> items -> step |> property "label" |> text ]
+            Expect.equal labels [ "dotnet nuget push pkg -k ***"; "dotnet nuget push pkg --api-key=***"; "dotnet nuget push pkg -k ***" ] "each label is masked"
+        }
+    ]

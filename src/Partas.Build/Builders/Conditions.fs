@@ -308,6 +308,7 @@ type StageBuilder with
     /// <remarks>
     /// <include file="../xmldoc/conditions.xml" path="/conditions/conjoin/*"/>
     /// The value is typically a boolean bound by an enclosing <c>input</c> CE.
+    /// <include file="../xmldoc/conditions.xml" path="/conditions/builtRegardless/*"/>
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     [<CustomOperation("when'")>]
@@ -318,6 +319,7 @@ type StageBuilder with
     /// <remarks>
     /// <include file="../xmldoc/conditions.xml" path="/conditions/conjoin/*"/>
     /// <c>when' (not quick) "--quick is set"</c> renders a skipped stage as <c>(skipped: --quick is set)</c>.
+    /// <include file="../xmldoc/conditions.xml" path="/conditions/builtRegardless/*"/>
     /// <include file="../xmldoc/conditions.xml" path="/conditions/ceRestriction/*"/>
     /// </remarks>
     /// <param name="build" />
@@ -546,9 +548,9 @@ let inline whenStage name = WhenStageBuilder name
 module ValueConditions =
     /// <summary>Yields the stage <paramref name="build"/> makes of the value, and nothing when there is none.</summary>
     /// <remarks>
-    /// The alternative is <c>when' value.IsSome</c> above a <c>run</c> that reaches for <c>value.Value</c>,
-    /// which is correct only because of evaluation order — nothing the compiler checks, and a refactor that
-    /// moves the condition below the step compiles cleanly and throws at run time.
+    /// The stage is built only for <c>Some</c>, and closes over the value itself. A <c>when' value.IsSome</c>
+    /// guards running, not building: a stage body that reads <c>value.Value</c> under it throws a
+    /// <c>NullReferenceException</c> while the stage is built, whatever the condition says.
     /// <para>
     /// The absent case is an empty list, not an inactive stage requiring a name.
     /// </para>

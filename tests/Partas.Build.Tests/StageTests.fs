@@ -56,6 +56,22 @@ let tests =
             Expect.equal (stageNames ctx) [ "stage:inner"; "fn" ] "the nested stage must not be discarded"
         }
 
+        test "an exception raised while a stage is built carries the path of the stages being built" {
+            let missing: string option = None
+
+            let raised =
+                try
+                    stage "publish" { stage "push" { run (cmd $"dotnet nuget push pkg -k {missing.Value}") } } |> ignore
+                    None
+                with error -> Some error
+
+            match raised with
+            | Some error ->
+                Expect.isTrue (error :? NullReferenceException) "the original exception propagates unchanged"
+                Expect.equal (Construction.stagePath error) [ "publish"; "push" ] "the path names each stage, outermost first"
+            | None -> failtest "the stage body should raise while it is built"
+        }
+
         test "is active by default" {
             let ctx = stage "plain" { run noop }
             Expect.isTrue (ctx.IsActive ctx) "a stage declaring no condition is active"

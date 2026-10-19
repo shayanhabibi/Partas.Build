@@ -59,4 +59,28 @@ let tests =
             Expect.equal result.exitCode 0 "the child should accept its arguments"
             Expect.equal delivered awkward "the Arguments string should deliver the boundaries ArgumentList does"
         }
+
+        test "a registered value is masked in the log form as a whole argument and inside one" {
+            let key = "fake-ns-key-7f3a"
+            Cmd.Redaction.register key
+            let pushed = Cmd.ofList "tool" [ "push"; "-k"; key; $"--api-key={key}" ]
+
+            Expect.equal (Cmd.toLogString pushed) "tool push -k *** --api-key=***" "the value is masked wherever it appears"
+            Expect.equal pushed.Arguments [ "push"; "-k"; key; $"--api-key={key}" ] "the process still receives the value"
+        }
+
+        test "a value containing a shorter registered value is masked whole" {
+            Cmd.Redaction.register "fake-ns-short"
+            Cmd.Redaction.register "fake-ns-short-and-long"
+
+            Expect.equal (Cmd.Redaction.redact "x=fake-ns-short-and-long") "x=***" "the longer value is masked as one"
+        }
+
+        test "an empty or whitespace value is never registered" {
+            Cmd.Redaction.register ""
+            Cmd.Redaction.register "   "
+            Cmd.Redaction.register null
+
+            Expect.equal (Cmd.toLogString (Cmd.ofList "tool" [ "a b"; "plain" ])) "tool \"a b\" plain" "whitespace stays printable"
+        }
     ]

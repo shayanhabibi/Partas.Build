@@ -38,7 +38,7 @@ Fast inner loop while working on the library only: `dotnet build src/Partas.Buil
 
 ## Current state (verify before assuming)
 
-- Phases 0-7 of `notes/PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (506 Expecto tests across four suites — 365 in `tests/Partas.Build.Tests`, one file per layer, plus 65 in `tests/Partas.Build.ExternalAnnotations.Tests`, 73 in `tests/Partas.ExternalAnnotations.Tests` (2 more ignored) and 3 in `tests/Partas.Build.Cmd.NetStandard.Tests`; the `test` stage also runs `tests/Partas.Build.CompilerProbe` in both Debug and Release, 11 tests each). The `Build/` CLI is written against the library: a breaking change breaks it first.
+- Phases 0-7 of `notes/PLAN.md` are done: `dotnet build src/Partas.Build` is clean and `dotnet run --project Build.fsproj -- test` is green (575 Expecto tests across four suites — 431 in `tests/Partas.Build.Tests` (1 more ignored), one file per layer, plus 65 in `tests/Partas.Build.ExternalAnnotations.Tests` (6 more ignored), 73 in `tests/Partas.ExternalAnnotations.Tests` (2 more ignored) and 6 in `tests/Partas.Build.Cmd.NetStandard.Tests`; the `test` stage also runs `tests/Partas.Build.CompilerProbe` in both Debug and Release, 11 tests each). The `Build/` CLI is written against the library: a breaking change breaks it first.
 - The DSL exists end to end: `inputs` (`Builders/Inputs.fs`), `stage` (`Builders/Stage.fs`), `pipeline` (`Builders/Pipeline.fs`), `command`/`rootCommand` (`Builders/Command.fs`). A stage that declares an input turns its pipeline into an `InputSpec<PipelineContext>`, and the command registers whatever those specs declare. Conditions are in `Builders/Conditions.fs` — `whenAll`/`whenAny`/`whenNot`/`whenEnv`/`whenStage` plus the `when'`/`whenEnvVar`/`whenBranch`/`when{Windows,Linux,OSX}` operations on `StageBuilder`.
 - A command carries `PipelineDefaults: BuildPipeline` and takes the pipeline-level operations itself (`workingDir`, `envVars`, the three timeouts, `acceptExitCodes`, the output operations, `noPrefixForStep`/`noStdRedirectForStep`, `runBeforeEachStage`/`runAfterEachStage`, `post`, `verbosity`/`verbose`/`quiet`), each one built through `CommandBuilderBase.MapPipelineDefault`. They are **defaults, not overrides**: `PipelineContext.applyDefaults` copies a setting across only where the pipeline left it at the value `PipelineContext.create` gave it, so a pipeline that sets the same thing wins. See *Command defaults* below.
 - `run`/`runSensitive` start real processes through `CmdRunner` (`Process.fs`). A `Cmd`, defined in `src/Partas.Build.Cmd/Program.fs`, keeps the executable and its arguments apart all the way to `ProcessStartInfo.ArgumentList`, so the platform does the escaping. Interpolate through the `cmd` helper — `run (cmd $"dotnet build {project}")`. `run $"..."` binds to the `string` overload and flattens the holes; `runSensitive $"..."` takes the `FormattableString` directly and masks every hole as `***`. A function returning a command line is `runLine (fun ctx -> "...")`; the `run` overloads over `StageContext -> string` (and its `Async`/`Task`/`option` forms) are `[<Obsolete>]`, since a lambda returning a message would start a process. `runLine` is a separate name, so the `run` overload set — and the `FS0041` balance below — is unchanged. There is no `Fake.Core.Process` dependency; `notes/PLAN.md`'s *The command runner* records why.
@@ -94,7 +94,16 @@ writes the result as `Failed` and then propagates to System.CommandLine's handle
 `Input.sensitive` marks an option or argument as carrying a secret, recorded against the `Symbol` in a
 `ConditionalWeakTable` in `Inputs.fs` (System.CommandLine has no property bag); `--schema` writes a marked
 symbol's present default as `"***"` alongside `"sensitive": true`. `Baked.NuGet.apiKey` is marked, since its
-default is read from `NUGET_API_KEY`. Text `--help` still prints the default.
+default is read from `NUGET_API_KEY`. Text `--help` still prints the default. `ActionInput.GetValue` registers
+every value it reads from a marked symbol with `Cmd.Redaction` (process-wide, in `Partas.Build.Cmd`), and
+`Cmd.toLogString` and `--explain`'s labels mask each registered value, as a whole argument or inside one, so a
+secret interpolated through `cmd`, the string `run` or `Cmd.ofList` prints as `***` and still reaches the process.
+
+A stage body is built eagerly (`Delay` runs it at once), conditions included or not. Each `StageBuilder.Delay`
+runs under `Construction.inStage`, which records the stage's name on the `Data` of any exception the body
+raises and rethrows it unchanged; `Builders/Command.fs`'s `reportBuildFailure` turns an exception out of
+reading the pipelines into a failed invocation naming the command and those stages, through the annotation
+and `--json`/`--report` result paths, instead of System.CommandLine's unhandled-exception handler.
 
 `Failures.fs` holds what a scope reports about itself, apart from what it prints. A `ScopeReport` carries three
 fields: `Outcome` (the scope's own `StageOutcome`), `Propagates` (whether that failure fails the scope

@@ -61,7 +61,7 @@ type ExplainedStage = {
 
 /// <summary>A step as <c>--explain</c> describes it; <c>index</c> counts from zero, as a run result's <c>step</c> and
 /// <c>path</c> do.</summary>
-/// <remarks>A label is the step's log form, with every secret masked.</remarks>
+/// <remarks>A label is the step's log form, with every secret and every sensitive input's value masked.</remarks>
 and [<RequireQualifiedAccess>] ExplainedStep =
     | Step of index: int * label: string voption
     | Operation of index: int * label: string voption
@@ -167,8 +167,8 @@ module Explain =
                     match step with
                     | Step.StepOfStage subStage ->
                         ExplainedStep.Stage(index, explainStage mode { subStage with ParentContext = ValueSome(StageParent.Stage stage) })
-                    | Step.StepFn(label, _) -> ExplainedStep.Step(index, label)
-                    | Step.Operation(label, _) -> ExplainedStep.Operation(index, label))
+                    | Step.StepFn(label, _) -> ExplainedStep.Step(index, ValueOption.map Cmd.Redaction.redact label)
+                    | Step.Operation(label, _) -> ExplainedStep.Operation(index, ValueOption.map Cmd.Redaction.redact label))
         }
 
     /// <summary>The tree of <paramref name="pipelines"/>, with each stage's conditions answered under

@@ -30,6 +30,9 @@ let private advanced = EditorBrowsableState.Advanced
 [<EB(advanced)>]
 type StageBuilder(name: string) =
     inherit StageSettingsBuilder()
+    /// The name of the stage the builder builds.
+    [<EB(never)>]
+    member _.Name = name
     [<EB(never)>] // `Run` is deliberately not `inline`: `BuildStage` is a plain function type rather than a delegate,
     // and inlining an application of one defeats the optimiser (`FS1118`) in Release builds only.
     // It applies a closure once at construction time, so there is nothing to gain by inlining it.
@@ -70,18 +73,20 @@ type StageBuilder(name: string) =
     // =================================================================
     //                              Delay
     // =================================================================
+    // Each `Delay` runs the body at once under `Construction.inStage`, which records the stage's name on any
+    // exception the body raises.
     [<EB(never)>]
-    member inline _.Delay ([<IIL>] fn): BuildStage = fn()
+    member inline this.Delay ([<IIL>] fn): BuildStage = Construction.inStage this.Name (fun () -> fn())
     [<EB(never)>]
-    member inline _.Delay ([<IIL>] fn) = StageContext.addSubStage (fn())
+    member inline this.Delay ([<IIL>] fn) = Construction.inStage this.Name (fun () -> StageContext.addSubStage (fn()))
     [<EB(never)>]
-    member inline _.Delay ([<IIL>] fn) = StageContext.addStepFn (fn())
+    member inline this.Delay ([<IIL>] fn) = Construction.inStage this.Name (fun () -> StageContext.addStepFn (fn()))
     [<EB(never)>]
-    member inline _.Delay ([<IIL>] fn) = StageContext.addPredicate (fn())
+    member inline this.Delay ([<IIL>] fn) = Construction.inStage this.Name (fun () -> StageContext.addPredicate (fn()))
     [<EB(never)>]
-    member inline _.Delay ([<IIL>] fn): InputSpec<BuildStage> = fn ()
+    member inline this.Delay ([<IIL>] fn): InputSpec<BuildStage> = Construction.inStage this.Name (fun () -> fn ())
     [<EB(never)>]
-    member inline _.Delay ([<IIL>] fn) = InputSpec.map StageContext.addSubStage (fn())
+    member inline this.Delay ([<IIL>] fn) = Construction.inStage this.Name (fun () -> InputSpec.map StageContext.addSubStage (fn()))
     // =================================================================
     //                              Combine
     // =================================================================

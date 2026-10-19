@@ -88,16 +88,62 @@ type ActionInputSource =
     | Context
     | Injection of obj
 
+/// The symbols marked by <c>Input.sensitive</c>, and the registration of the values read from them.
+module internal SensitiveSymbols =
+    let private marked = System.Runtime.CompilerServices.ConditionalWeakTable<Symbol, obj>()
+
+    let mark (symbol: Symbol) =
+        lock marked (fun () ->
+            match marked.TryGetValue symbol with
+            | true, _ -> ()
+            | false, _ -> marked.Add(symbol, obj ()))
+
+    let isMarked (symbol: Symbol) =
+        match marked.TryGetValue symbol with
+        | true, _ -> true
+        | false, _ -> false
+
+    /// Registers every string a value carries for masking: a string itself, the contents of an option or a
+    /// collection, and the invariant text of any other value apart from a bool.
+    let rec private register (value: obj) =
+        match value with
+        | null
+        | :? bool -> ()
+        | :? string as text -> Cmd.Redaction.register text
+        | :? Collections.IEnumerable as values ->
+            for value in values do
+                register value
+        | _ ->
+            let valueType = value.GetType()
+
+            if valueType.IsGenericType && valueType.GetGenericTypeDefinition() = typedefof<option<_>> then
+                register (valueType.GetProperty("Value").GetValue value)
+            elif valueType.IsGenericType && valueType.GetGenericTypeDefinition() = typedefof<voption<_>> then
+                match valueType.GetProperty("IsSome").GetValue value with
+                | :? bool as isSome when isSome -> register (valueType.GetProperty("Value").GetValue value)
+                | _ -> ()
+            else
+                Cmd.Redaction.register (Convert.ToString(value, Globalization.CultureInfo.InvariantCulture))
+
+    /// Reads a symbol's value, registering it for masking when the symbol is marked.
+    let read (symbol: Symbol) (read: unit -> 'T) : 'T =
+        let value = Construction.readingInput symbol.Name read
+        if isMarked symbol then register (box value)
+        value
+
 type ActionInput(source: ActionInputSource) =
     member this.Source = source
 type ActionInput<'T>(inputType: ActionInputSource) =
     inherit ActionInput(inputType)
     static member OfOption<'T>(o: Option<'T>) = ParsedOption o |> ActionInput<'T>
     static member OfArgument<'T>(a: Argument<'T>) = ParsedArgument a |> ActionInput<'T>
+    /// <summary>The value parsed for the option or argument, or the context or injected value.</summary>
+    /// <remarks>A value read from an input marked by <c>Input.sensitive</c> is masked in every printed command
+    /// from then on.</remarks>
     member this.GetValue<'T>(parseResult: ParseResult) =
         match this.Source with
-        | ParsedOption o -> o :?> Option<'T> |> parseResult.GetValue
-        | ParsedArgument a -> a :?> Argument<'T> |> parseResult.GetValue
+        | ParsedOption o -> SensitiveSymbols.read o (fun () -> o :?> Option<'T> |> parseResult.GetValue)
+        | ParsedArgument a -> SensitiveSymbols.read a (fun () -> a :?> Argument<'T> |> parseResult.GetValue)
         | Context -> parseResult |> unbox<'T>
         | Injection i -> i |> unbox<'T>
 
@@ -436,29 +482,22 @@ module Input =
             )
     let mapFromMany<'T> choices action: ActionInput<'T list> = mapFromManyWith StringComparer.Ordinal choices action
 
-    let private sensitiveSymbols = System.Runtime.CompilerServices.ConditionalWeakTable<Symbol, obj>()
-
-    let private markSensitive (symbol: Symbol) =
-        lock sensitiveSymbols (fun () ->
-            match sensitiveSymbols.TryGetValue symbol with
-            | true, _ -> ()
-            | false, _ -> sensitiveSymbols.Add(symbol, obj ()))
-
     /// <summary>Marks an option or argument as carrying a secret.</summary>
     /// <remarks>
-    /// <c>--schema</c> writes the default of a marked symbol as <c>"***"</c> and reports it <c>"sensitive": true</c>.
-    /// Text <c>--help</c> still prints the default.
+    /// Every value read from a marked input is masked as <c>***</c> wherever a command is printed (the run log,
+    /// <c>--explain</c> and its JSON, a failed command's message), however the command line was built, and still
+    /// reaches the process unmasked. An option or a collection masks each value it carries; any other non-string
+    /// value masks its invariant text, and a bool masks nothing. A null, empty or whitespace value is never masked.
+    /// <para><c>--schema</c> writes the default of a marked symbol as <c>"***"</c> and reports it
+    /// <c>"sensitive": true</c>. Text <c>--help</c> still prints the default.</para>
     /// </remarks>
     let sensitive (input: ActionInput<'T>) =
         input
-        |> editOption (fun o -> markSensitive o)
-        |> editArgument (fun a -> markSensitive a)
+        |> editOption (fun o -> SensitiveSymbols.mark o)
+        |> editArgument (fun a -> SensitiveSymbols.mark a)
 
     /// Whether <paramref name="symbol"/> is marked by <c>sensitive</c>.
-    let isSensitive (symbol: Symbol) =
-        match sensitiveSymbols.TryGetValue symbol with
-        | true, _ -> true
-        | false, _ -> false
+    let isSensitive (symbol: Symbol) = SensitiveSymbols.isMarked symbol
 
     /// Hides an option or argument from the help output.
     let hidden (input: ActionInput<'T>) =

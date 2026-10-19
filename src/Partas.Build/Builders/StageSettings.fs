@@ -124,7 +124,10 @@ type StageSettingsBuilder() =
     member inline _.acceptExitCodes (state: ^State, codes: int seq): ^State =
         StageMap.mapStage (fun ctx -> { ctx with AcceptableExitCodes = set codes }) state
     /// <summary>Fails the pipeline if this stage is inactive.</summary>
-    /// <remarks>By default, inactive stages are skipped without failure. Enable this to treat an inactive stage as a pipeline error.</remarks>
+    /// <remarks>
+    /// By default, inactive stages are skipped without failure. Enable this to treat an inactive stage as a pipeline error.
+    /// <include file="../xmldoc/conditions.xml" path="/conditions/builtRegardless/*"/>
+    /// </remarks>
     [<CustomOperation>]
     member inline _. failIfIgnored (state: ^State, ?flag: bool): ^State =
         StageMap.mapStage (fun ctx -> { ctx with FailIfIgnored = defaultArg flag true }) state

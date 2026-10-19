@@ -129,6 +129,44 @@ let private reportResult (output: TextWriter) (parseResult: ParseResult) (exitCo
 
     exitCode
 
+/// <summary>Reports an exception raised while the command built its pipelines as a failed invocation.</summary>
+/// <remarks>
+/// The message names the command, the stages being built and the input being read where they are known, and
+/// carries the original exception's type and message. It is printed as an error annotation, the way a failed
+/// stage's is. The run result holds one pipeline named after the command, with no timings and one report
+/// addressed by the stages being built, an empty <c>Path</c>, and the exception as its <c>Raised</c> cause.
+/// Under <c>--explain</c> no run result is written.
+/// </remarks>
+let private reportBuildFailure (output: TextWriter) (parseResult: ParseResult) (state: InvocationState) (explaining: bool) (commandName: string) (error: exn) =
+    let stages = Construction.stagePath error
+    let address = ScopeAddress.text { Path = []; Names = stages }
+    let site = [
+        if not stages.IsEmpty then $"stage (%s{address})"
+        match Construction.inputName error with
+        | ValueSome input -> $"input (%s{input})"
+        | ValueNone -> ()
+    ]
+    let location = if site.IsEmpty then "" else " in " + String.concat ", " site
+    let cause = FailureCause.Raised error
+    let message = $"Command (%s{commandName}) failed while building its pipelines%s{location}. %s{FailureCause.describe cause}"
+
+    { Annotation.error message with Title = ValueSome ("[COMMAND] " + commandName) }
+    |> WorkflowCommands.writeAnnotation (PipelineContext.ambientEnvironment ())
+
+    if explaining then ExitCode.Failure
+    else
+        let report = {
+            Name = List.tryLast stages |> Option.defaultValue commandName
+            Address = { Path = []; Names = stages }
+            Outcome = StageOutcome.Failed error.Message
+            Propagates = true
+            Failures = [ { Index = StepFailure.NoStep; Label = ValueNone; Cause = cause } ]
+            Exceptions = [ error ]
+            Nested = []
+        }
+        state.Record { Name = commandName; Reports = [ report ]; Timings = [] }
+        reportResult output parseResult ExitCode.Failure state.Pipelines
+
 /// <summary>
 /// Reads each pipeline out of the parse result and runs it, in declaration order. Producer work is placed into
 /// the pipelines that run, after the whole invocation validates and never on the way to <c>--explain</c>.
@@ -137,7 +175,8 @@ let private reportResult (output: TextWriter) (parseResult: ParseResult) (exitCo
 /// A pipeline failure or cancellation maps to its exit code; the runner has already printed it. Any other
 /// exception writes the run result as a failure, then propagates to System.CommandLine's exception handler.
 /// Under <c>--explain</c>, a failed dependency validation prints its message to the error writer and exits
-/// <c>UsageError</c> without a run result.
+/// <c>UsageError</c> without a run result. An exception raised while reading the pipelines (building their
+/// stages) fails the invocation through <c>reportBuildFailure</c>, under <c>--explain</c> too.
 /// </remarks>
 let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseResult) =
     // Parse results invoked straight through System.CommandLine get a state of their own, so that `--json` and
@@ -150,7 +189,16 @@ let private invoke (command: Command) (spec: CommandSpec) (parseResult: ParseRes
     let configuration = parseResult.InvocationConfiguration
     let asJson = MachineOutput.isSet MachineOutput.json parseResult
     let explaining = MachineOutput.isSet Explain.option parseResult
-    let pipelines = spec.Pipelines |> List.map (fun pipeline -> pipeline.Read parseResult)
+    match
+        try Ok(spec.Pipelines |> List.map (fun pipeline -> pipeline.Read parseResult))
+        with error -> Error error
+    with
+    | Error error ->
+        let name =
+            if not (String.IsNullOrEmpty spec.Name) then spec.Name
+            else spec.DisplayName |> ValueOption.defaultValue command.Name
+        reportBuildFailure configuration.Output parseResult state explaining name error
+    | Ok pipelines ->
     match DependencyPlan.validate pipelines with
     | Error message ->
         configuration.Error.WriteLine message
